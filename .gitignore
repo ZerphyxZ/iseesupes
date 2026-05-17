@@ -1,0 +1,16 @@
+# Wally install output
+Packages/
+ServerPackages/
+
+# Roblox place files
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Roblox Studio lock files
+*.rbxlx.lock
+*.rbxl.lock
+
+# Rojo
+sourcemap.json

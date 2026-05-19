@@ -2,7 +2,7 @@
 
 -- Trail shop UI. Expects Studio instances:
 --   PlayerGui → GUI → Frames → Trails → Scrolling
---   ReplicatedStorage → Particles → Trail → Template → TrailTemplate
+--   ReplicatedStorage → Templates → TrailTemplate
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
@@ -17,7 +17,10 @@ local TrailShopController = Knit.CreateController({ Name = "TrailShopController"
 
 local ROBUX_PREFIX = utf8.char(0xE002)
 
-local TEMPLATE_PATH = { "Particles", "Trail", "Template", "TrailTemplate" }
+local TEMPLATE_PATH_CANDIDATES = {
+	TrailConfigs.ShopTemplatePath,
+	TrailConfigs.ShopTemplatePathLegacy,
+}
 
 local priceCache = {} -- [productId] = robux price
 
@@ -30,6 +33,16 @@ local function waitPath(root: Instance, segments: { string }, timeout: number?)
 		current = current:WaitForChild(name, timeout or 10)
 	end
 	return current
+end
+
+local function resolveShopRowTemplate(root: Instance): GuiObject?
+	for _, segments in TEMPLATE_PATH_CANDIDATES do
+		local found = waitPath(root, segments, 3)
+		if found and found:IsA("GuiObject") then
+			return found
+		end
+	end
+	return nil
 end
 
 local function updateButtons(frame: Frame, info: any, isOwned: boolean, isEquipped: boolean)
@@ -135,9 +148,15 @@ function TrailShopController:KnitStart()
 		return
 	end
 
-	local template = waitPath(ReplicatedStorage, TEMPLATE_PATH, 15)
-	if not template or not template:IsA("GuiObject") then
-		warn("[iseesupes] TrailShopController: missing template ReplicatedStorage." .. table.concat(TEMPLATE_PATH, "."))
+	local template = resolveShopRowTemplate(ReplicatedStorage)
+	if not template then
+		warn(
+			"[iseesupes] TrailShopController: missing template ReplicatedStorage."
+				.. table.concat(TrailConfigs.ShopTemplatePath, ".")
+				.. " (or legacy "
+				.. table.concat(TrailConfigs.ShopTemplatePathLegacy, ".")
+				.. ")"
+		)
 		return
 	end
 

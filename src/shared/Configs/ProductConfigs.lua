@@ -33,6 +33,7 @@ ProductConfigs.DeveloperProducts = {
 	CoinPack1 = { Id = 0, Key = "CoinPack1", GrantCoins = 100 } :: DeveloperProduct,
 	CoinPack2 = { Id = 0, Key = "CoinPack2", GrantCoins = 500 } :: DeveloperProduct,
 	SkipRebirth = { Id = 0, Key = "SkipRebirth", GrantCoins = 0, GrantRebirth = true } :: DeveloperProduct,
+	SkipStage = { Id = 0, Key = "SkipStage", GrantCoins = 0 } :: DeveloperProduct,
 }
 
 function ProductConfigs.GetProductByKey(key: string): DeveloperProduct?

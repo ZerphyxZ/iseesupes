@@ -5,6 +5,10 @@ local TweenService = game:GetService("TweenService")
 local HudAnimations = {}
 
 local SCALE_KEY = "_HudBaseScale"
+local SIZE_KEY = "_HudBaseSize"
+
+local baseSizes: { [GuiObject]: UDim2 } = {}
+local activeFrameTweens: { [GuiObject]: Tween } = {}
 
 local function getOrCreateUIScale(gui: GuiObject): UIScale
 	local existing = gui:FindFirstChildOfClass("UIScale")
@@ -114,6 +118,90 @@ function HudAnimations.countUpText(
 			label.Text = formatter(toValue)
 			if conn then
 				conn:Disconnect()
+			end
+		end
+	end)
+end
+
+function HudAnimations.rememberBaseSize(gui: GuiObject)
+	if not baseSizes[gui] then
+		baseSizes[gui] = gui.Size
+	end
+end
+
+local function cancelFrameTween(gui: GuiObject)
+	local tween = activeFrameTweens[gui]
+	if tween then
+		tween:Cancel()
+		activeFrameTweens[gui] = nil
+	end
+end
+
+local function collapsedSizeY(target: UDim2): UDim2
+	return UDim2.new(target.X.Scale, target.X.Offset, 0, 0)
+end
+
+function HudAnimations.openFrameY(gui: GuiObject, duration: number?, onComplete: (() -> ())?)
+	if not gui:IsA("GuiObject") then
+		return
+	end
+
+	HudAnimations.rememberBaseSize(gui)
+	cancelFrameTween(gui)
+
+	local target = baseSizes[gui] :: UDim2
+	local dur = duration or 0.35
+	gui.Size = collapsedSizeY(target)
+	gui.Visible = true
+
+	local tween = TweenService:Create(
+		gui,
+		TweenInfo.new(dur, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+		{ Size = target }
+	)
+	activeFrameTweens[gui] = tween
+	tween:Play()
+	tween.Completed:Connect(function(state)
+		if activeFrameTweens[gui] == tween then
+			activeFrameTweens[gui] = nil
+		end
+		if state == Enum.PlaybackState.Completed and gui.Parent then
+			gui.Size = target
+			if onComplete then
+				onComplete()
+			end
+		end
+	end)
+end
+
+function HudAnimations.closeFrameY(gui: GuiObject, duration: number?, onComplete: (() -> ())?)
+	if not gui:IsA("GuiObject") then
+		return
+	end
+
+	HudAnimations.rememberBaseSize(gui)
+	cancelFrameTween(gui)
+
+	local target = baseSizes[gui] :: UDim2
+	local dur = duration or 0.28
+	local collapsed = collapsedSizeY(target)
+
+	local tween = TweenService:Create(
+		gui,
+		TweenInfo.new(dur, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+		{ Size = collapsed }
+	)
+	activeFrameTweens[gui] = tween
+	tween:Play()
+	tween.Completed:Connect(function(state)
+		if activeFrameTweens[gui] == tween then
+			activeFrameTweens[gui] = nil
+		end
+		if state == Enum.PlaybackState.Completed then
+			gui.Visible = false
+			gui.Size = target
+			if onComplete then
+				onComplete()
 			end
 		end
 	end)

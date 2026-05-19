@@ -18,6 +18,12 @@ export type TrailInfo = {
 
 local TrailConfigs = {}
 
+--- Shop list row: ReplicatedStorage → Templates → TrailTemplate (Studio).
+TrailConfigs.ShopTemplatePath = { "Templates", "TrailTemplate" }
+
+--- Legacy path if an older place still uses Particles/Trail/Template.
+TrailConfigs.ShopTemplatePathLegacy = { "Particles", "Trail", "Template", "TrailTemplate" }
+
 TrailConfigs.Trails = {} :: { TrailInfo }
 
 local byId: { [string]: TrailInfo } = {}

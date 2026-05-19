@@ -6,8 +6,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProfileStore = require(script.Parent.Parent.Modules.ProfileService)
 local ProfileTemplate = require(ReplicatedStorage.Shared.Utils.ProfileTemplate)
+local LeaderstatsSync = require(script.Parent.Parent.Modules.LeaderstatsSync)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
-local DATA_VERSION = "iseesupes_v1"
+local DATA_VERSION = "iseesupes_v4"
 
 local PlayerDataStore = ProfileStore.GetProfileStore(DATA_VERSION, ProfileTemplate)
 
@@ -21,6 +23,7 @@ local DataService = Knit.CreateService({
 local profiles: { [Player]: any } = {}
 
 local function replicateData(player: Player, profile: any)
+	LeaderstatsSync.Apply(player, profile.Data)
 	DataService.Client.DataReplicated:Fire(player, profile.Data)
 end
 
@@ -33,6 +36,7 @@ local function onPlayerAdded(player: Player)
 
 	profile:AddUserId(player.UserId)
 	profile:Reconcile()
+	SpeedConfigs.SyncLevelFromSpeed(profile.Data)
 
 	profile:ListenToRelease(function()
 		profiles[player] = nil

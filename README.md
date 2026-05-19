@@ -31,8 +31,12 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 | `src/server/Modules/` | Non-Knit server libs (`ProfileService`) |
 | `src/client/Controllers/` | Cross-cutting Knit controllers (`DataController`) |
 | `src/client/GameControllers/` | Feature controllers & UI |
+| `src/client/GameControllers/TrailShop/` | Trail shop UI (`TrailShopController`) |
+| `src/client/GameControllers/Rebirth/` | Rebirth UI (`RebirthController`) |
+| `src/client/GameControllers/HUD/` | HUD interactions (`HUDController`) |
+| `src/client/Modules/` | Client-only helpers (`NotificationManager`, `Fireworks`) |
 | `src/client/GameControllers/Character/` | Character mechanics (`CharacterController`, `DoubleJumpController`) |
-| `src/shared/Configs/` | Static config (`ProductConfigs`, `CharacterConfigs`) |
+| `src/shared/Configs/` | Static config (`ProductConfigs`, `CharacterConfigs`, `TrailConfigs`) |
 | `src/shared/Utils/` | Shared modules (`ProfileTemplate`, `DataLib`) |
 | `Packages/` | Wally dependencies (generated; gitignored) |
 
@@ -73,6 +77,48 @@ Edit `src/shared/Configs/ProductConfigs.lua`:
 **Server:** `MonetizationService:PlayerOwnsGamepass(player, "VIP")`
 
 **Client:** `DataLib.OwnsGamepass("VIP")`
+
+## Speed progression
+
+- **Config:** [`SpeedConfigs.lua`](src/shared/Configs/SpeedConfigs.lua) — studs per speed tick, XP curve, walk/swim speed per level, rebirth boost %.
+- **Data:** `Speed` (cumulative XP) on profile (`iseesupes_v4`); `Level` is derived from `Speed`.
+- **Server:** [`SpeedService`](src/server/GameServices/SpeedService.lua) — `RequestAddSpeed` (rate-limited), `LevelUp` client signal.
+- **Client:** [`SpeedController`](src/client/GameControllers/Speed/SpeedController.lua) — movement tracking, bottom bar, level-up panel, popups via [`EffectsSystem`](src/client/Modules/EffectsSystem.lua).
+- **Studio:** `HUD/Bottom/Bar` (Level, Requirement, TotalSpeed, RebirthBoost, Progress), `Frames/LevelUp`, optional `Workspace/Sounds/LevelUp`.
+
+## HUD
+
+- **Client:** [`HUDController`](src/client/GameControllers/HUD/HUDController.lua) — wins display, speed shop, custom swim speed, speed peak tiers.
+- **Animations:** [`HudAnimations`](src/client/Modules/HudAnimations.lua) — count-up wins, button press, pulse, slide-in, textbox highlight.
+- **Config:** [`SpeedConfigs`](src/shared/Configs/SpeedConfigs.lua) (swim formula), [`ProductConfigs`](src/shared/Configs/ProductConfigs.lua) (`SpeedProducts`, `SpeedPeakTiers`, `DoubleWins` gamepass).
+- **Data:** reads **`DataLib`**; server mirrors `Level` / `Wins` / `Rebirths` to **`leaderstats`** via [`LeaderstatsSync`](src/server/Modules/LeaderstatsSync.lua).
+- **Swim:** sets `character` attribute `SwimSpeed` (see `SpeedConfigs.SwimSpeedAttribute`) for your swim module.
+- **Studio UI:** `HUD/Left/Wins`, `HUD/Bottom/Speed/Product1…`, `HUD/Right/CustomSpeed`, `HUD/Right/SpeedPeark`.
+
+## Leaderboards
+
+- **Config:** [`LeaderboardConfigs.lua`](src/shared/Configs/LeaderboardConfigs.lua) — Speed (from rebirth speed multiplier), Wins, Rebirths; store names and model names match your Studio boards.
+- **Server:** [`LeaderboardService`](src/server/GameServices/LeaderboardService.lua) — refreshes displays every 60s, saves scores from `DataService` profiles every 60s, on leave, and on shutdown.
+- **Studio:** `Workspace → Leaderboards → SpeedLeaderboard | WinsLeaderboard | RebirthLeaderboard`, each with `SurfaceGui → ScrollingFrame → Template`. Optional row template: `ReplicatedStorage → Templates → LeaderboardEntry`.
+- **Enable Studio API access** for DataStores (Game Settings → Security).
+
+## Rebirth
+
+- **Config:** [`RebirthConfigs.lua`](src/shared/Configs/RebirthConfigs.lua) — `LevelStep` (5), `MultAdd` (0.5), `ResetLevelOnRebirth` (resets level to 1 on rebirth).
+- **Data:** `Rebirths` and `Level` on the profile (`iseesupes_v3`). UI reads **`DataLib`**; server also mirrors `Level` / `Rebirths` into **`leaderstats`** for compatibility.
+- **Server:** [`RebirthService`](src/server/GameServices/RebirthService.lua) — `RequestRebirth`, `RebirthSuccess` signal (fireworks / toast), skip-level rebirth for the skip product.
+- **Client:** [`RebirthController`](src/client/GameControllers/Rebirth/RebirthController.lua) — same UI tree as your old game (`Frames/Rebirth`, `HUD/Left/Rebirth/Notification`).
+- **Skip product:** set `ProductConfigs.DeveloperProducts.SkipRebirth.Id` in Creator Dashboard.
+- **Fireworks (optional):** place assets at `ReplicatedStorage → Particles → Fireworks`.
+- **Toasts:** hook `NotificationManager.OnShow` to your notification UI (defaults to `print` until wired).
+
+## Trail shop
+
+- **Config:** [`src/shared/Configs/TrailConfigs.lua`](src/shared/Configs/TrailConfigs.lua) — list trails (`ID`, `Name`, `WinCost`, `ProductId`, `SpeedBoost`, optional `Image`, optional `Color` as `ColorSequence`). Use `ProductId = 0` until the matching Developer Product exists in Creator Dashboard.
+- **Player data:** `OwnedTrails` (map of trail id → owned) and `EquippedTrail` (string, empty when none) in [`ProfileTemplate.lua`](src/shared/Utils/ProfileTemplate.lua). `DATA_VERSION` in `DataService.lua` is bumped when those fields were added (`iseesupes_v2`).
+- **Server:** [`TrailService`](src/server/GameServices/TrailService.lua) handles wins purchase, equip, and unequip. [`TrailVisuals`](src/server/Modules/TrailVisuals.lua) applies the equipped trail on the character (server-side `Trail` on `HumanoidRootPart`, visible to everyone). [`MonetizationService`](src/server/GlobalServices/MonetizationService.lua) grants trail ownership when `ProcessReceipt` matches a trail’s `ProductId`.
+- **Client:** [`TrailShopController`](src/client/GameControllers/TrailShop/TrailShopController.lua) auto-loads with other `GameControllers`. It expects the same UI tree as before: `PlayerGui → GUI → Frames → Trails → Scrolling`, and a list row template at **`ReplicatedStorage → Particles → Trail → Template → TrailTemplate`** (create `Particles` and the folder chain in Studio; Rojo only syncs `Shared` under `ReplicatedStorage`).
+- **Formatting:** [`NumberFormatter`](src/shared/Utils/NumberFormatter.lua) is used for win costs in the list.
 
 **Prompt purchases (from UI):**
 

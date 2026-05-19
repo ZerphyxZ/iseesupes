@@ -27,12 +27,12 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 | Path | Role |
 |------|------|
 | `src/server/GlobalServices/` | Cross-cutting Knit services (`DataService`, `MonetizationService`) |
-| `src/server/GameServices/` | Feature-specific Knit services (`DoubleJumpService`) |
+| `src/server/GameServices/` | Feature-specific Knit services (`DoubleJumpService`, `TreadmillService`) |
 | `src/server/Modules/` | Non-Knit server libs (`ProfileService`) |
 | `src/client/Controllers/` | Cross-cutting Knit controllers (`DataController`) |
 | `src/client/GameControllers/` | Feature controllers & UI |
 | `src/client/GameControllers/Character/` | Character mechanics (`CharacterController`, `DoubleJumpController`) |
-| `src/shared/Configs/` | Static config (`ProductConfigs`, `CharacterConfigs`) |
+| `src/shared/Configs/` | Static config (`ProductConfigs`, `CharacterConfigs`, `TreadmillConfigs`) |
 | `src/shared/Utils/` | Shared modules (`ProfileTemplate`, `DataLib`) |
 | `Packages/` | Wally dependencies (generated; gitignored) |
 
@@ -48,6 +48,8 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 - Root: `IdleAnimation`, `RunAnimation`
 - `BasicJump/`: `Jump`, `Fall`, `Landing`
 - `DoubleJump/`: `FlightTrannsit`, `AfterTransition`, `LeanUp`, `LeapDown`, `DownSupes`
+
+**Treadmills:** Place models under `Workspace.Map.Treadmills` (e.g. `SilverTreadmill`). Add a `Start` part in Workspace for locked-tier kick-back. Tune tiers in [`TreadmillConfigs.lua`](src/shared/Configs/TreadmillConfigs.lua); set gamepass IDs in `ProductConfigs` (`GoldTreadmill`, `DiamondTreadmill`). Server: `TreadmillService:GetMultiplier(player)`.
 
 **DoubleJump ability (hold E):** Server-validated special ability. Hold **E** through the full sequence (rise → forward arc → descent → `DownSupes`). Release E mid-ability to cancel into `Fall` / `Landing`. Cooldown starts when the ability begins (default 5s, even on cancel). Works grounded or mid-air. Tune phases, speeds, heights, and cooldown in `CharacterConfigs.DoubleJump`.
 

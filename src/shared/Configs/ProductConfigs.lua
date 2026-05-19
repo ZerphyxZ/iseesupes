@@ -23,6 +23,8 @@ ProductConfigs.DeveloperProducts = {
 ProductConfigs.Gamepasses = {
 	VIP = { Id = 0, Key = "VIP" } :: Gamepass,
 	DoubleCoins = { Id = 0, Key = "DoubleCoins" } :: Gamepass,
+	GoldTreadmill = { Id = 0, Key = "GoldTreadmill" } :: Gamepass,
+	DiamondTreadmill = { Id = 0, Key = "DiamondTreadmill" } :: Gamepass,
 }
 
 return ProductConfigs

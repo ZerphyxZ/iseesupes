@@ -90,4 +90,36 @@ function DoubleJumpLanding.shouldStartLeapDown(
 	return effectiveHeight <= triggerHeight
 end
 
+-- Cancel (release E): switch from Fall to LeapDown/Landing when close to or on ground.
+function DoubleJumpLanding.shouldStartCancelLanding(
+	humanoid: Humanoid,
+	root: BasePart,
+	hit: RaycastResult?,
+	rayParams: RaycastParams,
+	landingCfg: { [string]: any },
+	cancelCfg: { [string]: any },
+	phaseElapsed: number
+): boolean
+	local minFall = cancelCfg.MinFallTime or 0.08
+	if phaseElapsed < minFall then
+		return false
+	end
+
+	if DoubleJumpLanding.isGrounded(humanoid) then
+		return true
+	end
+
+	if DoubleJumpLanding.isGroundedForLanding(humanoid, root, rayParams, landingCfg) then
+		return true
+	end
+
+	if not hit then
+		return false
+	end
+
+	local effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(hit, root, humanoid, landingCfg)
+	local triggerHeight = cancelCfg.LandingTriggerHeight or landingCfg.TriggerHeightAboveSurface or 8
+	return effectiveHeight <= triggerHeight
+end
+
 return DoubleJumpLanding

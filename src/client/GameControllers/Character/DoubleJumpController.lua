@@ -1,10 +1,11 @@
 --!strict
 
+local ContentProvider = game:GetService("ContentProvider")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
@@ -56,6 +57,10 @@ local function isPhaseAdvance(fromPhase: string?, toPhase: string): boolean
 	if toRank >= PHASE_RANK[PHASE.CancelFall] then
 		return true
 	end
+	-- Cancel fall uses the same LeapDown landing phase as a full ability completion.
+	if toPhase == PHASE.LeapDown and (fromPhase == PHASE.CancelFall or fromPhase == PHASE.CancelLanding) then
+		return true
+	end
 	return toRank >= fromRank
 end
 
@@ -94,15 +99,19 @@ type CharacterAbilityState = {
 	downSupesGroundedFrames: number,
 	touchdownUprightApplied: boolean,
 	leapDownCommitted: boolean,
-	movementLocked: boolean,
-	savedWalkSpeed: number?,
+	cancelApproachStarted: boolean,
+	animPreloaded: boolean,
+	jumpLocked: boolean,
 	savedJumpHeight: number?,
+	locomotionReleasedAfterLanding: boolean,
+	landingGroundedAt: number?,
 }
 
 local characterStates: { [Model]: CharacterAbilityState } = {}
 
--- Set false to silence DownSupes debug lines in Studio Output.
-local DEBUG_DOWNSUPES = true
+local DEBUG_DOWNSUPES = DjCfg.Debug == true
+
+local globalDjAnimsPreloaded = false
 local DOWNSUPES_PULSE_SEC = 0.25
 
 type DownSupesDiagState = {
@@ -177,18 +186,13 @@ local function logDownSupes(event: string, reason: string?, fields: { [string]: 
 	warn(line)
 end
 
-type CameraAttachState = {
-	savedCameraType: Enum.CameraType,
-	savedCameraSubject: Instance?,
-}
-
-local cameraAttach: CameraAttachState? = nil
 local phaseAttrConn: RBXScriptConnection? = nil
 
 local CharacterController: any = nil
 
 local onPhaseChanged: (string) -> ()
 local enforceLandingAnim: (CharacterAbilityState) -> ()
+local setupCharacter: (Model) -> ()
 
 local function syncPhaseFromAttribute()
 	if not abilityActive then
@@ -201,7 +205,13 @@ local function syncPhaseFromAttribute()
 	end
 
 	if attrPhase == currentPhase then
-		if attrPhase == PHASE.LeanUp or attrPhase == PHASE.LeapDown then
+		if
+			attrPhase == PHASE.LeanUp
+			or attrPhase == PHASE.LeapDown
+			or attrPhase == PHASE.DownSupes
+			or attrPhase == PHASE.CancelFall
+			or attrPhase == PHASE.CancelLanding
+		then
 			local character = player.Character
 			if character then
 				local state = characterStates[character]
@@ -253,54 +263,6 @@ local function bindPhaseAttributeSync()
 	phaseAttrConn = player:GetAttributeChangedSignal(PHASE_ATTR):Connect(syncPhaseFromAttribute)
 end
 
-local function isCameraAttachEnabled(): boolean
-	local cfg = DjCfg.CameraAttach
-	return cfg == nil or cfg.Enabled ~= false
-end
-
-local function detachCamera()
-	local attach = cameraAttach
-	if not attach then
-		return
-	end
-
-	local cam = Workspace.CurrentCamera
-	if cam then
-		cam.CameraType = attach.savedCameraType
-		if attach.savedCameraSubject then
-			cam.CameraSubject = attach.savedCameraSubject
-		end
-	end
-
-	cameraAttach = nil
-end
-
-local function attachCamera(character: Model)
-	if not isCameraAttachEnabled() then
-		return
-	end
-
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return
-	end
-
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return
-	end
-
-	detachCamera()
-
-	cameraAttach = {
-		savedCameraType = cam.CameraType,
-		savedCameraSubject = cam.CameraSubject,
-	}
-
-	cam.CameraSubject = humanoid
-	cam.CameraType = Enum.CameraType.Attach
-end
-
 local function getAnimFolder(): Folder?
 	if animFolder then
 		return animFolder
@@ -327,44 +289,115 @@ local function getAnimationInFolder(folder: Folder, subFolderName: string, animN
 	return nil
 end
 
+local function validateAnimationId(anim: Animation, label: string): boolean
+	if anim.AnimationId == "" then
+		warn("[iseesupes] Animation has no AnimationId:", label)
+		return false
+	end
+	return true
+end
+
+local function collectDoubleJumpAnimations(folder: Folder): { Animation }?
+	local djAnims = DjCfg.Anims
+	local flightAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.FlightTransit)
+	local afterAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.AfterTransition)
+	local leanAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.LeanUp)
+	local leapAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.LeapDown)
+	local downAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.DownSupes)
+	local fallAnim = getAnimationInFolder(folder, DjCfg.CancelAnims.Folder, DjCfg.CancelAnims.Fall)
+	local landingAnim = getAnimationInFolder(folder, DjCfg.CancelAnims.Folder, DjCfg.CancelAnims.Landing)
+
+	if not flightAnim or not afterAnim or not leanAnim or not leapAnim or not downAnim or not fallAnim or not landingAnim then
+		warn(
+			"[iseesupes] DoubleJump setup failed: missing animations under",
+			AnimRoot.FolderName,
+			"/",
+			DjCfg.AnimFolder,
+			"or",
+			DjCfg.CancelAnims.Folder
+		)
+		return nil
+	end
+
+	local labels = {
+		{ flightAnim, "FlightTransit" },
+		{ afterAnim, "AfterTransition" },
+		{ leanAnim, "LeanUp" },
+		{ leapAnim, "LeapDown" },
+		{ downAnim, "DownSupes" },
+		{ fallAnim, "CancelFall" },
+		{ landingAnim, "CancelLanding" },
+	}
+	for _, entry in labels do
+		if not validateAnimationId(entry[1], entry[2]) then
+			return nil
+		end
+	end
+
+	return {
+		flightAnim,
+		afterAnim,
+		leanAnim,
+		leapAnim,
+		downAnim,
+		fallAnim,
+		landingAnim,
+	}
+end
+
+local function preloadDoubleJumpAnimations(anims: { Animation })
+	local ok, err = pcall(function()
+		ContentProvider:PreloadAsync(anims)
+	end)
+	if not ok then
+		warn("[iseesupes] DoubleJump animation preload failed:", err)
+	end
+end
+
+local function preloadDoubleJumpFromFolder(folder: Folder): boolean
+	local anims = collectDoubleJumpAnimations(folder)
+	if not anims then
+		return false
+	end
+	preloadDoubleJumpAnimations(anims)
+	globalDjAnimsPreloaded = true
+	return true
+end
+
 local function setAbilityBlocking(blocked: boolean)
 	if CharacterController and CharacterController.SetAbilityBlocking then
 		CharacterController:SetAbilityBlocking(blocked)
 	end
 end
 
-local function setMovementLocked(state: CharacterAbilityState, locked: boolean)
+local function setAbilityJumpLock(state: CharacterAbilityState, locked: boolean)
 	local humanoid = state.humanoid
 	if locked then
-		if not state.movementLocked then
-			state.savedWalkSpeed = humanoid.WalkSpeed
+		if not state.jumpLocked then
 			state.savedJumpHeight = humanoid.JumpHeight
-			state.movementLocked = true
+			state.jumpLocked = true
 		end
-		humanoid.WalkSpeed = 0
 		humanoid.JumpHeight = 0
 		return
 	end
 
-	if not state.movementLocked then
+	if not state.jumpLocked then
 		return
 	end
 
-	humanoid.WalkSpeed = state.savedWalkSpeed or 16
 	humanoid.JumpHeight = state.savedJumpHeight or 7.2
-	state.movementLocked = false
-	state.savedWalkSpeed = nil
+	state.jumpLocked = false
 	state.savedJumpHeight = nil
 end
 
-local function applyAbilityMovementLock(locked: boolean)
+local function applyAbilityJumpLock(locked: boolean)
 	local character = player.Character
 	if not character then
 		return
 	end
 	local state = characterStates[character]
 	if state then
-		setMovementLocked(state, locked)
+		setAbilityJumpLock(state, locked)
 	end
 end
 
@@ -376,16 +409,87 @@ local function flatUnit(vector: Vector3): Vector3
 	return flat.Unit
 end
 
+local SteerCfg = DjCfg.Steering
+
 local function getSteerThreshold(): number
-	return PhaseCfg.AfterTransition.SteerMoveThreshold or CharacterConfigs.Locomotion.MoveThreshold
+	return SteerCfg.SteerMoveThreshold
+		or PhaseCfg.AfterTransition.SteerMoveThreshold
+		or CharacterConfigs.Locomotion.MoveThreshold
 end
 
-local function getFlightDirection(humanoid: Humanoid, startCFrame: CFrame): Vector3
-	local move = humanoid.MoveDirection
+local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector3
+	local move = state.humanoid.MoveDirection
 	if move.Magnitude >= getSteerThreshold() then
 		return flatUnit(move)
 	end
-	return flatUnit(startCFrame.LookVector)
+
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return Vector3.zero
+	end
+
+	local forward = 0
+	local right = 0
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+		forward += 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+		forward -= 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+		right -= 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+		right += 1
+	end
+
+	if forward == 0 and right == 0 then
+		return Vector3.zero
+	end
+
+	local look = camera.CFrame.LookVector
+	local rightVector = camera.CFrame.RightVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	local flatRight = Vector3.new(rightVector.X, 0, rightVector.Z)
+	if flatLook.Magnitude < 0.01 then
+		return Vector3.zero
+	end
+	flatLook = flatLook.Unit
+	if flatRight.Magnitude > 0.01 then
+		flatRight = flatRight.Unit
+	else
+		flatRight = Vector3.new(-flatLook.Z, 0, flatLook.X)
+	end
+
+	return flatUnit(flatLook * forward + flatRight * right)
+end
+
+local function publishSteerInput(state: CharacterAbilityState)
+	if not abilityActive or not holdingLocally then
+		return
+	end
+
+	local steer = getCameraRelativeSteerInput(state)
+	pcall(function()
+		if steer.Magnitude >= getSteerThreshold() then
+			state.humanoid:Move(steer, false)
+		end
+	end)
+
+	pcall(function()
+		Knit.GetService("DoubleJumpService"):UpdateSteerInput(steer)
+	end)
+end
+
+local function applySteerToFlightDirection(state: CharacterAbilityState, dt: number)
+	if SteerCfg.Enabled == false then
+		return
+	end
+
+	local steer = getCameraRelativeSteerInput(state)
+	local target = if steer.Magnitude >= getSteerThreshold() then steer else state.flightDirection
+	local alpha = math.min(1, (SteerCfg.DirectionLerp or 10) * dt)
+	state.flightDirection = flatUnit(state.flightDirection:Lerp(target, alpha))
 end
 
 local function restoreUprightPose(root: BasePart, flightDir: Vector3)
@@ -425,7 +529,7 @@ local function applyClientOrientation(state: CharacterAbilityState, phase: strin
 		return
 	end
 
-	state.flightDirection = getFlightDirection(state.humanoid, state.startCFrame)
+	applySteerToFlightDirection(state, dt)
 
 	if phase == PHASE.FlightTransit then
 		local elapsed = os.clock() - state.phaseStartedAt
@@ -451,7 +555,7 @@ local function applyClientMovement(state: CharacterAbilityState, phase: string)
 	local vel: Vector3
 
 	if phase == PHASE.FlightTransit or phase == PHASE.AfterTransition then
-		state.flightDirection = getFlightDirection(state.humanoid, state.startCFrame)
+		applySteerToFlightDirection(state, 1 / 60)
 	end
 
 	if phase == PHASE.FlightTransit then
@@ -479,10 +583,13 @@ local function stopDownSupesHard(tracks: AbilityTracks, reason: string?)
 	end)
 end
 
-local function stopAbilityLandingTracks(state: CharacterAbilityState)
+local function stopAbilityLandingTracks(state: CharacterAbilityState, fadeTime: number?)
+	local fade = fadeTime or Loc.FadeTime
 	pcall(function()
-		state.tracks.leapDown:Stop(0)
-		state.tracks.downSupes:Stop(0)
+		state.tracks.leapDown:Stop(fade)
+		state.tracks.downSupes:Stop(fade)
+		state.tracks.fall:Stop(fade)
+		state.tracks.landing:Stop(fade)
 	end)
 end
 
@@ -590,6 +697,28 @@ local function playLeapDownLanding(state: CharacterAbilityState, reason: string?
 	applyTouchdownUprightOnce(state)
 end
 
+local function releaseLandingLocomotion(state: CharacterAbilityState)
+	if state.locomotionReleasedAfterLanding then
+		return
+	end
+	state.locomotionReleasedAfterLanding = true
+
+	setAbilityBlocking(false)
+
+	local landingFade = getLandingFadeTime()
+	local tracks = state.tracks
+	if tracks.leapDown.IsPlaying then
+		pcall(function()
+			tracks.leapDown:AdjustWeight(0.35, landingFade)
+			task.delay(landingFade, function()
+				if tracks.leapDown.IsPlaying then
+					tracks.leapDown:Stop(0.08)
+				end
+			end)
+		end)
+	end
+end
+
 enforceLandingAnim = function(state: CharacterAbilityState)
 	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -601,21 +730,106 @@ enforceLandingAnim = function(state: CharacterAbilityState)
 
 	if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
 		playLeanUpHold(state, "enforce_leanup")
-	elseif currentPhase == PHASE.LeapDown then
+	elseif
+		currentPhase == PHASE.LeapDown
+		or currentPhase == PHASE.CancelLanding
+		or (currentPhase == PHASE.CancelFall and state.leapDownCommitted)
+	then
 		if state.tracks.downSupes.IsPlaying then
 			stopDownSupesHard(state.tracks, "leapdown_phase")
 		end
 		if state.tracks.leanUp.IsPlaying then
 			stopLeanUpHard(state.tracks)
 		end
+		if state.tracks.fall.IsPlaying then
+			pcall(function()
+				state.tracks.fall:Stop(Loc.FadeTime)
+			end)
+		end
 		if grounded then
 			if not state.touchdownUprightApplied then
 				state.touchdownUprightApplied = true
 				applyTouchdownUprightOnce(state)
 			end
+			state.humanoid.PlatformStand = false
+			if not state.landingGroundedAt then
+				state.landingGroundedAt = os.clock()
+			end
 		else
 			state.touchdownUprightApplied = false
+			state.landingGroundedAt = nil
 		end
+	end
+end
+
+local function enforceCancelApproachLanding(state: CharacterAbilityState)
+	if not abilityActive then
+		return
+	end
+	if currentPhase ~= PHASE.CancelFall and currentPhase ~= PHASE.CancelLanding then
+		return
+	end
+	if state.cancelApproachStarted then
+		return
+	end
+	if state.leapDownCommitted and state.tracks.leapDown.IsPlaying then
+		return
+	end
+
+	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+
+	local cancelCfg = DjCfg.Cancel
+	local landingCfg = PhaseCfg.DownSupes
+	local started = state.cancelFallStartedAt or state.phaseStartedAt
+	local elapsed = os.clock() - started
+	local hit = DoubleJumpLanding.raycastDownFromRoot(
+		root,
+		cancelCfg.LandingRayLength or 250,
+		state.rayParams
+	)
+
+	if
+		not DoubleJumpLanding.shouldStartCancelLanding(
+			state.humanoid,
+			root,
+			hit,
+			state.rayParams,
+			landingCfg,
+			cancelCfg,
+			elapsed
+		)
+	then
+		return
+	end
+
+	state.cancelApproachStarted = true
+	state.humanoid.PlatformStand = false
+
+	if state.tracks.fall.IsPlaying then
+		pcall(function()
+			state.tracks.fall:Stop(Loc.FadeTime)
+		end)
+	end
+
+	state.leapDownCommitted = false
+	playLeapDownLanding(state, "cancel_approach")
+end
+
+local function tickLandingLocomotionRelease(state: CharacterAbilityState)
+	if state.locomotionReleasedAfterLanding or not state.landingGroundedAt then
+		return
+	end
+	if currentPhase ~= PHASE.LeapDown and currentPhase ~= PHASE.CancelLanding then
+		return
+	end
+
+	local landingCfg = PhaseCfg.DownSupes
+	local landingLock = landingCfg.LandingLockDuration or 0.2
+	if os.clock() - (state.landingGroundedAt :: number) >= landingLock then
+		releaseLandingLocomotion(state)
 	end
 end
 
@@ -625,6 +839,8 @@ local function tickLandingWatchdog(state: CharacterAbilityState)
 	end
 
 	enforceLandingAnim(state)
+	enforceCancelApproachLanding(state)
+	tickLandingLocomotionRelease(state)
 end
 
 local function playTrack(state: CharacterAbilityState, track: AnimationTrack, fadeTime: number?)
@@ -646,22 +862,33 @@ local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 		state.downSupesGroundedFrames = 0
 		state.humanoid.PlatformStand = false
 		playLeanUpHold(state, "playPhaseAnim")
-	elseif phase == PHASE.LeapDown then
-		state.touchdownUprightApplied = false
-		state.humanoid.PlatformStand = false
-		playLeapDownLanding(state, "playPhaseAnim")
 	elseif phase == PHASE.CancelFall then
 		state.cancelFallStartedAt = os.clock()
 		state.landingPlayed = false
+		state.cancelApproachStarted = false
+		state.leapDownCommitted = false
+		state.touchdownUprightApplied = false
+		state.humanoid.PlatformStand = false
 		playTrack(state, tracks.fall)
-	elseif phase == PHASE.CancelLanding then
-		state.landingPlayed = true
-		if state.currentTrack == tracks.fall then
+		enforceCancelApproachLanding(state)
+	elseif phase == PHASE.LeapDown or phase == PHASE.CancelLanding then
+		if phase == PHASE.CancelLanding then
+			state.landingPlayed = true
+			state.cancelApproachStarted = true
+		end
+		state.touchdownUprightApplied = false
+		state.locomotionReleasedAfterLanding = false
+		state.landingGroundedAt = nil
+		state.humanoid.PlatformStand = false
+		if state.tracks.fall.IsPlaying then
 			pcall(function()
-				tracks.fall:Stop(Loc.FadeTime)
+				state.tracks.fall:Stop(Loc.FadeTime)
 			end)
 		end
-		playTrack(state, tracks.landing)
+		if not state.tracks.leapDown.IsPlaying then
+			state.leapDownCommitted = false
+			playLeapDownLanding(state, "playPhaseAnim")
+		end
 	end
 end
 
@@ -709,8 +936,7 @@ local function onAbilityEnded()
 		grounded = grounded,
 	}, "B")
 	-- #endregion
-	applyAbilityMovementLock(false)
-	detachCamera()
+	applyAbilityJumpLock(false)
 	abilityActive = false
 	holdingLocally = false
 	currentPhase = nil
@@ -719,8 +945,8 @@ local function onAbilityEnded()
 	if character then
 		local state = characterStates[character]
 		if state then
-			stopAbilityLandingTracks(state)
 			stabilizeCharacter(character, state.flightDirection)
+			stopAbilityLandingTracks(state, Loc.FadeTime)
 			stopAllTracks(state)
 		end
 	end
@@ -734,8 +960,20 @@ local function onAbilityEnded()
 			characterStates[character].cancelFallStartedAt = nil
 			characterStates[character].landingPlayed = false
 			characterStates[character].leapDownCommitted = false
+			characterStates[character].cancelApproachStarted = false
+			characterStates[character].locomotionReleasedAfterLanding = false
+			characterStates[character].landingGroundedAt = nil
 		end
 	end
+end
+
+local function ensureAbilityState(character: Model): CharacterAbilityState?
+	local state = characterStates[character]
+	if state then
+		return state
+	end
+	setupCharacter(character)
+	return characterStates[character]
 end
 
 onPhaseChanged = function(phase: string)
@@ -746,7 +984,7 @@ onPhaseChanged = function(phase: string)
 		return
 	end
 
-	local state = characterStates[character]
+	local state = ensureAbilityState(character)
 	if not state then
 		return
 	end
@@ -755,7 +993,13 @@ onPhaseChanged = function(phase: string)
 
 	if phase == PHASE.FlightTransit then
 		state.currentPitch = PoseCfg.TransitStartPitch
-	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes or phase == PHASE.LeapDown or phase == PHASE.CancelFall then
+	elseif
+		phase == PHASE.LeanUp
+		or phase == PHASE.DownSupes
+		or phase == PHASE.LeapDown
+		or phase == PHASE.CancelFall
+		or phase == PHASE.CancelLanding
+	then
 		state.currentPitch = PoseCfg.UprightPitch
 		state.flightDirection = flatUnit(state.flightDirection)
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -782,18 +1026,15 @@ onPhaseChanged = function(phase: string)
 		phase = phase,
 		leapDownPlaying = tracks.leapDown.IsPlaying,
 		downSupesPlaying = tracks.downSupes.IsPlaying,
-		currentTrack = if state.currentTrack == tracks.downSupes
-			then "downSupes"
-			elseif state.currentTrack == tracks.leapDown
-			then "leapDown"
-			elseif state.currentTrack == tracks.leanUp
-			then "leanUp"
-			else "other"
+		afterTransitionPlaying = tracks.afterTransition.IsPlaying,
+		flightTransitPlaying = tracks.flightTransit.IsPlaying,
+		leanUpPlaying = tracks.leanUp.IsPlaying,
+		currentTrack = currentTrackName(state),
 	}, "B")
 	-- #endregion
 end
 
-local function setupCharacter(character: Model)
+setupCharacter = function(character: Model)
 	cleanupCharacter(character)
 
 	if not Features.UseDoubleJump then
@@ -802,21 +1043,29 @@ local function setupCharacter(character: Model)
 
 	local folder = getAnimFolder()
 	if not folder then
+		warn("[iseesupes] DoubleJump setup failed: animation folder not found:", AnimRoot.FolderName)
 		return
 	end
 
-	local djAnims = DjCfg.Anims
-	local flightAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.FlightTransit)
-	local afterAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.AfterTransition)
-	local leanAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.LeanUp)
-	local leapAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.LeapDown)
-	local downAnim = getAnimationInFolder(folder, DjCfg.AnimFolder, djAnims.DownSupes)
-	local fallAnim = getAnimationInFolder(folder, DjCfg.CancelAnims.Folder, DjCfg.CancelAnims.Fall)
-	local landingAnim = getAnimationInFolder(folder, DjCfg.CancelAnims.Folder, DjCfg.CancelAnims.Landing)
-
-	if not flightAnim or not afterAnim or not leanAnim or not leapAnim or not downAnim or not fallAnim or not landingAnim then
+	local collected = collectDoubleJumpAnimations(folder)
+	if not collected then
 		return
 	end
+
+	if not globalDjAnimsPreloaded then
+		task.spawn(function()
+			preloadDoubleJumpAnimations(collected)
+			globalDjAnimsPreloaded = true
+		end)
+	end
+
+	local flightAnim = collected[1]
+	local afterAnim = collected[2]
+	local leanAnim = collected[3]
+	local leapAnim = collected[4]
+	local downAnim = collected[5]
+	local fallAnim = collected[6]
+	local landingAnim = collected[7]
 
 	local humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
 	if not humanoid then
@@ -869,9 +1118,12 @@ local function setupCharacter(character: Model)
 		downSupesGroundedFrames = 0,
 		touchdownUprightApplied = false,
 		leapDownCommitted = false,
-		movementLocked = false,
-		savedWalkSpeed = nil,
+		cancelApproachStarted = false,
+		animPreloaded = true,
+		jumpLocked = false,
 		savedJumpHeight = nil,
+		locomotionReleasedAfterLanding = false,
+		landingGroundedAt = nil,
 	}
 	characterStates[character] = state
 
@@ -884,7 +1136,8 @@ local function setupCharacter(character: Model)
 
 	state.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if abilityActive and currentPhase then
-			setMovementLocked(state, true)
+			setAbilityJumpLock(state, true)
+			publishSteerInput(state)
 			syncPhaseFromAttribute()
 			tickLandingWatchdog(state)
 
@@ -895,32 +1148,6 @@ local function setupCharacter(character: Model)
 			end
 		end
 
-		if not abilityActive or currentPhase ~= PHASE.CancelFall then
-			return
-		end
-
-		local rootPart = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not rootPart or state.landingPlayed then
-			return
-		end
-
-		local started = state.cancelFallStartedAt
-		if not started then
-			return
-		end
-
-		if os.clock() - started < DjCfg.Cancel.MinFallTime then
-			return
-		end
-
-		local hit = workspace:Raycast(
-			rootPart.Position,
-			Vector3.new(0, -DjCfg.Cancel.LandingRayDistance, 0),
-			state.rayParams
-		)
-		if hit and rootPart.AssemblyLinearVelocity.Y < 0 then
-			-- Server drives CancelLanding phase; client only mirrors if needed early
-		end
 	end)
 
 	character.Destroying:Once(function()
@@ -956,8 +1183,8 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 				service:SetHolding(true)
 
 				local character = player.Character
-				if character and not characterStates[character] then
-					setupCharacter(character)
+				if character then
+					ensureAbilityState(character)
 				end
 
 				if character then
@@ -970,8 +1197,7 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 				end
 
 				setAbilityBlocking(true)
-				applyAbilityMovementLock(true)
-				attachCamera(character :: Model)
+				applyAbilityJumpLock(true)
 				task.defer(syncPhaseFromAttribute)
 
 				if currentPhase then
@@ -1020,6 +1246,9 @@ function DoubleJumpController:KnitStart()
 	local folder = ReplicatedStorage:WaitForChild(AnimRoot.FolderName, 30)
 	if folder and folder:IsA("Folder") then
 		animFolder = folder
+		task.spawn(function()
+			preloadDoubleJumpFromFolder(folder)
+		end)
 	end
 
 	bindAction()
@@ -1028,22 +1257,26 @@ function DoubleJumpController:KnitStart()
 	local DoubleJumpService = getDoubleJumpService()
 
 	DoubleJumpService.PhaseChanged:Connect(function(phase: string)
+		local character = player.Character
 		if not abilityActive and phase == PHASE.FlightTransit then
 			abilityActive = true
-			local character = player.Character
-			if character and not characterStates[character] then
-				setupCharacter(character)
-			end
 			if character then
+				ensureAbilityState(character)
 				local abilityState = characterStates[character]
 				if abilityState then
 					initFlightDirection(abilityState)
 				end
 			end
 			setAbilityBlocking(true)
-			applyAbilityMovementLock(true)
-			attachCamera(character)
+			applyAbilityJumpLock(true)
 			onPhaseChanged(phase)
+		elseif abilityActive then
+			if character then
+				ensureAbilityState(character)
+			end
+			if character and characterStates[character] then
+				onPhaseChanged(phase)
+			end
 		end
 	end)
 

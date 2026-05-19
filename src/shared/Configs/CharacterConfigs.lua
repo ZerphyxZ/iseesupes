@@ -40,7 +40,8 @@ local CharacterConfigs = {
 		ActionName = "SupesDoubleJump",
 		Key = "E",
 		Cooldown = 5,
-		MaxAbilityDuration = 4,
+		MaxAbilityDuration = 7,
+		Debug = false,
 
 		AnimFolder = "DoubleJump",
 		Anims = {
@@ -99,8 +100,9 @@ local CharacterConfigs = {
 				UprightSnapHeight = 6,
 				ApproachDescentSpeed = 12,
 				UsePlatformStandOnApproach = false,
-				MinGroundedPlayDuration = 1,
-				SettleDuration = 0.35,
+				LandingLockDuration = 0.2,
+				MinGroundedPlayDuration = 0.4,
+				SettleDuration = 0.15,
 				MaxStableVelocityY = 4,
 				MaxDuration = 2.5,
 			},
@@ -108,14 +110,21 @@ local CharacterConfigs = {
 
 		LandingFadeTime = 0.2,
 
-		CameraAttach = {
+		Steering = {
 			Enabled = true,
+			DirectionLerp = 10,
+			HorizontalSpeed = 45,
+			DescentHorizontalBlend = 0.35,
+			SteerMoveThreshold = 0.1,
 		},
 
 		Cancel = {
-			LandingRayDistance = 4,
-			MinFallTime = 0.1,
+			LandingRayLength = 250,
+			LandingTriggerHeight = 8,
+			MinFallTime = 0.08,
 			MaxFallDuration = 6,
+			SettleDuration = 0.35,
+			MaxLandingDuration = 1.25,
 		},
 
 		Activation = {

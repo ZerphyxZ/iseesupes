@@ -8,12 +8,11 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
+local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 
-local DjCfg = CharacterConfigs.DoubleJump
-local PhaseCfg = DjCfg.Phases
-local PoseCfg = DjCfg.SupermanPose
-local SteerCfg = DjCfg.Steering
 local Features = CharacterConfigs.Features
+
+type DjTuning = LevelDesignTuning.DoubleJumpTuning
 
 local PHASE = {
 	FlightTransit = "FlightTransit",
@@ -98,52 +97,64 @@ local function raycastDown(origin: Vector3, length: number, params: RaycastParam
 	return DoubleJumpLanding.raycastDown(origin, length, params)
 end
 
-local function getSteerThreshold(): number
-	return SteerCfg.SteerMoveThreshold
-		or PhaseCfg.AfterTransition.SteerMoveThreshold
+local function getSteerThreshold(tuning: DjTuning): number
+	local steerCfg = tuning.Steering
+	local phaseCfg = tuning.Phases
+	return steerCfg.SteerMoveThreshold
+		or phaseCfg.AfterTransition.SteerMoveThreshold
 		or CharacterConfigs.Locomotion.MoveThreshold
 end
 
-local function isSteeringEnabled(): boolean
-	return SteerCfg.Enabled ~= false
+local function isSteeringEnabled(tuning: DjTuning): boolean
+	return tuning.Steering.Enabled ~= false
 end
 
-local function getDescentHorizontalBlend(): number
-	if typeof(SteerCfg.DescentHorizontalBlend) == "number" then
-		return SteerCfg.DescentHorizontalBlend
+local function getCancelFallSpeed(tuning: DjTuning): number
+	local cancel = tuning.Cancel
+	if typeof(cancel.FallSpeed) == "number" and cancel.FallSpeed > 0 then
+		return cancel.FallSpeed
 	end
-	return PhaseCfg.LeapDown.HorizontalLerp or 0.35
+	return tuning.Phases.LeapDown.DescentSpeed or 70
 end
 
-local function getSteerDirection(session: AbilitySession): Vector3
+local function getDescentHorizontalBlend(tuning: DjTuning): number
+	local steerCfg = tuning.Steering
+	if typeof(steerCfg.DescentHorizontalBlend) == "number" then
+		return steerCfg.DescentHorizontalBlend
+	end
+	return tuning.Phases.LeapDown.HorizontalLerp or 0.35
+end
+
+local function getSteerDirection(session: AbilitySession, tuning: DjTuning): Vector3
+	local threshold = getSteerThreshold(tuning)
 	local clientSteer = session.clientSteerDirection
-	if clientSteer and clientSteer.Magnitude >= getSteerThreshold() then
+	if clientSteer and clientSteer.Magnitude >= threshold then
 		return flatUnit(clientSteer)
 	end
 
 	local move = session.humanoid.MoveDirection
-	if move.Magnitude >= getSteerThreshold() then
+	if move.Magnitude >= threshold then
 		return flatUnit(move)
 	end
 	return flatUnit(session.flightDirection)
 end
 
-local function applySteerToFlightDirection(session: AbilitySession, dt: number)
-	if not isSteeringEnabled() then
+local function applySteerToFlightDirection(session: AbilitySession, dt: number, tuning: DjTuning)
+	if not isSteeringEnabled(tuning) then
 		return
 	end
 
-	local target = getSteerDirection(session)
-	local alpha = math.min(1, (SteerCfg.DirectionLerp or 10) * dt)
+	local target = getSteerDirection(session, tuning)
+	local alpha = math.min(1, (tuning.Steering.DirectionLerp or 10) * dt)
 	session.flightDirection = flatUnit(session.flightDirection:Lerp(target, alpha))
 end
 
-local function blendHorizontalVelocity(session: AbilitySession, baseVel: Vector3, horizontalScale: number): Vector3
-	if horizontalScale <= 0 or not isSteeringEnabled() then
+local function blendHorizontalVelocity(session: AbilitySession, baseVel: Vector3, horizontalScale: number, tuning: DjTuning): Vector3
+	if horizontalScale <= 0 or not isSteeringEnabled(tuning) then
 		return baseVel
 	end
 
-	local hSpeed = SteerCfg.HorizontalSpeed or 45
+	local hSpeed = tuning.Steering.HorizontalSpeed or 45
 	return baseVel + session.flightDirection * hSpeed * horizontalScale
 end
 
@@ -188,8 +199,8 @@ local function cframeWithPitch(position: Vector3, flightDir: Vector3, pitchDeg: 
 	return base * CFrame.Angles(math.rad(pitchDeg), 0, 0)
 end
 
-local function lerpPitch(session: AbilitySession, targetPitch: number, dt: number)
-	local alpha = math.min(1, PoseCfg.PitchLerp * dt)
+local function lerpPitch(session: AbilitySession, targetPitch: number, dt: number, tuning: DjTuning)
+	local alpha = math.min(1, tuning.SupermanPose.PitchLerp * dt)
 	session.currentPitch = session.currentPitch + (targetPitch - session.currentPitch) * alpha
 end
 
@@ -205,9 +216,9 @@ local function computeSupermanVelocity(session: AbilitySession, riseSpeed: numbe
 	return session.flightDirection * forwardSpeed + Vector3.new(0, riseSpeed, 0)
 end
 
-local function applyDownSupesEntrySnap(session: AbilitySession)
-	local downCfg = PhaseCfg.DownSupes
-	local leapCfg = PhaseCfg.LeapDown
+local function applyDownSupesEntrySnap(session: AbilitySession, tuning: DjTuning)
+	local downCfg = tuning.Phases.DownSupes
+	local leapCfg = tuning.Phases.LeapDown
 	local snapHeight = downCfg.UprightSnapHeight or 6
 	local hit = raycastDown(session.root.Position, leapCfg.SurfaceRayLength, session.rayParams)
 	if not hit then
@@ -230,11 +241,11 @@ local function applyTouchdownUprightOnce(session: AbilitySession)
 	session.root.AssemblyAngularVelocity = Vector3.zero
 end
 
-local function phaseRequiresHold(phase: string): boolean
+local function phaseRequiresHold(phase: string, tuning: DjTuning): boolean
 	if phase == PHASE.AfterTransition then
-		return PhaseCfg.AfterTransition.RequiresHold == true
+		return tuning.Phases.AfterTransition.RequiresHold == true
 	elseif phase == PHASE.LeanUp then
-		return PhaseCfg.LeanUp.RequiresHold == true
+		return tuning.Phases.LeanUp.RequiresHold == true
 	end
 	return false
 end
@@ -248,6 +259,9 @@ local function canCancelOnRelease(phase: string): boolean
 end
 
 function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
+	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	local poseCfg = tuning.SupermanPose
+
 	session.phase = phase
 	session.phaseStartedAt = os.clock()
 	if phase == PHASE.CancelFall then
@@ -256,19 +270,21 @@ function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
 		session.groundedAt = nil
 		session.humanoid.PlatformStand = false
 		restoreUprightPose(session.root, session.flightDirection)
+		local fallSpeed = getCancelFallSpeed(tuning)
+		applyVelocityOnly(session.root, Vector3.new(0, -fallSpeed, 0))
 	elseif phase == PHASE.CancelLanding then
 		session.groundedAt = nil
 		session.humanoid.PlatformStand = false
 		restoreUprightPose(session.root, session.flightDirection)
 	elseif phase == PHASE.LeanUp then
-		session.currentPitch = PoseCfg.UprightPitch
+		session.currentPitch = poseCfg.UprightPitch
 		session.flightDirection = flatUnit(session.flightDirection)
 		session.groundedAt = nil
 		session.descentStartedAt = nil
 		session.debugLoggedLeapDownTrigger = false
 		restoreUprightPose(session.root, session.flightDirection)
 	elseif phase == PHASE.LeapDown then
-		session.currentPitch = PoseCfg.UprightPitch
+		session.currentPitch = poseCfg.UprightPitch
 		session.flightDirection = flatUnit(session.flightDirection)
 		session.groundedAt = nil
 		session.leapDownFirstGroundedAt = nil
@@ -317,8 +333,11 @@ function DoubleJumpService:_transitionToCancelFall(session: AbilitySession)
 	if session.phase == PHASE.CancelFall or session.phase == PHASE.CancelLanding then
 		return
 	end
+	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	local phaseCfg = tuning.Phases
+
 	if session.phase == PHASE.LeapDown then
-		local landingCfg = PhaseCfg.DownSupes
+		local landingCfg = phaseCfg.DownSupes
 		local minPlay = landingCfg.MinGroundedPlayDuration or 1
 		if not session.leapDownFirstGroundedAt then
 			return
@@ -327,8 +346,8 @@ function DoubleJumpService:_transitionToCancelFall(session: AbilitySession)
 			return
 		end
 	end
-	local landingCfg = PhaseCfg.DownSupes
-	local cancelCfg = DjCfg.Cancel
+	local landingCfg = phaseCfg.DownSupes
+	local cancelCfg = tuning.Cancel
 	local hit = DoubleJumpLanding.raycastDownFromRoot(
 		session.root,
 		cancelCfg.LandingRayLength or 250,
@@ -368,11 +387,12 @@ function DoubleJumpService:_canActivate(player: Player, humanoid: Humanoid): (bo
 		return false, "dead"
 	end
 
+	local tuning = LevelDesignTuning.getDoubleJump(player)
 	local grounded = isGrounded(humanoid)
-	if grounded and not DjCfg.Activation.AllowGrounded then
+	if grounded and not tuning.Activation.AllowGrounded then
 		return false, "grounded"
 	end
-	if not grounded and not DjCfg.Activation.AllowAirborne then
+	if not grounded and not tuning.Activation.AllowAirborne then
 		return false, "airborne"
 	end
 
@@ -380,6 +400,10 @@ function DoubleJumpService:_canActivate(player: Player, humanoid: Humanoid): (bo
 end
 
 function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
+	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	local phaseCfg = tuning.Phases
+	local poseCfg = tuning.SupermanPose
+
 	local now = os.clock()
 	local root = session.root
 	local humanoid = session.humanoid
@@ -389,7 +413,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		return
 	end
 
-	if now - session.abilityStartedAt >= DjCfg.MaxAbilityDuration then
+	if now - session.abilityStartedAt >= tuning.MaxAbilityDuration then
 		if session.phase ~= PHASE.CancelFall and session.phase ~= PHASE.CancelLanding then
 			self:_transitionToCancelFall(session)
 		end
@@ -398,19 +422,19 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	local phase = session.phase
 	local phaseElapsed = now - session.phaseStartedAt
 
-	if phaseRequiresHold(phase) and not session.holdingE then
+	if phaseRequiresHold(phase, tuning) and not session.holdingE then
 		self:_transitionToCancelFall(session)
 		return
 	end
 
 	if phase == PHASE.FlightTransit then
-		local cfg = PhaseCfg.FlightTransit
-		applySteerToFlightDirection(session, dt)
+		local cfg = phaseCfg.FlightTransit
+		applySteerToFlightDirection(session, dt, tuning)
 
 		local progress = math.clamp(phaseElapsed / cfg.Duration, 0, 1)
-		local targetPitch = PoseCfg.TransitStartPitch
-			+ (PoseCfg.TransitEndPitch - PoseCfg.TransitStartPitch) * progress
-		local transitAlpha = math.min(1, PoseCfg.TransitPitchLerp * dt)
+		local targetPitch = poseCfg.TransitStartPitch
+			+ (poseCfg.TransitEndPitch - poseCfg.TransitStartPitch) * progress
+		local transitAlpha = math.min(1, poseCfg.TransitPitchLerp * dt)
 		session.currentPitch = session.currentPitch + (targetPitch - session.currentPitch) * transitAlpha
 
 		local nudge = cfg.ForwardNudgeSpeed or 0
@@ -424,10 +448,10 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 
 	if phase == PHASE.AfterTransition then
-		local cfg = PhaseCfg.AfterTransition
-		applySteerToFlightDirection(session, dt)
+		local cfg = phaseCfg.AfterTransition
+		applySteerToFlightDirection(session, dt, tuning)
 		local vel = computeSupermanVelocity(session, cfg.RiseSpeed, cfg.ForwardSpeed)
-		lerpPitch(session, PoseCfg.FlightPitch, dt)
+		lerpPitch(session, poseCfg.FlightPitch, dt, tuning)
 		applyFlightOrientation(session, vel)
 
 		local heightGain = root.Position.Y - session.startPosition.Y
@@ -450,17 +474,23 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 
 	if phase == PHASE.LeanUp then
-		local cfg = PhaseCfg.LeanUp
-		local descentCfg = PhaseCfg.LeapDown
-		local landingCfg = PhaseCfg.DownSupes
-		local descentBlend = getDescentHorizontalBlend()
+		local cfg = phaseCfg.LeanUp
+		local descentCfg = phaseCfg.LeapDown
+		local landingCfg = phaseCfg.DownSupes
+		local descentBlend = getDescentHorizontalBlend(tuning)
 
 		root.AssemblyAngularVelocity = Vector3.zero
-		applySteerToFlightDirection(session, dt)
+		applySteerToFlightDirection(session, dt, tuning)
 		restoreUprightPose(root, session.flightDirection)
 
 		local dist = flatDistance(session.startPosition, root.Position)
-		local inDescent = dist >= cfg.ForwardDistance or phaseElapsed >= cfg.MaxDuration
+		local maxPhaseTime = LevelDesignTuning.getLeanPhaseMaxDuration(
+			cfg.ForwardSpeed,
+			cfg.ForwardDistance,
+			cfg.MaxDuration,
+			dist
+		)
+		local inDescent = dist >= cfg.ForwardDistance or phaseElapsed >= maxPhaseTime
 
 		if not inDescent then
 			applyVelocityOnly(root, session.flightDirection * cfg.ForwardSpeed)
@@ -518,7 +548,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 			vel = Vector3.new(0, -approachSpeed, 0)
 		end
 
-		applyVelocityOnly(root, blendHorizontalVelocity(session, vel, descentBlend))
+		applyVelocityOnly(root, blendHorizontalVelocity(session, vel, descentBlend, tuning))
 
 		local maxDuration = landingCfg.MaxDuration or 2
 		if descentElapsed >= maxDuration then
@@ -528,28 +558,44 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 
 	if phase == PHASE.LeapDown then
-		local cfg = PhaseCfg.DownSupes
+		local cfg = phaseCfg.DownSupes
 		local landingLock = cfg.LandingLockDuration or 0.2
 		local minGroundedPlay = cfg.MinGroundedPlayDuration or 0.4
 		local settleDuration = cfg.SettleDuration or 0.15
 		local endGroundedAfter = math.max(minGroundedPlay, settleDuration)
 		local maxDuration = cfg.MaxDuration or 2.5
 		local approachSpeed = cfg.ApproachDescentSpeed or 12
-		local descentBlend = getDescentHorizontalBlend()
+		local descentBlend = getDescentHorizontalBlend(tuning)
 
 		root.AssemblyAngularVelocity = Vector3.zero
 
-		local landingCfg = PhaseCfg.DownSupes
+		local landingCfg = phaseCfg.DownSupes
 		local grounded = DoubleJumpLanding.isGroundedForLanding(humanoid, root, session.rayParams, landingCfg)
 		if not grounded then
 			session.groundedAt = nil
 			session.landingControlReleased = false
-			applySteerToFlightDirection(session, dt)
 			restoreUprightPose(root, session.flightDirection)
-			applyVelocityOnly(
+
+			local fallSpeed = getCancelFallSpeed(tuning)
+			local hit = DoubleJumpLanding.raycastDownFromRoot(
 				root,
-				blendHorizontalVelocity(session, Vector3.new(0, -approachSpeed, 0), descentBlend)
+				phaseCfg.LeapDown.SurfaceRayLength or 250,
+				session.rayParams
 			)
+			if hit then
+				local effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(
+					hit,
+					root,
+					humanoid,
+					landingCfg
+				)
+				local softHeight = (landingCfg.TriggerHeightAboveSurface or 6) + 2
+				if effectiveHeight <= softHeight then
+					fallSpeed = approachSpeed
+				end
+			end
+
+			applyVelocityOnly(root, Vector3.new(0, -fallSpeed, 0))
 			return
 		end
 
@@ -593,21 +639,21 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 
 		if phaseElapsed >= maxDuration then
 			self:_endAbility(session.player)
+			return
 		end
+
 		return
 	end
 
 	if phase == PHASE.CancelFall then
-		local cancelCfg = DjCfg.Cancel
-		local landingCfg = PhaseCfg.DownSupes
+		local cancelCfg = tuning.Cancel
+		local landingCfg = phaseCfg.DownSupes
 		local cancelStarted = session.cancelFallStartedAt or now
 		local fallElapsed = now - cancelStarted
-		local approachSpeed = landingCfg.ApproachDescentSpeed or 12
-		local descentBlend = getDescentHorizontalBlend() * 0.5
+		local fallSpeed = getCancelFallSpeed(tuning)
 
 		humanoid.PlatformStand = false
 		root.AssemblyAngularVelocity = Vector3.zero
-		applySteerToFlightDirection(session, dt)
 		restoreUprightPose(root, session.flightDirection)
 
 		if not session.landingSignaled then
@@ -632,10 +678,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 				return
 			end
 
-			applyVelocityOnly(
-				root,
-				blendHorizontalVelocity(session, Vector3.new(0, -approachSpeed, 0), descentBlend)
-			)
+			applyVelocityOnly(root, Vector3.new(0, -fallSpeed, 0))
 		end
 
 		if fallElapsed >= cancelCfg.MaxFallDuration then
@@ -646,13 +689,12 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 
 	if phase == PHASE.CancelLanding then
 		-- Legacy phase: use LeapDown landing physics (same as holding E through the jump).
-		local landingCfg = PhaseCfg.DownSupes
+		local landingCfg = phaseCfg.DownSupes
 		local landingLock = landingCfg.LandingLockDuration or 0.2
 		local minGroundedPlay = landingCfg.MinGroundedPlayDuration or 0.4
 		local settleDuration = landingCfg.SettleDuration or 0.15
 		local endGroundedAfter = math.max(minGroundedPlay, settleDuration)
-		local approachSpeed = landingCfg.ApproachDescentSpeed or 12
-		local descentBlend = getDescentHorizontalBlend() * 0.5
+		local fallSpeed = getCancelFallSpeed(tuning)
 
 		root.AssemblyAngularVelocity = Vector3.zero
 		humanoid.PlatformStand = false
@@ -661,12 +703,8 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		if not grounded then
 			session.groundedAt = nil
 			session.landingControlReleased = false
-			applySteerToFlightDirection(session, dt)
 			restoreUprightPose(root, session.flightDirection)
-			applyVelocityOnly(
-				root,
-				blendHorizontalVelocity(session, Vector3.new(0, -approachSpeed, 0), descentBlend)
-			)
+			applyVelocityOnly(root, Vector3.new(0, -fallSpeed, 0))
 			return
 		end
 
@@ -718,7 +756,14 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		return false, reason or "rejected"
 	end
 
-	cooldownEndsAt[player] = os.clock() + DjCfg.Cooldown
+	local tuning = LevelDesignTuning.getDoubleJump(player)
+	local poseCfg = tuning.SupermanPose
+
+	cooldownEndsAt[player] = os.clock() + tuning.Cooldown
+
+	if RunService:IsStudio() then
+		print("[iseesupes] E ability using server tuning:", LevelDesignTuning.formatActiveTuning(player))
+	end
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -742,7 +787,7 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		landingSignaled = false,
 		diedConn = nil,
 		flightDirection = flatUnit(startCFrame.LookVector),
-		currentPitch = PoseCfg.TransitStartPitch,
+		currentPitch = poseCfg.TransitStartPitch,
 		groundedAt = nil,
 		leapDownFirstGroundedAt = nil,
 		leapDownTouchdown = false,
@@ -783,7 +828,8 @@ function DoubleJumpService.Client:UpdateSteerInput(player: Player, direction: Ve
 	end
 
 	local flat = Vector3.new(direction.X, 0, direction.Z)
-	if flat.Magnitude >= getSteerThreshold() then
+	local tuning = LevelDesignTuning.getDoubleJump(player)
+	if flat.Magnitude >= getSteerThreshold(tuning) then
 		session.clientSteerDirection = flatUnit(flat)
 	else
 		session.clientSteerDirection = nil

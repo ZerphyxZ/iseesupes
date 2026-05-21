@@ -11,13 +11,16 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
+local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 
 local AnimRoot = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
 local DjCfg = CharacterConfigs.DoubleJump
-local PhaseCfg = DjCfg.Phases
-local PoseCfg = DjCfg.SupermanPose
 local Features = CharacterConfigs.Features
+
+local function getTuning()
+	return LevelDesignTuning.getDoubleJump(Players.LocalPlayer)
+end
 
 local PHASE = {
 	FlightTransit = "FlightTransit",
@@ -191,6 +194,7 @@ local phaseAttrConn: RBXScriptConnection? = nil
 local CharacterController: any = nil
 
 local onPhaseChanged: (string) -> ()
+local onAbilityEnded: () -> ()
 local enforceLandingAnim: (CharacterAbilityState) -> ()
 local setupCharacter: (Model) -> ()
 
@@ -200,7 +204,13 @@ local function syncPhaseFromAttribute()
 	end
 
 	local attrPhase = player:GetAttribute(PHASE_ATTR)
-	if typeof(attrPhase) ~= "string" or attrPhase == "" then
+	if attrPhase == nil or (typeof(attrPhase) == "string" and attrPhase == "") then
+		if abilityActive then
+			onAbilityEnded()
+		end
+		return
+	end
+	if typeof(attrPhase) ~= "string" then
 		return
 	end
 
@@ -409,11 +419,12 @@ local function flatUnit(vector: Vector3): Vector3
 	return flat.Unit
 end
 
-local SteerCfg = DjCfg.Steering
-
 local function getSteerThreshold(): number
-	return SteerCfg.SteerMoveThreshold
-		or PhaseCfg.AfterTransition.SteerMoveThreshold
+	local tuning = getTuning()
+	local steerCfg = tuning.Steering
+	local phaseCfg = tuning.Phases
+	return steerCfg.SteerMoveThreshold
+		or phaseCfg.AfterTransition.SteerMoveThreshold
 		or CharacterConfigs.Locomotion.MoveThreshold
 end
 
@@ -482,13 +493,14 @@ local function publishSteerInput(state: CharacterAbilityState)
 end
 
 local function applySteerToFlightDirection(state: CharacterAbilityState, dt: number)
-	if SteerCfg.Enabled == false then
+	local steerCfg = getTuning().Steering
+	if steerCfg.Enabled == false then
 		return
 	end
 
 	local steer = getCameraRelativeSteerInput(state)
 	local target = if steer.Magnitude >= getSteerThreshold() then steer else state.flightDirection
-	local alpha = math.min(1, (SteerCfg.DirectionLerp or 10) * dt)
+	local alpha = math.min(1, (steerCfg.DirectionLerp or 10) * dt)
 	state.flightDirection = flatUnit(state.flightDirection:Lerp(target, alpha))
 end
 
@@ -515,7 +527,7 @@ local function cframeWithPitch(position: Vector3, flightDir: Vector3, pitchDeg: 
 end
 
 local function lerpPitch(state: CharacterAbilityState, targetPitch: number, dt: number)
-	local alpha = math.min(1, PoseCfg.PitchLerp * dt)
+	local alpha = math.min(1, getTuning().SupermanPose.PitchLerp * dt)
 	state.currentPitch = state.currentPitch + (targetPitch - state.currentPitch) * alpha
 end
 
@@ -531,16 +543,17 @@ local function applyClientOrientation(state: CharacterAbilityState, phase: strin
 
 	applySteerToFlightDirection(state, dt)
 
+	local poseCfg = getTuning().SupermanPose
 	if phase == PHASE.FlightTransit then
 		local elapsed = os.clock() - state.phaseStartedAt
-		local duration = PhaseCfg.FlightTransit.Duration
+		local duration = getTuning().Phases.FlightTransit.Duration
 		local progress = if duration > 0 then math.clamp(elapsed / duration, 0, 1) else 1
-		local targetPitch = PoseCfg.TransitStartPitch
-			+ (PoseCfg.TransitEndPitch - PoseCfg.TransitStartPitch) * progress
-		local alpha = math.min(1, PoseCfg.TransitPitchLerp * dt)
+		local targetPitch = poseCfg.TransitStartPitch
+			+ (poseCfg.TransitEndPitch - poseCfg.TransitStartPitch) * progress
+		local alpha = math.min(1, poseCfg.TransitPitchLerp * dt)
 		state.currentPitch = state.currentPitch + (targetPitch - state.currentPitch) * alpha
 	else
-		lerpPitch(state, PoseCfg.FlightPitch, dt)
+		lerpPitch(state, poseCfg.FlightPitch, dt)
 	end
 
 	root.CFrame = cframeWithPitch(root.Position, state.flightDirection, state.currentPitch)
@@ -558,11 +571,12 @@ local function applyClientMovement(state: CharacterAbilityState, phase: string)
 		applySteerToFlightDirection(state, 1 / 60)
 	end
 
+	local phaseCfg = getTuning().Phases
 	if phase == PHASE.FlightTransit then
-		local nudge = PhaseCfg.FlightTransit.ForwardNudgeSpeed or 0
+		local nudge = phaseCfg.FlightTransit.ForwardNudgeSpeed or 0
 		vel = if nudge > 0 then state.flightDirection * nudge else Vector3.zero
 	elseif phase == PHASE.AfterTransition then
-		local cfg = PhaseCfg.AfterTransition
+		local cfg = phaseCfg.AfterTransition
 		vel = state.flightDirection * cfg.ForwardSpeed + Vector3.new(0, cfg.RiseSpeed, 0)
 	else
 		return
@@ -619,7 +633,7 @@ local function stopCurrentTrack(state: CharacterAbilityState, reason: string?)
 end
 
 local function getLandingFadeTime(): number
-	return DjCfg.LandingFadeTime or Loc.FadeTime
+	return getTuning().LandingFadeTime or Loc.FadeTime
 end
 
 local function applyTouchdownUprightOnce(state: CharacterAbilityState)
@@ -725,11 +739,16 @@ enforceLandingAnim = function(state: CharacterAbilityState)
 		return
 	end
 
-	local landingCfg = PhaseCfg.DownSupes
+	local landingCfg = getTuning().Phases.DownSupes
 	local grounded = DoubleJumpLanding.isGroundedForLanding(state.humanoid, root, state.rayParams, landingCfg)
 
 	if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
-		playLeanUpHold(state, "enforce_leanup")
+		if grounded then
+			stopLeanUpHard(state.tracks)
+			playLeapDownLanding(state, "enforce_leanup_grounded")
+		else
+			playLeanUpHold(state, "enforce_leanup")
+		end
 	elseif
 		currentPhase == PHASE.LeapDown
 		or currentPhase == PHASE.CancelLanding
@@ -781,8 +800,9 @@ local function enforceCancelApproachLanding(state: CharacterAbilityState)
 		return
 	end
 
-	local cancelCfg = DjCfg.Cancel
-	local landingCfg = PhaseCfg.DownSupes
+	local tuning = getTuning()
+	local cancelCfg = tuning.Cancel
+	local landingCfg = tuning.Phases.DownSupes
 	local started = state.cancelFallStartedAt or state.phaseStartedAt
 	local elapsed = os.clock() - started
 	local hit = DoubleJumpLanding.raycastDownFromRoot(
@@ -826,10 +846,38 @@ local function tickLandingLocomotionRelease(state: CharacterAbilityState)
 		return
 	end
 
-	local landingCfg = PhaseCfg.DownSupes
+	local landingCfg = getTuning().Phases.DownSupes
 	local landingLock = landingCfg.LandingLockDuration or 0.2
 	if os.clock() - (state.landingGroundedAt :: number) >= landingLock then
 		releaseLandingLocomotion(state)
+	end
+end
+
+local function tickLandingAnimFailsafe(state: CharacterAbilityState)
+	if currentPhase ~= PHASE.LeapDown and currentPhase ~= PHASE.CancelLanding then
+		return
+	end
+
+	local elapsed = os.clock() - state.phaseStartedAt
+	local landingCfg = getTuning().Phases.DownSupes
+	local maxLand = (landingCfg.MaxDuration or 2.5) + 0.75
+
+	if elapsed < maxLand then
+		return
+	end
+
+	stopLeanUpHard(state.tracks)
+	stopDownSupesHard(state.tracks, "landing_failsafe")
+	pcall(function()
+		if state.tracks.leapDown.IsPlaying then
+			state.tracks.leapDown:Stop(0.1)
+		end
+	end)
+	state.leapDownCommitted = false
+	releaseLandingLocomotion(state)
+
+	if elapsed > maxLand + 1.5 and abilityActive then
+		onAbilityEnded()
 	end
 end
 
@@ -841,6 +889,7 @@ local function tickLandingWatchdog(state: CharacterAbilityState)
 	enforceLandingAnim(state)
 	enforceCancelApproachLanding(state)
 	tickLandingLocomotionRelease(state)
+	tickLandingAnimFailsafe(state)
 end
 
 local function playTrack(state: CharacterAbilityState, track: AnimationTrack, fadeTime: number?)
@@ -921,7 +970,7 @@ local function stabilizeCharacter(character: Model, flightDir: Vector3?)
 	end
 end
 
-local function onAbilityEnded()
+onAbilityEnded = function()
 	local character = player.Character
 	local grounded = false
 	if character then
@@ -992,7 +1041,7 @@ onPhaseChanged = function(phase: string)
 	state.phaseStartedAt = os.clock()
 
 	if phase == PHASE.FlightTransit then
-		state.currentPitch = PoseCfg.TransitStartPitch
+		state.currentPitch = getTuning().SupermanPose.TransitStartPitch
 	elseif
 		phase == PHASE.LeanUp
 		or phase == PHASE.DownSupes
@@ -1000,7 +1049,7 @@ onPhaseChanged = function(phase: string)
 		or phase == PHASE.CancelFall
 		or phase == PHASE.CancelLanding
 	then
-		state.currentPitch = PoseCfg.UprightPitch
+		state.currentPitch = getTuning().SupermanPose.UprightPitch
 		state.flightDirection = flatUnit(state.flightDirection)
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if root then
@@ -1113,7 +1162,7 @@ setupCharacter = function(character: Model)
 		landingPlayed = false,
 		startCFrame = startCFrame,
 		flightDirection = flatUnit(startCFrame.LookVector),
-		currentPitch = PoseCfg.TransitStartPitch,
+		currentPitch = getTuning().SupermanPose.TransitStartPitch,
 		phaseStartedAt = os.clock(),
 		downSupesGroundedFrames = 0,
 		touchdownUprightApplied = false,
@@ -1191,7 +1240,7 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 					local abilityState = characterStates[character]
 					if abilityState then
 						initFlightDirection(abilityState)
-						abilityState.currentPitch = PoseCfg.TransitStartPitch
+						abilityState.currentPitch = getTuning().SupermanPose.TransitStartPitch
 						abilityState.phaseStartedAt = os.clock()
 					end
 				end

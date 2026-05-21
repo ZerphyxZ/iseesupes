@@ -10,8 +10,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 
 local HUDController = Knit.CreateController({ Name = "HUDController" })
@@ -136,7 +138,7 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 
 	local function applySwimSpeed(speed: number)
 		displayedSpeed = speed
-		setCharacterSwimSpeed(player, speed)
+		setCharacterSwimSpeed(player, LevelDesignTuning.resolveSwimSpeed(player, speed))
 	end
 
 	local function updateDisplay()
@@ -179,11 +181,18 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 		end
 	end)
 
-	bindCharacterSwimSpeed(player, function()
-		if isMaxSpeedMode then
-			return getMaxSpeed()
-		end
-		return displayedSpeed
+	local function resolveDisplayedSpeed(): number
+		local base = if isMaxSpeedMode then getMaxSpeed() else displayedSpeed
+		return LevelDesignTuning.resolveSwimSpeed(player, base)
+	end
+
+	bindCharacterSwimSpeed(player, resolveDisplayedSpeed)
+
+	player:GetAttributeChangedSignal(LevelDesignConfigs.Speed.MultiplierAttribute):Connect(function()
+		applySwimSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
+	end)
+	player:GetAttributeChangedSignal(LevelDesignConfigs.Speed.OverrideAttribute):Connect(function()
+		applySwimSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
 	end)
 
 	DataLib.OnChanged(updateDisplay)

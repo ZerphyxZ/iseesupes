@@ -1,6 +1,7 @@
 --!strict
 
 -- Central tuning for character mechanics. Edit here instead of CharacterController.lua.
+-- Per-player / per-stage overrides: see LevelDesignConfigs.lua (E_* / Spd_* attributes on Player or LD_Zone parts).
 
 local CharacterConfigs = {
 	Features = {
@@ -9,6 +10,7 @@ local CharacterConfigs = {
 		UseCustomLocomotion = true,
 		UseBasicJumpAnims = true,
 		UseDoubleJump = true,
+		UseGlideVfx = true,
 	},
 
 	Animations = {
@@ -119,9 +121,11 @@ local CharacterConfigs = {
 		},
 
 		Cancel = {
+			--- Downward speed when releasing E mid-air (not the slow landing approach).
+			FallSpeed = 90,
 			LandingRayLength = 250,
-			LandingTriggerHeight = 8,
-			MinFallTime = 0.08,
+			LandingTriggerHeight = 10,
+			MinFallTime = 0,
 			MaxFallDuration = 6,
 			SettleDuration = 0.35,
 			MaxLandingDuration = 1.25,

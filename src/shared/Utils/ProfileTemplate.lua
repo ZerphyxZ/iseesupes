@@ -9,6 +9,7 @@ export type PlayerData = {
 	Rebirths: number,
 	OwnedTrails: { [string]: boolean },
 	EquippedTrail: string,
+	ClaimedRewards: { [string]: number }, -- rewardIndex (string) → os.time() of last claim
 }
 
 local ProfileTemplate: PlayerData = {
@@ -20,6 +21,7 @@ local ProfileTemplate: PlayerData = {
 	Rebirths = 0,
 	OwnedTrails = {},
 	EquippedTrail = "",
+	ClaimedRewards = {},
 }
 
 return ProfileTemplate

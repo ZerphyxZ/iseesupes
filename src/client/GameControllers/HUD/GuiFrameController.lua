@@ -80,9 +80,9 @@ function GuiFrameController:KnitStart()
 		return
 	end
 
-	local hud = playerGui:WaitForChild("HUD", 30) or gui:FindFirstChild("HUD")
+	local hud = gui:WaitForChild("HUD", 30)
 	if not hud then
-		warn("[iseesupes] GuiFrameController: missing HUD ScreenGui (PlayerGui.HUD or GUI.HUD).")
+		warn("[iseesupes] GuiFrameController: missing HUD frame under GUI.")
 		return
 	end
 

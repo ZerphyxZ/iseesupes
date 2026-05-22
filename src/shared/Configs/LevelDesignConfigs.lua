@@ -48,6 +48,7 @@ local LevelDesignConfigs = {
 		{ Name = "E_Fwd", LegacyName = "Design_DJ_ForwardSpeed", Default = Ph.AfterTransition.ForwardSpeed, Description = "Forward speed during the rise", Essential = true },
 		{ Name = "E_Height", LegacyName = "Design_DJ_TargetHeight", Default = Ph.AfterTransition.TargetHeightAboveStart, Description = "How HIGH you rise before gliding (studs)", Essential = true },
 		{ Name = "E_RiseTime", LegacyName = "Design_DJ_AfterMaxDuration", Default = Ph.AfterTransition.MaxDuration, Description = "Max rise phase time" },
+		{ Name = "E_RiseMin", LegacyName = "Design_DJ_AfterMinDuration", Default = Ph.AfterTransition.MinDuration, Description = "Min rise phase time (prevents instant skip)" },
 
 		{ Name = "E_LeanSpd", LegacyName = "Design_DJ_LeanForwardSpeed", Default = Ph.LeanUp.ForwardSpeed, Description = "Glide speed while holding E", Essential = true },
 		{ Name = "E_LeanDist", LegacyName = "Design_DJ_LeanForwardDistance", Default = Ph.LeanUp.ForwardDistance, Description = "Total forward studs from E press before fall", Essential = true },
@@ -101,6 +102,7 @@ local LevelDesignConfigs = {
 		E_Fwd = { Min = 20, Max = 150 },
 		E_Rise = { Min = 20, Max = 120 },
 		E_Height = { Min = 8, Max = 80 },
+		E_RiseMin = { Min = 0, Max = 3 },
 		E_FallSpd = { Min = 30, Max = 120 },
 		E_CancelFall = { Min = 50, Max = 200 },
 		E_MaxTime = { Min = 8, Max = 45 },

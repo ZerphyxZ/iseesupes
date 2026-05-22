@@ -11,6 +11,7 @@ local CharacterConfigs = {
 		UseBasicJumpAnims = true,
 		UseDoubleJump = true,
 		UseGlideVfx = true,
+		UseSuperJump = true,
 	},
 
 	Animations = {
@@ -78,6 +79,7 @@ local CharacterConfigs = {
 				ForwardSpeed = 60,
 				TargetHeightAboveStart = 28,
 				MaxDuration = 1.1,
+				MinDuration = 0.5,
 				RequiresHold = true,
 				SteerMoveThreshold = 0.1,
 			},
@@ -87,7 +89,7 @@ local CharacterConfigs = {
 				MaxDuration = 0.9,
 				RequiresHold = true,
 			},
-			-- Tuning for DownSupes phase (descent toward ground; plays DownSupes anim).
+			-- Descent physics while still in LeanUp phase (client plays DownSupes anim).
 			LeapDown = {
 				DescentSpeed = 70,
 				SlowDescentHeight = 12,
@@ -96,7 +98,7 @@ local CharacterConfigs = {
 				AlignToHit = true,
 				HorizontalLerp = 0.15,
 			},
-			-- Tuning for LeapDown phase (landing anim; controls restore after full playthrough).
+			-- Landing timing during LeapDown phase (client plays LeapDown anim).
 			DownSupes = {
 				TriggerHeightAboveSurface = 6,
 				UprightSnapHeight = 6,
@@ -110,7 +112,9 @@ local CharacterConfigs = {
 			},
 		},
 
-		LandingFadeTime = 0.2,
+		-- Overlap when switching E phase animations (reduces hard cuts).
+		PhaseFadeTime = 0.22,
+		LandingFadeTime = 0.28,
 
 		Steering = {
 			Enabled = true,
@@ -134,6 +138,40 @@ local CharacterConfigs = {
 		Activation = {
 			AllowGrounded = true,
 			AllowAirborne = true,
+		},
+	},
+
+	SuperJump = {
+		AnimFolder = "SuperJump",
+		Anims = {
+			LeanUp = "LeanUp",
+			DownSupes = "DownSupes",
+		},
+		DoubleTapWindow = 0.35,
+		Cooldown = 1.5,
+		MaxDuration = 4,
+		PhaseFadeTime = 0.22,
+
+		LeanUp = {
+			-- Rise first (mostly up); glide forward only after rise completes (latched).
+			RiseSpeed = 35,
+			RiseHeight = 5,
+			RiseMaxDuration = 0.4,
+			-- Glide speed = ForwardDistance / MaxGlideDuration (e.g. 20 studs in 0.5s = 40/s).
+			ForwardDistance = 50,
+			MaxGlideDuration = 0.5,
+			GlideFallSpeed = 6,
+			MinAirTime = 0.12,
+			DescentSpeed = 55,
+			SurfaceRayLength = 250,
+		},
+
+		DownSupes = {
+			TriggerHeightAboveSurface = 6,
+			ApproachDescentSpeed = 40,
+			MinDuration = 0.15,
+			SettleDuration = 0.15,
+			MaxDuration = 2,
 		},
 	},
 }

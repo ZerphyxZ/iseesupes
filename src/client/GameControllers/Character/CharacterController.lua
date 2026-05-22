@@ -19,6 +19,7 @@ local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local jumpActionBound = false
 local abilityBlocking = false
+local jumpInterceptors: { () -> boolean } = {}
 
 type AnimMode = "locomotion" | "jump" | "fall" | "landing"
 
@@ -329,6 +330,10 @@ function CharacterController:IsAbilityBlocking(): boolean
 	return abilityBlocking
 end
 
+function CharacterController:RegisterJumpInterceptor(fn: () -> boolean)
+	table.insert(jumpInterceptors, fn)
+end
+
 local function tryCustomJump(character: Model)
 	if not Features.UseCustomJump or abilityBlocking then
 		return
@@ -368,6 +373,12 @@ local function onJumpAction(_actionName: string, inputState: Enum.UserInputState
 	local character = player.Character
 	if not character then
 		return Enum.ContextActionResult.Pass
+	end
+
+	for _, interceptor in jumpInterceptors do
+		if interceptor() then
+			return Enum.ContextActionResult.Sink
+		end
 	end
 
 	tryCustomJump(character)
@@ -650,7 +661,7 @@ function CharacterController:KnitStart()
 		warn("[iseesupes] Timed out waiting for", Anim.FolderName)
 	end
 
-	bindJumpAction()
+	task.defer(bindJumpAction)
 
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then

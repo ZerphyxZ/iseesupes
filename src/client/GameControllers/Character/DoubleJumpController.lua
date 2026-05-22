@@ -18,8 +18,34 @@ local Loc = CharacterConfigs.Locomotion
 local DjCfg = CharacterConfigs.DoubleJump
 local Features = CharacterConfigs.Features
 
-local function getTuning()
-	return LevelDesignTuning.getDoubleJump(Players.LocalPlayer)
+local cachedTuning: LevelDesignTuning.DoubleJumpTuning? = nil
+local tuningAttrConns: { RBXScriptConnection } = {}
+
+local function refreshTuning()
+	cachedTuning = LevelDesignTuning.getDoubleJump(Players.LocalPlayer)
+end
+
+local function getTuning(): LevelDesignTuning.DoubleJumpTuning
+	if not cachedTuning then
+		refreshTuning()
+	end
+	return cachedTuning :: LevelDesignTuning.DoubleJumpTuning
+end
+
+local function bindTuningAttrListeners(character: Model?)
+	for _, conn in tuningAttrConns do
+		conn:Disconnect()
+	end
+	table.clear(tuningAttrConns)
+
+	local function onAttr(_name: string)
+		refreshTuning()
+	end
+	table.insert(tuningAttrConns, Players.LocalPlayer.AttributeChanged:Connect(onAttr))
+	if character then
+		table.insert(tuningAttrConns, character.AttributeChanged:Connect(onAttr))
+	end
+	refreshTuning()
 end
 
 local PHASE = {
@@ -108,6 +134,7 @@ type CharacterAbilityState = {
 	savedJumpHeight: number?,
 	locomotionReleasedAfterLanding: boolean,
 	landingGroundedAt: number?,
+	leanAnimSubphase: string?, -- "glide" | "descent" while in LeanUp
 }
 
 local characterStates: { [Model]: CharacterAbilityState } = {}
@@ -215,21 +242,6 @@ local function syncPhaseFromAttribute()
 	end
 
 	if attrPhase == currentPhase then
-		if
-			attrPhase == PHASE.LeanUp
-			or attrPhase == PHASE.LeapDown
-			or attrPhase == PHASE.DownSupes
-			or attrPhase == PHASE.CancelFall
-			or attrPhase == PHASE.CancelLanding
-		then
-			local character = player.Character
-			if character then
-				local state = characterStates[character]
-				if state then
-					enforceLandingAnim(state)
-				end
-			end
-		end
 		return
 	end
 
@@ -374,7 +386,15 @@ local function preloadDoubleJumpFromFolder(folder: Folder): boolean
 	return true
 end
 
+local abilityBlockedAt: number? = nil
+local ABILITY_BLOCK_WATCHDOG_SEC = 0.5
+
 local function setAbilityBlocking(blocked: boolean)
+	if blocked then
+		abilityBlockedAt = os.clock()
+	else
+		abilityBlockedAt = nil
+	end
 	if CharacterController and CharacterController.SetAbilityBlocking then
 		CharacterController:SetAbilityBlocking(blocked)
 	end
@@ -417,6 +437,12 @@ local function flatUnit(vector: Vector3): Vector3
 		return Vector3.new(0, 0, -1)
 	end
 	return flat.Unit
+end
+
+local function flatDistance(from: Vector3, to: Vector3): number
+	local a = Vector3.new(from.X, 0, from.Z)
+	local b = Vector3.new(to.X, 0, to.Z)
+	return (b - a).Magnitude
 end
 
 local function getSteerThreshold(): number
@@ -585,16 +611,56 @@ local function applyClientMovement(state: CharacterAbilityState, phase: string)
 	root.AssemblyLinearVelocity = vel
 end
 
+local function getPhaseFadeTime(): number
+	local tuning = getTuning()
+	local fromTuning = (tuning :: any).PhaseFadeTime
+	if typeof(fromTuning) == "number" and fromTuning > 0 then
+		return fromTuning
+	end
+	return DjCfg.PhaseFadeTime or Loc.FadeTime
+end
+
+local function fadeOutTrack(track: AnimationTrack, fade: number, state: CharacterAbilityState?)
+	if not track.IsPlaying then
+		return
+	end
+	pcall(function()
+		track:AdjustWeight(0, fade)
+	end)
+	task.delay(fade + 0.02, function()
+		if state and state.currentTrack == track then
+			return
+		end
+		pcall(function()
+			if track.IsPlaying then
+				track:Stop(0)
+			end
+		end)
+	end)
+end
+
+local function crossfadeToTrack(state: CharacterAbilityState, track: AnimationTrack, fadeTime: number?)
+	local fade = fadeTime or getPhaseFadeTime()
+	if state.currentTrack == track and track.IsPlaying then
+		return
+	end
+
+	local outgoing = state.currentTrack
+	if outgoing and outgoing ~= track then
+		fadeOutTrack(outgoing, fade, state)
+	end
+
+	pcall(function()
+		track:Play(fade)
+	end)
+	state.currentTrack = track
+end
+
 local function stopDownSupesHard(tracks: AbilityTracks, reason: string?)
 	if tracks.downSupes.IsPlaying then
 		logDownSupes("stop_downsupes", reason or "stopDownSupesHard", downSupesSnapshot(tracks))
 	end
-	pcall(function()
-		if tracks.downSupes.IsPlaying then
-			tracks.downSupes:AdjustWeight(0)
-		end
-		tracks.downSupes:Stop(0)
-	end)
+	fadeOutTrack(tracks.downSupes, getPhaseFadeTime())
 end
 
 local function stopAbilityLandingTracks(state: CharacterAbilityState, fadeTime: number?)
@@ -620,18 +686,6 @@ local function stopAllTracks(state: CharacterAbilityState)
 	state.currentTrack = nil
 end
 
-local function stopCurrentTrack(state: CharacterAbilityState, reason: string?)
-	if state.currentTrack then
-		if state.currentTrack == state.tracks.downSupes then
-			logDownSupes("stop_current_track", reason or "stopCurrentTrack", downSupesSnapshot(state.tracks))
-		end
-		pcall(function()
-			state.currentTrack:Stop(Loc.FadeTime)
-		end)
-		state.currentTrack = nil
-	end
-end
-
 local function getLandingFadeTime(): number
 	return getTuning().LandingFadeTime or Loc.FadeTime
 end
@@ -648,24 +702,14 @@ local function applyTouchdownUprightOnce(state: CharacterAbilityState)
 end
 
 local function stopLeanUpHard(tracks: AbilityTracks)
-	pcall(function()
-		if tracks.leanUp.IsPlaying then
-			tracks.leanUp:Stop(0)
-		end
-	end)
+	fadeOutTrack(tracks.leanUp, getPhaseFadeTime())
 end
 
-local function playLeanUpHold(state: CharacterAbilityState, reason: string?)
+local function playLeanUpHold(state: CharacterAbilityState, _reason: string?)
 	if state.leapDownCommitted then
 		return
 	end
-	local tracks = state.tracks
-	if tracks.leanUp.IsPlaying and state.currentTrack == tracks.leanUp then
-		return
-	end
-	stopCurrentTrack(state, reason or "before_play_leanup")
-	state.currentTrack = tracks.leanUp
-	tracks.leanUp:Play(Loc.FadeTime)
+	crossfadeToTrack(state, state.tracks.leanUp, getPhaseFadeTime())
 end
 
 local function playDownSupesDescent(state: CharacterAbilityState, reason: string?)
@@ -683,32 +727,60 @@ local function playDownSupesDescent(state: CharacterAbilityState, reason: string
 		wasTime = snap.downTime,
 		currentTrack = currentTrackName(state),
 	})
-	stopCurrentTrack(state, "before_play_downsupes")
-	local landingFade = getLandingFadeTime()
-	state.currentTrack = tracks.downSupes
-	tracks.downSupes:Play(landingFade)
+	crossfadeToTrack(state, tracks.downSupes, getPhaseFadeTime())
+end
+
+--- Mirrors server LeanUp forward vs descent split (DoubleJumpService LeanUp tick).
+local function isLeanUpInDescent(state: CharacterAbilityState): boolean
+	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return false
+	end
+
+	local leanCfg = getTuning().Phases.LeanUp
+	local dist = flatDistance(state.startCFrame.Position, root.Position)
+	local phaseElapsed = os.clock() - state.phaseStartedAt
+	local maxPhaseTime = LevelDesignTuning.getLeanPhaseMaxDuration(
+		leanCfg.ForwardSpeed,
+		leanCfg.ForwardDistance,
+		leanCfg.MaxDuration,
+		dist
+	)
+	return dist >= leanCfg.ForwardDistance or phaseElapsed >= maxPhaseTime
+end
+
+local function updateLeanUpAnimSubphase(state: CharacterAbilityState)
+	if currentPhase ~= PHASE.LeanUp and currentPhase ~= PHASE.DownSupes then
+		return
+	end
+	if state.leapDownCommitted then
+		return
+	end
+
+	local want = if isLeanUpInDescent(state) then "descent" else "glide"
+	if state.leanAnimSubphase == want then
+		return
+	end
+	state.leanAnimSubphase = want
+	if want == "descent" then
+		playDownSupesDescent(state, "lean_subphase_descent")
+	else
+		playLeanUpHold(state, "lean_subphase_glide")
+	end
 end
 
 local function playLeapDownLanding(state: CharacterAbilityState, reason: string?)
-	local tracks = state.tracks
 	if state.leapDownCommitted then
-		if tracks.downSupes.IsPlaying then
-			stopDownSupesHard(tracks, reason or "playLeapDownLanding_cleanup")
-		end
-		if tracks.leanUp.IsPlaying then
-			stopLeanUpHard(tracks)
-		end
 		return
 	end
+	state.leapDownCommitted = true
+	state.leanAnimSubphase = nil
+
+	local tracks = state.tracks
 	local snap = downSupesSnapshot(tracks)
 	logDownSupes("play_leapdown", reason or "playLeapDownLanding", snap)
-	stopDownSupesHard(tracks, reason or "playLeapDownLanding")
-	stopLeanUpHard(tracks)
 	local landingFade = getLandingFadeTime()
-	state.currentTrack = tracks.leapDown
-	tracks.leapDown:Play(landingFade)
-	state.leapDownCommitted = true
-	applyTouchdownUprightOnce(state)
+	crossfadeToTrack(state, tracks.leapDown, landingFade)
 end
 
 local function releaseLandingLocomotion(state: CharacterAbilityState)
@@ -743,23 +815,16 @@ enforceLandingAnim = function(state: CharacterAbilityState)
 	local grounded = DoubleJumpLanding.isGroundedForLanding(state.humanoid, root, state.rayParams, landingCfg)
 
 	if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
-		if grounded then
-			stopLeanUpHard(state.tracks)
+		if grounded and not state.leapDownCommitted then
 			playLeapDownLanding(state, "enforce_leanup_grounded")
 		else
-			playLeanUpHold(state, "enforce_leanup")
+			updateLeanUpAnimSubphase(state)
 		end
 	elseif
 		currentPhase == PHASE.LeapDown
 		or currentPhase == PHASE.CancelLanding
 		or (currentPhase == PHASE.CancelFall and state.leapDownCommitted)
 	then
-		if state.tracks.downSupes.IsPlaying then
-			stopDownSupesHard(state.tracks, "leapdown_phase")
-		end
-		if state.tracks.leanUp.IsPlaying then
-			stopLeanUpHard(state.tracks)
-		end
 		if state.tracks.fall.IsPlaying then
 			pcall(function()
 				state.tracks.fall:Stop(Loc.FadeTime)
@@ -834,8 +899,9 @@ local function enforceCancelApproachLanding(state: CharacterAbilityState)
 		end)
 	end
 
-	state.leapDownCommitted = false
-	playLeapDownLanding(state, "cancel_approach")
+	if not state.leapDownCommitted then
+		playLeapDownLanding(state, "cancel_approach")
+	end
 end
 
 local function tickLandingLocomotionRelease(state: CharacterAbilityState)
@@ -893,10 +959,7 @@ local function tickLandingWatchdog(state: CharacterAbilityState)
 end
 
 local function playTrack(state: CharacterAbilityState, track: AnimationTrack, fadeTime: number?)
-	local fade = fadeTime or Loc.FadeTime
-	stopCurrentTrack(state)
-	state.currentTrack = track
-	track:Play(fade)
+	crossfadeToTrack(state, track, fadeTime or getPhaseFadeTime())
 end
 
 local function playPhaseAnim(state: CharacterAbilityState, phase: string)
@@ -908,9 +971,11 @@ local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
 		state.touchdownUprightApplied = false
 		state.leapDownCommitted = false
+		state.leanAnimSubphase = nil
 		state.downSupesGroundedFrames = 0
 		state.humanoid.PlatformStand = false
 		playLeanUpHold(state, "playPhaseAnim")
+		updateLeanUpAnimSubphase(state)
 	elseif phase == PHASE.CancelFall then
 		state.cancelFallStartedAt = os.clock()
 		state.landingPlayed = false
@@ -934,8 +999,7 @@ local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 				state.tracks.fall:Stop(Loc.FadeTime)
 			end)
 		end
-		if not state.tracks.leapDown.IsPlaying then
-			state.leapDownCommitted = false
+		if not state.leapDownCommitted then
 			playLeapDownLanding(state, "playPhaseAnim")
 		end
 	end
@@ -970,48 +1034,52 @@ local function stabilizeCharacter(character: Model, flightDir: Vector3?)
 	end
 end
 
+local function hardStopAllAbilityTracks(state: CharacterAbilityState)
+	for _, track in pairs(state.tracks) do
+		pcall(function()
+			if track.IsPlaying then
+				track:Stop(0.05)
+			end
+		end)
+	end
+	state.currentTrack = nil
+end
+
 onAbilityEnded = function()
 	local character = player.Character
-	local grounded = false
-	if character then
-		local state = characterStates[character]
-		if state then
-			grounded = DoubleJumpLanding.isGrounded(state.humanoid)
-		end
-	end
-	-- #region agent log
+
+	-- Idempotent path: even if called twice (PHASE_ATTR cleared + AbilityEnded signal),
+	-- always run the cleanup so locomotion / jump / animations can never be left locked.
 	DebugLog.write("DoubleJumpController:onAbilityEnded", "ability_ended_client", {
 		phase = currentPhase,
-		grounded = grounded,
+		hadCharacter = character ~= nil,
 	}, "B")
-	-- #endregion
+
 	applyAbilityJumpLock(false)
 	abilityActive = false
 	holdingLocally = false
 	currentPhase = nil
 	resetDownSupesDiag()
+	setAbilityBlocking(false)
 
 	if character then
 		local state = characterStates[character]
 		if state then
-			stabilizeCharacter(character, state.flightDirection)
-			stopAbilityLandingTracks(state, Loc.FadeTime)
-			stopAllTracks(state)
-		end
-	end
-
-	setAbilityBlocking(false)
-
-	if character then
-		-- Keep ability tracks loaded; only stop playback (do not nil characterStates).
-		if characterStates[character] then
-			characterStates[character].currentTrack = nil
-			characterStates[character].cancelFallStartedAt = nil
-			characterStates[character].landingPlayed = false
-			characterStates[character].leapDownCommitted = false
-			characterStates[character].cancelApproachStarted = false
-			characterStates[character].locomotionReleasedAfterLanding = false
-			characterStates[character].landingGroundedAt = nil
+			pcall(function()
+				stabilizeCharacter(character, state.flightDirection)
+			end)
+			hardStopAllAbilityTracks(state)
+			state.cancelFallStartedAt = nil
+			state.landingPlayed = false
+			state.leapDownCommitted = false
+			state.leanAnimSubphase = nil
+			state.cancelApproachStarted = false
+			state.locomotionReleasedAfterLanding = false
+			state.landingGroundedAt = nil
+			state.touchdownUprightApplied = false
+			pcall(function()
+				state.humanoid.PlatformStand = false
+			end)
 		end
 	end
 end
@@ -1026,6 +1094,10 @@ local function ensureAbilityState(character: Model): CharacterAbilityState?
 end
 
 onPhaseChanged = function(phase: string)
+	-- PhaseChanged signal and DjAbilityPhase replication can both fire for the same step.
+	if phase == currentPhase then
+		return
+	end
 	currentPhase = phase
 
 	local character = player.Character
@@ -1139,7 +1211,7 @@ setupCharacter = function(character: Model)
 		afterTransition = loadTrack(afterAnim, true),
 		leanUp = loadTrack(leanAnim, true),
 		leapDown = loadTrack(leapAnim, false, Enum.AnimationPriority.Action3),
-		downSupes = loadTrack(downAnim, false, Enum.AnimationPriority.Action2),
+		downSupes = loadTrack(downAnim, true, Enum.AnimationPriority.Action2),
 		fall = loadTrack(fallAnim, true),
 		landing = loadTrack(landingAnim, false),
 	}
@@ -1173,6 +1245,7 @@ setupCharacter = function(character: Model)
 		savedJumpHeight = nil,
 		locomotionReleasedAfterLanding = false,
 		landingGroundedAt = nil,
+		leanAnimSubphase = nil,
 	}
 	characterStates[character] = state
 
@@ -1183,20 +1256,30 @@ setupCharacter = function(character: Model)
 		})
 	end)
 
-	state.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+	-- Non-looped transit can end a frame before the server phase flips; crossfade early to avoid a T-pose gap.
+	tracks.flightTransit.Stopped:Connect(function()
+		if not abilityActive then
+			return
+		end
+		if currentPhase ~= PHASE.FlightTransit and currentPhase ~= PHASE.AfterTransition then
+			return
+		end
+		if tracks.afterTransition.IsPlaying and state.currentTrack == tracks.afterTransition then
+			return
+		end
+		crossfadeToTrack(state, tracks.afterTransition, getPhaseFadeTime())
+	end)
+
+	state.heartbeatConn = RunService.Heartbeat:Connect(function(_dt)
 		if abilityActive and currentPhase then
 			setAbilityJumpLock(state, true)
 			publishSteerInput(state)
 			syncPhaseFromAttribute()
 			tickLandingWatchdog(state)
-
-			local orientPhase = currentPhase
-			if orientPhase == PHASE.FlightTransit or orientPhase == PHASE.AfterTransition then
-				applyClientOrientation(state, orientPhase, dt)
-				applyClientMovement(state, orientPhase)
-			end
+			-- Server is NetworkOwner during E and writes CFrame + AssemblyLinearVelocity each tick.
+			-- We deliberately do NOT call applyClientOrientation / applyClientMovement here:
+			-- those would dual-write physics and visibly fight server replication, causing jitter.
 		end
-
 	end)
 
 	character.Destroying:Once(function()
@@ -1302,10 +1385,26 @@ function DoubleJumpController:KnitStart()
 
 	bindAction()
 	bindPhaseAttributeSync()
+	bindTuningAttrListeners(player.Character)
+
+	-- Watchdog: if ability blocking lingers without an active ability, force-clear it.
+	-- Defends against missed AbilityEnded signals / race conditions on respawn.
+	RunService.Heartbeat:Connect(function()
+		if abilityBlockedAt and not abilityActive then
+			if os.clock() - (abilityBlockedAt :: number) >= ABILITY_BLOCK_WATCHDOG_SEC then
+				DebugLog.write("DoubleJumpController:watchdog", "force_unblock", {
+					phase = currentPhase,
+				}, "B")
+				setAbilityBlocking(false)
+				applyAbilityJumpLock(false)
+			end
+		end
+	end)
 
 	local DoubleJumpService = getDoubleJumpService()
 
 	DoubleJumpService.PhaseChanged:Connect(function(phase: string)
+		refreshTuning()
 		local character = player.Character
 		if not abilityActive and phase == PHASE.FlightTransit then
 			abilityActive = true
@@ -1337,6 +1436,7 @@ function DoubleJumpController:KnitStart()
 		if abilityActive then
 			onAbilityEnded()
 		end
+		bindTuningAttrListeners(character)
 		setupCharacter(character)
 	end)
 

@@ -25,6 +25,7 @@ local PHASE = {
 }
 
 local PHASE_ATTR = "DjAbilityPhase"
+local SJ_PHASE_ATTR = "SjAbilityPhase"
 
 type AbilitySession = {
 	player: Player,
@@ -52,7 +53,12 @@ type AbilitySession = {
 	afterTransitionComplete: boolean,
 	clientSteerDirection: Vector3?,
 	landingControlReleased: boolean,
+	tuning: DjTuning,
+	tuningConns: { RBXScriptConnection },
+	hardLandedAt: number?,
 }
+
+local HARD_LANDED_END_SECONDS = 1.5
 
 local DoubleJumpService = Knit.CreateService({
 	Name = "DoubleJumpService",
@@ -66,6 +72,33 @@ local DoubleJumpService = Knit.CreateService({
 local sessions: { [Player]: AbilitySession } = {}
 local cooldownEndsAt: { [Player]: number } = {}
 local heartbeatConn: RBXScriptConnection? = nil
+
+local function refreshSessionTuning(session: AbilitySession)
+	session.tuning = LevelDesignTuning.getDoubleJump(session.player)
+end
+
+local function bindTuningChangeListeners(session: AbilitySession)
+	for _, conn in session.tuningConns do
+		conn:Disconnect()
+	end
+	table.clear(session.tuningConns)
+
+	local function onAttrChanged(_name: string)
+		refreshSessionTuning(session)
+	end
+
+	table.insert(session.tuningConns, session.player.AttributeChanged:Connect(onAttrChanged))
+	if session.character then
+		table.insert(session.tuningConns, session.character.AttributeChanged:Connect(onAttrChanged))
+	end
+end
+
+local function disconnectTuningListeners(session: AbilitySession)
+	for _, conn in session.tuningConns do
+		conn:Disconnect()
+	end
+	table.clear(session.tuningConns)
+end
 
 local function isGrounded(humanoid: Humanoid): boolean
 	return DoubleJumpLanding.isGrounded(humanoid)
@@ -259,7 +292,8 @@ local function canCancelOnRelease(phase: string): boolean
 end
 
 function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
-	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	refreshSessionTuning(session)
+	local tuning = session.tuning
 	local poseCfg = tuning.SupermanPose
 
 	session.phase = phase
@@ -294,7 +328,6 @@ function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
 		applyTouchdownUprightOnce(session)
 	end
 	setAutoRotateForPhase(session, phase)
-	-- #region agent log
 	DebugLog.write("DoubleJumpService:_setPhase", "phase_changed", {
 		phase = phase,
 		player = session.player.Name,
@@ -302,7 +335,6 @@ function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
 		grounded = isGrounded(session.humanoid),
 		platformStand = session.humanoid.PlatformStand,
 	}, "A")
-	-- #endregion
 	session.player:SetAttribute(PHASE_ATTR, phase)
 	self.Client.PhaseChanged:Fire(session.player, phase)
 end
@@ -310,21 +342,34 @@ end
 function DoubleJumpService:_endAbility(player: Player)
 	local session = sessions[player]
 	if not session then
+		player:SetAttribute(PHASE_ATTR, nil)
 		return
 	end
+
+	sessions[player] = nil
 
 	if session.diedConn then
 		session.diedConn:Disconnect()
 		session.diedConn = nil
 	end
 
-	finalizeCharacterControl(session)
+	disconnectTuningListeners(session)
+
+	pcall(function()
+		finalizeCharacterControl(session)
+	end)
+
+	pcall(function()
+		session.humanoid.AutoRotate = session.autoRotateWas
+	end)
+	pcall(function()
+		session.humanoid.PlatformStand = false
+	end)
 
 	pcall(function()
 		session.root:SetNetworkOwner(session.player)
 	end)
 
-	sessions[player] = nil
 	player:SetAttribute(PHASE_ATTR, nil)
 	self.Client.AbilityEnded:Fire(player)
 end
@@ -333,7 +378,7 @@ function DoubleJumpService:_transitionToCancelFall(session: AbilitySession)
 	if session.phase == PHASE.CancelFall or session.phase == PHASE.CancelLanding then
 		return
 	end
-	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	local tuning = session.tuning
 	local phaseCfg = tuning.Phases
 
 	if session.phase == PHASE.LeapDown then
@@ -383,6 +428,10 @@ function DoubleJumpService:_canActivate(player: Player, humanoid: Humanoid): (bo
 		return false, "active"
 	end
 
+	if player:GetAttribute(SJ_PHASE_ATTR) then
+		return false, "super_jump_active"
+	end
+
 	if humanoid.Health <= 0 then
 		return false, "dead"
 	end
@@ -400,7 +449,7 @@ function DoubleJumpService:_canActivate(player: Player, humanoid: Humanoid): (bo
 end
 
 function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
-	local tuning = LevelDesignTuning.getDoubleJump(session.player)
+	local tuning = session.tuning
 	local phaseCfg = tuning.Phases
 	local poseCfg = tuning.SupermanPose
 
@@ -411,6 +460,22 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	if humanoid.Health <= 0 or not root.Parent or not session.character.Parent then
 		self:_endAbility(session.player)
 		return
+	end
+
+	-- Hard-grounded fail-safe: regardless of phase / state machine, if the player has been
+	-- standing on the floor for HARD_LANDED_END_SECONDS, force the ability to end so the
+	-- character is never left under server-controlled physics.
+	if isGrounded(humanoid) then
+		session.hardLandedAt = session.hardLandedAt or now
+		if
+			session.phase ~= PHASE.FlightTransit
+			and now - (session.hardLandedAt :: number) >= HARD_LANDED_END_SECONDS
+		then
+			self:_endAbility(session.player)
+			return
+		end
+	else
+		session.hardLandedAt = nil
 	end
 
 	if now - session.abilityStartedAt >= tuning.MaxAbilityDuration then
@@ -456,17 +521,10 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 
 		local heightGain = root.Position.Y - session.startPosition.Y
 		if not session.afterTransitionComplete then
-			if heightGain >= cfg.TargetHeightAboveStart or phaseElapsed >= cfg.MaxDuration then
+			local ready = heightGain >= cfg.TargetHeightAboveStart or phaseElapsed >= cfg.MaxDuration
+			local minElapsed = phaseElapsed >= (cfg.MinDuration or 0)
+			if ready and minElapsed then
 				session.afterTransitionComplete = true
-				-- #region agent log
-				DebugLog.write("DoubleJumpService:AfterTransition", "after_transition_ended", {
-					phaseElapsed = phaseElapsed,
-					heightGain = heightGain,
-					targetHeight = cfg.TargetHeightAboveStart,
-					maxDuration = cfg.MaxDuration,
-					grounded = isGrounded(humanoid),
-				}, "E")
-				-- #endregion
 				self:_setPhase(session, PHASE.LeanUp)
 			end
 		end
@@ -513,22 +571,6 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 			descentElapsed
 		)
 		if startLeapDown then
-			local effectiveHeight: number? = nil
-			if hit then
-				effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(hit, root, humanoid, landingCfg)
-			end
-			if not session.debugLoggedLeapDownTrigger then
-				session.debugLoggedLeapDownTrigger = true
-				-- #region agent log
-				DebugLog.write("DoubleJumpService:LeanUp", "should_start_leapdown", {
-					descentElapsed = descentElapsed,
-					effectiveHeight = effectiveHeight,
-					triggerHeight = landingCfg.TriggerHeightAboveSurface,
-					grounded = grounded,
-					hasHit = hit ~= nil,
-				}, "A")
-				-- #endregion
-			end
 			self:_setPhase(session, PHASE.LeapDown)
 			return
 		end
@@ -601,12 +643,6 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 
 		if not session.leapDownFirstGroundedAt then
 			session.leapDownFirstGroundedAt = now
-			-- #region agent log
-			DebugLog.write("DoubleJumpService:LeapDown", "leapdown_first_grounded", {
-				phaseElapsed = phaseElapsed,
-				rootY = root.Position.Y,
-			}, "A")
-			-- #endregion
 		end
 		if not session.groundedAt then
 			session.groundedAt = now
@@ -626,13 +662,6 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		end
 
 		if sinceFirstGround >= endGroundedAfter then
-			-- #region agent log
-			DebugLog.write("DoubleJumpService:LeapDown", "leapdown_playthrough_complete", {
-				phaseElapsed = phaseElapsed,
-				sinceFirstGround = sinceFirstGround,
-				endGroundedAfter = endGroundedAfter,
-			}, "A")
-			-- #endregion
 			self:_endAbility(session.player)
 			return
 		end
@@ -796,6 +825,9 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		afterTransitionComplete = false,
 		clientSteerDirection = nil,
 		landingControlReleased = false,
+		tuning = tuning,
+		tuningConns = {},
+		hardLandedAt = nil,
 	}
 
 	humanoid.AutoRotate = false
@@ -803,6 +835,7 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		root:SetNetworkOwner(nil)
 	end)
 	sessions[player] = session
+	bindTuningChangeListeners(session)
 
 	session.diedConn = humanoid.Died:Connect(function()
 		self:_endAbility(player)
@@ -828,8 +861,7 @@ function DoubleJumpService.Client:UpdateSteerInput(player: Player, direction: Ve
 	end
 
 	local flat = Vector3.new(direction.X, 0, direction.Z)
-	local tuning = LevelDesignTuning.getDoubleJump(player)
-	if flat.Magnitude >= getSteerThreshold(tuning) then
+	if flat.Magnitude >= getSteerThreshold(session.tuning) then
 		session.clientSteerDirection = flatUnit(flat)
 	else
 		session.clientSteerDirection = nil

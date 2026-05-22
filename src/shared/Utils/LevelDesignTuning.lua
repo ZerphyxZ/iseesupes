@@ -21,6 +21,7 @@ local ATTR = {
 	ForwardSpeed = "E_Fwd",
 	TargetHeight = "E_Height",
 	AfterMaxDuration = "E_RiseTime",
+	AfterMinDuration = "E_RiseMin",
 	LeanForwardSpeed = "E_LeanSpd",
 	LeanForwardDistance = "E_LeanDist",
 	LeanMaxDuration = "E_LeanTime",
@@ -63,6 +64,7 @@ local LEGACY = {
 	ForwardSpeed = "Design_DJ_ForwardSpeed",
 	TargetHeight = "Design_DJ_TargetHeight",
 	AfterMaxDuration = "Design_DJ_AfterMaxDuration",
+	AfterMinDuration = "Design_DJ_AfterMinDuration",
 	LeanForwardSpeed = "Design_DJ_LeanForwardSpeed",
 	LeanForwardDistance = "Design_DJ_LeanForwardDistance",
 	LeanMaxDuration = "Design_DJ_LeanMaxDuration",
@@ -245,8 +247,10 @@ function LevelDesignTuning.estimateAbilityDuration(tuning: DoubleJumpTuning): nu
 		lean.MaxDuration,
 		0
 	)
+	local after = ph.AfterTransition
+	local afterTime = math.max(after.MaxDuration or 1.1, after.MinDuration or 0)
 	return (ph.FlightTransit.Duration or 0.35)
-		+ (ph.AfterTransition.MaxDuration or 1.1)
+		+ afterTime
 		+ leanPhaseTime
 		+ (ph.DownSupes.MaxDuration or 2.5)
 		+ 1.5
@@ -365,7 +369,10 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 		MaxAbilityDuration = maxAbilityDuration,
 		Phases = {
 			FlightTransit = { Duration = readNumberForPlayer(player, ATTR.TransitDuration, LEGACY.TransitDuration, BasePh.FlightTransit.Duration) },
-			AfterTransition = { MaxDuration = readNumberForPlayer(player, ATTR.AfterMaxDuration, LEGACY.AfterMaxDuration, BasePh.AfterTransition.MaxDuration) },
+			AfterTransition = {
+				MaxDuration = readNumberForPlayer(player, ATTR.AfterMaxDuration, LEGACY.AfterMaxDuration, BasePh.AfterTransition.MaxDuration),
+				MinDuration = readNumberForPlayer(player, ATTR.AfterMinDuration, LEGACY.AfterMinDuration, BasePh.AfterTransition.MinDuration),
+			},
 			LeanUp = { ForwardSpeed = leanSpeed, ForwardDistance = leanDist, MaxDuration = leanMaxDuration },
 			DownSupes = { MaxDuration = readNumberForPlayer(player, ATTR.LandingMaxDuration, LEGACY.LandingMaxDuration, BasePh.DownSupes.MaxDuration) },
 		},
@@ -402,6 +409,7 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 				ForwardSpeed = readNumberForPlayer(player, ATTR.ForwardSpeed, LEGACY.ForwardSpeed, BasePh.AfterTransition.ForwardSpeed),
 				TargetHeightAboveStart = readNumberForPlayer(player, ATTR.TargetHeight, LEGACY.TargetHeight, BasePh.AfterTransition.TargetHeightAboveStart),
 				MaxDuration = readNumberForPlayer(player, ATTR.AfterMaxDuration, LEGACY.AfterMaxDuration, BasePh.AfterTransition.MaxDuration),
+				MinDuration = readNumberForPlayer(player, ATTR.AfterMinDuration, LEGACY.AfterMinDuration, BasePh.AfterTransition.MinDuration),
 				RequiresHold = BasePh.AfterTransition.RequiresHold,
 				SteerMoveThreshold = readNumberForPlayer(player, ATTR.SteerThreshold, LEGACY.SteerThreshold, BasePh.AfterTransition.SteerMoveThreshold),
 			},

@@ -4,6 +4,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local ThrustConfigs = SpeedConfigs.Thrust
 
 local BaseDj = CharacterConfigs.DoubleJump
 local BasePh = BaseDj.Phases
@@ -240,18 +242,12 @@ end
 
 function LevelDesignTuning.estimateAbilityDuration(tuning: DoubleJumpTuning): number
 	local ph = tuning.Phases
-	local lean = ph.LeanUp
-	local leanPhaseTime = LevelDesignTuning.getLeanPhaseMaxDuration(
-		lean.ForwardSpeed,
-		lean.ForwardDistance,
-		lean.MaxDuration,
-		0
-	)
 	local after = ph.AfterTransition
 	local afterTime = math.max(after.MaxDuration or 1.1, after.MinDuration or 0)
+	local thrustGlide = ThrustConfigs.BaseMaxFuel / math.max(ThrustConfigs.DrainPerSecond, 0.01)
 	return (ph.FlightTransit.Duration or 0.35)
 		+ afterTime
-		+ leanPhaseTime
+		+ thrustGlide
 		+ (ph.DownSupes.MaxDuration or 2.5)
 		+ 1.5
 end
@@ -329,7 +325,7 @@ function LevelDesignTuning.formatActiveTuning(player: Player): string
 	)
 end
 
---- Lean phase needs enough time to travel E_LeanDist; returns seconds allowed this phase.
+--- Reference time to travel E_LeanDist at E_LeanSpd (balance/docs only; glide ends on thrust fuel).
 function LevelDesignTuning.getLeanPhaseMaxDuration(
 	forwardSpeed: number,
 	forwardDistance: number,
@@ -361,7 +357,6 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 	local leanSpeed = readNumberForPlayer(player, ATTR.LeanForwardSpeed, LEGACY.LeanForwardSpeed, BasePh.LeanUp.ForwardSpeed)
 	local leanDist = readNumberForPlayer(player, ATTR.LeanForwardDistance, LEGACY.LeanForwardDistance, BasePh.LeanUp.ForwardDistance)
 	local leanTime = readNumberForPlayer(player, ATTR.LeanMaxDuration, LEGACY.LeanMaxDuration, BasePh.LeanUp.MaxDuration)
-	local leanMaxDuration = LevelDesignTuning.getLeanPhaseMaxDuration(leanSpeed, leanDist, leanTime, 0)
 
 	local maxAbilityDuration = readNumberForPlayer(player, ATTR.MaxDuration, LEGACY.MaxDuration, BaseDj.MaxAbilityDuration)
 
@@ -373,11 +368,12 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 				MaxDuration = readNumberForPlayer(player, ATTR.AfterMaxDuration, LEGACY.AfterMaxDuration, BasePh.AfterTransition.MaxDuration),
 				MinDuration = readNumberForPlayer(player, ATTR.AfterMinDuration, LEGACY.AfterMinDuration, BasePh.AfterTransition.MinDuration),
 			},
-			LeanUp = { ForwardSpeed = leanSpeed, ForwardDistance = leanDist, MaxDuration = leanMaxDuration },
+			LeanUp = { ForwardSpeed = leanSpeed, ForwardDistance = leanDist, MaxDuration = leanTime },
 			DownSupes = { MaxDuration = readNumberForPlayer(player, ATTR.LandingMaxDuration, LEGACY.LandingMaxDuration, BasePh.DownSupes.MaxDuration) },
 		},
 	}
 	maxAbilityDuration = math.max(maxAbilityDuration, LevelDesignTuning.estimateAbilityDuration(tuningDraft :: DoubleJumpTuning))
+	maxAbilityDuration = ThrustConfigs.GetAbilityTimeCap(ThrustConfigs.BaseMaxFuel, maxAbilityDuration)
 
 	return {
 		ActionName = BaseDj.ActionName,
@@ -394,9 +390,23 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 			TransitStartPitch = readNumberForPlayer(player, ATTR.TransitStartPitch, LEGACY.TransitStartPitch, BasePose.TransitStartPitch),
 			TransitEndPitch = readNumberForPlayer(player, ATTR.TransitEndPitch, LEGACY.TransitEndPitch, BasePose.TransitEndPitch),
 			TransitPitchLerp = BasePose.TransitPitchLerp,
+			TransitLaunchClimbDegrees = BasePose.TransitLaunchClimbDegrees,
 			FlightPitch = readNumberForPlayer(player, ATTR.FlightPitch, LEGACY.FlightPitch, BasePose.FlightPitch),
 			PitchLerp = BasePose.PitchLerp,
 			UprightPitch = BasePose.UprightPitch,
+			MaxBankDegrees = BasePose.MaxBankDegrees,
+			BankFollowRate = BasePose.BankFollowRate,
+			BankReturnRate = BasePose.BankReturnRate,
+			CameraBankBlend = BasePose.CameraBankBlend,
+			CameraYawRateForFullBank = BasePose.CameraYawRateForFullBank,
+			CameraYawRateMin = BasePose.CameraYawRateMin,
+			LaunchClimbStartDegrees = BasePose.LaunchClimbStartDegrees,
+			LaunchClimbEndDegrees = BasePose.LaunchClimbEndDegrees,
+			LaunchBodyPitch = BasePose.LaunchBodyPitch,
+			LaunchPitchLerp = BasePose.LaunchPitchLerp,
+			CameraPitchRateForFullAxis = BasePose.CameraPitchRateForFullAxis,
+			CameraPitchRateMin = BasePose.CameraPitchRateMin,
+			CameraPitchVelocityBlend = BasePose.CameraPitchVelocityBlend,
 		},
 
 		Phases = {
@@ -416,7 +426,7 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 			LeanUp = {
 				ForwardSpeed = leanSpeed,
 				ForwardDistance = leanDist,
-				MaxDuration = leanMaxDuration,
+				MaxDuration = leanTime,
 				RequiresHold = BasePh.LeanUp.RequiresHold,
 			},
 			LeapDown = {
@@ -437,15 +447,24 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 				SettleDuration = readNumberForPlayer(player, ATTR.LandingSettleDuration, LEGACY.LandingSettleDuration, BasePh.DownSupes.SettleDuration),
 				MaxStableVelocityY = BasePh.DownSupes.MaxStableVelocityY,
 				MaxDuration = readNumberForPlayer(player, ATTR.LandingMaxDuration, LEGACY.LandingMaxDuration, BasePh.DownSupes.MaxDuration),
+				WalkableNormalMinY = BasePh.DownSupes.WalkableNormalMinY,
+				GroundProbeDistance = BasePh.DownSupes.GroundProbeDistance,
+				GroundClearanceTolerance = BasePh.DownSupes.GroundClearanceTolerance,
+				AirborneProbeDistance = BasePh.DownSupes.AirborneProbeDistance,
+				ObstacleProbeDistance = BasePh.DownSupes.ObstacleProbeDistance,
+				WallProbeDistance = BasePh.DownSupes.WallProbeDistance,
 			},
 		},
 
 		Steering = {
 			Enabled = steerEnabled,
+			FollowCameraPitch = BaseSteer.FollowCameraPitch,
+			MaxPitchDegrees = BaseSteer.MaxPitchDegrees,
 			DirectionLerp = readNumberForPlayer(player, ATTR.SteerDirectionLerp, LEGACY.SteerDirectionLerp, BaseSteer.DirectionLerp),
 			HorizontalSpeed = readNumberForPlayer(player, ATTR.SteerHorizontalSpeed, LEGACY.SteerHorizontalSpeed, BaseSteer.HorizontalSpeed),
 			DescentHorizontalBlend = readNumberForPlayer(player, ATTR.SteerDescentBlend, LEGACY.SteerDescentBlend, BaseSteer.DescentHorizontalBlend),
 			SteerMoveThreshold = readNumberForPlayer(player, ATTR.SteerThreshold, LEGACY.SteerThreshold, BaseSteer.SteerMoveThreshold),
+			SteerAxisSmoothRate = BaseSteer.SteerAxisSmoothRate,
 		},
 
 		Cancel = {

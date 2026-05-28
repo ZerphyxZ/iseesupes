@@ -15,6 +15,10 @@ function TreadmillController:GetActiveTierKey(): string?
 	return activeTierKey
 end
 
+function TreadmillController:IsOnTreadmill(): boolean
+	return activeTierKey ~= nil
+end
+
 function TreadmillController:GetMultiplier(): number
 	return activeMultiplier
 end

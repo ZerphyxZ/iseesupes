@@ -13,6 +13,7 @@ local DataLib = {}
 local _lastData: any = nil
 local _gamepasses: { [string]: boolean } = {}
 local _dataChangedEvent = Signal.new()
+local _thrustChangedEvent = Signal.new()
 local _gamepassChangedEvent = Signal.new()
 
 function DataLib.SetData(data: any)
@@ -26,6 +27,18 @@ end
 
 function DataLib.OnChanged(callback: Callback)
 	return _dataChangedEvent:Connect(callback)
+end
+
+function DataLib.SetThrust(current: number, max: number)
+	if _lastData then
+		_lastData.ThrustCurrent = current
+		_lastData.ThrustMax = max
+	end
+	_thrustChangedEvent:Fire(current, max)
+end
+
+function DataLib.OnThrustChanged(callback: (current: number, max: number) -> ())
+	return _thrustChangedEvent:Connect(callback)
 end
 
 function DataLib.SetGamepass(key: string, owned: boolean)

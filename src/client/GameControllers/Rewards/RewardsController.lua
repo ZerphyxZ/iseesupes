@@ -11,6 +11,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RewardConfigs = require(ReplicatedStorage.Shared.Configs.RewardConfigs)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local RewardTiming = require(ReplicatedStorage.Shared.Utils.RewardTiming)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
 local REWARD_COUNT = 12
@@ -32,21 +33,7 @@ local function formatCountdown(seconds: number): string
 end
 
 local function getSecondsUntilClaimable(data: any, index: number): number
-	local info = RewardConfigs.Rewards[index]
-	if not info then
-		return 0
-	end
-	local claimed = data.ClaimedRewards
-	if type(claimed) ~= "table" then
-		return 0
-	end
-	local lastClaimed = claimed[tostring(index)]
-	if type(lastClaimed) ~= "number" then
-		return 0
-	end
-	local cooldownSecs = info.CooldownHours * 3600
-	local remaining = cooldownSecs - (os.time() - lastClaimed)
-	return math.max(0, remaining)
+	return RewardTiming.getSecondsUntilClaimable(data, index)
 end
 
 local function anyRewardReady(data: any): boolean

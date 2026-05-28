@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RewardConfigs = require(ReplicatedStorage.Shared.Configs.RewardConfigs)
+local RewardTiming = require(ReplicatedStorage.Shared.Utils.RewardTiming)
 
 local DataService: any = nil
 
@@ -23,17 +24,8 @@ local function getClaimedRewards(data: any): { [string]: number }
 end
 
 local function isClaimable(data: any, index: number): boolean
-	local info = RewardConfigs.Rewards[index]
-	if not info then
-		return false
-	end
-	local claimed = getClaimedRewards(data)
-	local lastClaimed = claimed[tostring(index)]
-	if type(lastClaimed) ~= "number" then
-		return true
-	end
-	local cooldownSecs = info.CooldownHours * 3600
-	return os.time() - lastClaimed >= cooldownSecs
+	RewardTiming.ensureAnchor(data)
+	return RewardTiming.isClaimable(data, index)
 end
 
 function RewardService:PerformClaim(player: Player, index: number): boolean
@@ -55,6 +47,7 @@ function RewardService:PerformClaim(player: Player, index: number): boolean
 
 	local claimed = getClaimedRewards(data)
 	claimed[tostring(index)] = os.time()
+	DataService:Replicate(player)
 
 	local grant = info.Grant
 	if grant.Type == "Speed" then
@@ -62,14 +55,14 @@ function RewardService:PerformClaim(player: Player, index: number): boolean
 			data.Speed = 0
 		end
 		data.Speed += grant.Amount
-	elseif grant.Type == "SpeedPoints" then
-		if type(data.SpeedPoints) ~= "number" then
-			data.SpeedPoints = 0
+		DataService:Replicate(player)
+	elseif grant.Type == "Thrust" or grant.Type == "SpeedPoints" then
+		if DataService then
+			DataService:AddFuel(player, grant.Amount)
 		end
-		data.SpeedPoints += grant.Amount
+	else
+		DataService:Replicate(player)
 	end
-
-	DataService:Replicate(player)
 	RewardService.Client.ClaimReward:Fire(player, index, grant.Type, grant.Amount)
 
 	print("[iseesupes] RewardService: claimed reward", index, "for", player.Name, "→", grant.Type, grant.Amount)

@@ -68,4 +68,11 @@ function EffectsSystem.ShowWinPopUp(gain: number)
 	spawnPopup("+" .. tostring(math.floor(gain + 0.5)) .. " Wins", Color3.fromRGB(255, 220, 80))
 end
 
+function EffectsSystem.ShowThrustPopUp(gain: number)
+	if gain <= 0 then
+		return
+	end
+	spawnPopup("+" .. tostring(math.floor(gain + 0.5)) .. " Thrust", Color3.fromRGB(255, 120, 100))
+end
+
 return EffectsSystem

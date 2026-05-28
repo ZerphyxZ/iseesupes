@@ -54,7 +54,7 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 - `BasicJump/`: `Jump`, `Fall`, `Landing`
 - `DoubleJump/`: `FlightTrannsit`, `AfterTransition`, `LeanUp`, `LeapDown`, `DownSupes`
 
-**Treadmills:** Place models under `Workspace.Map.Treadmills` (e.g. `SilverTreadmill`). Add a `Start` part in Workspace for locked-tier kick-back. Tune tiers in [`TreadmillConfigs.lua`](src/shared/Configs/TreadmillConfigs.lua); set gamepass IDs in `ProductConfigs` (`GoldTreadmill`, `DiamondTreadmill`). Server: `TreadmillService:GetMultiplier(player)`.
+**Treadmills:** Place models under `Workspace.Map.Treadmills` (e.g. `SilverTreadmill`). Add a `Start` part under `Workspace.Map` for locked-tier kick-back and thrust-empty lobby return. Tune tiers in [`TreadmillConfigs.lua`](src/shared/Configs/TreadmillConfigs.lua); set gamepass IDs in `ProductConfigs` (`GoldTreadmill`, `DiamondTreadmill`). Server: `TreadmillService:GetMultiplier(player)`; each tick refills **Thrust** fuel × tier multiplier. Standing on a treadmill forces **RunAnimation** when `CharacterConfigs.Features.ForceRunOnTreadmill` is true (no need to hold W).
 
 **DoubleJump ability (hold E):** Server-validated special ability. Hold **E** through the full sequence (rise → forward arc → descent → `DownSupes`). Release E mid-ability to cancel into `Fall` / `Landing`. Cooldown starts when the ability begins (default 5s, even on cancel). Works grounded or mid-air. Tune phases, speeds, heights, and cooldown in `CharacterConfigs.DoubleJump`.
 
@@ -87,7 +87,24 @@ Edit `src/shared/Configs/ProductConfigs.lua`:
 - **Data:** `Speed` (cumulative XP) on profile (`iseesupes_v4`); `Level` is derived from `Speed`.
 - **Server:** [`SpeedService`](src/server/GameServices/SpeedService.lua) — `RequestAddSpeed` (rate-limited), `LevelUp` client signal.
 - **Client:** [`SpeedController`](src/client/GameControllers/Speed/SpeedController.lua) — movement tracking, bottom bar, level-up panel, popups via [`EffectsSystem`](src/client/Modules/EffectsSystem.lua).
-- **Studio:** `HUD/Bottom/Bar` (Level, Requirement, TotalSpeed, RebirthBoost, Progress), `Frames/LevelUp`, optional `Workspace/Sounds/LevelUp`.
+- **Studio:** `HUD/Bottom/List/Bar` or `HUD/Bottom/Bar` (Level, Requirement, TotalSpeed, RebirthBoost, Progress), `Frames/LevelUp`, optional `Workspace/Sounds/LevelUp`.
+
+## Thrust (flight fuel)
+
+- **Config:** [`ThrustConfigs.lua`](src/shared/Configs/ThrustConfigs.lua) — max fuel (75), drain per second while flying, treadmill refill per tick, min fuel to start E.
+- **Data:** `ThrustCurrent` / `ThrustMax` on profile; legacy `SpeedPoints` migrate to bonus max fuel on load.
+- **Server:** [`ThrustService`](src/server/GameServices/ThrustService.lua) — `AddFuel`, `TryConsume`, `CanStartFlight`, lobby teleport (`Map/Start`).
+- **Treadmill:** [`TreadmillService`](src/server/GameServices/TreadmillService.lua) refills `ThrustCurrent` each tick × tier multiplier (Basic 1× … Diamond 9×).
+- **Flight:** [`DoubleJumpService`](src/server/GameServices/DoubleJumpService.lua) drains during `FlightTransit` / `AfterTransition` / `LeanUp`; **at 0 fuel → immediate fall** → lobby spawn. Glide is **not** cut short by `ForwardDistance` / `E_LeanDist` or distance-derived lean timers. `E_LeanTime` and `LeanUpSafetyMaxDuration` (45s) are safety-only; ability time cap scales with fuel at E press (`GetAbilityTimeCap`).
+- **Client:** [`ThrustController`](src/client/GameControllers/Thrust/ThrustController.lua) — `HUD/Bottom/List/Thrust` (or `Bottom/Thrust`): `Progress`, `Level` (“Thrust”), `Requirement` (`current/max`).
+- **Balance:** tune `DrainPerSecond` so full tank time (`ThrustMax / DrainPerSecond`) matches stage 1 flight length; treadmill `TreadmillRefillPerTick` for recharge loop.
+- **Reset:** thrust refills to max on every character respawn (`CharacterAdded`), including manual reset.
+
+## Kill parts
+
+- Tag any `BasePart` or `Model` with **`KillPart`** (CollectionService tag in Studio).
+- **Server:** [`KillPartService`](src/server/GameServices/KillPartService.lua) — touch → ragdoll → respawn at `Workspace.Start`, `Map/Start`, or first `SpawnLocation`; thrust bar refilled.
+- **Config:** [`KillPartConfigs.lua`](src/shared/Configs/KillPartConfigs.lua) — `RagdollDuration`, `TouchDebounce`.
 
 ## HUD
 

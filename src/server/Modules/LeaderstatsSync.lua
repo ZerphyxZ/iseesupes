@@ -28,6 +28,7 @@ function LeaderstatsSync.Apply(player: Player, data: any)
 
 	local level = 1
 	local speed = 0
+	local thrust = 0
 	local rebirths = 0
 	local wins = 0
 	if type(data.Level) == "number" then
@@ -35,6 +36,9 @@ function LeaderstatsSync.Apply(player: Player, data: any)
 	end
 	if type(data.Speed) == "number" then
 		speed = math.floor(data.Speed)
+	end
+	if type(data.ThrustCurrent) == "number" then
+		thrust = math.floor(data.ThrustCurrent)
 	end
 	if type(data.Rebirths) == "number" then
 		rebirths = data.Rebirths
@@ -45,6 +49,7 @@ function LeaderstatsSync.Apply(player: Player, data: any)
 
 	ensureInt(folder, "Level", level)
 	ensureInt(folder, "Speed", speed)
+	ensureInt(folder, "Thrust", thrust)
 	ensureInt(folder, "Rebirths", rebirths)
 	ensureInt(folder, "Wins", wins)
 end

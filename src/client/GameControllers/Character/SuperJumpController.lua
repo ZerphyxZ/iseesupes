@@ -27,8 +27,10 @@ local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local abilityActive = false
 local currentPhase: string? = nil
-local lastSpaceBeginAt = 0
+local abilitySessionId = 0
+local smoothedSteerDir: Vector3? = nil
 local phaseAttrConn: RBXScriptConnection? = nil
+local toolUnequipConn: RBXScriptConnection? = nil
 
 local CharacterController: any = nil
 
@@ -43,6 +45,7 @@ type CharacterSuperJumpState = {
 	tracks: SuperJumpTracks,
 	currentTrack: AnimationTrack?,
 	heartbeatConn: RBXScriptConnection?,
+	leanUpLocked: boolean,
 }
 
 local characterStates: { [Model]: CharacterSuperJumpState } = {}
@@ -72,17 +75,20 @@ end
 
 local function crossfadeToTrack(state: CharacterSuperJumpState, track: AnimationTrack, fadeTime: number?)
 	local fade = fadeTime or getPhaseFadeTime()
-	if state.currentTrack == track and track.IsPlaying then
+	if state.currentTrack == track then
+		if track.IsPlaying then
+			return
+		end
 		return
 	end
 	local outgoing = state.currentTrack
+	state.currentTrack = track
 	if outgoing and outgoing ~= track then
 		fadeOutTrack(outgoing, fade, state)
 	end
 	pcall(function()
 		track:Play(fade)
 	end)
-	state.currentTrack = track
 end
 
 local function getAnimFolder(): Folder?
@@ -111,8 +117,71 @@ local function getAnimationInFolder(folder: Folder, subFolderName: string, animN
 	return nil
 end
 
-local function isGrounded(humanoid: Humanoid): boolean
-	return humanoid.FloorMaterial ~= Enum.Material.Air
+local function getSuperJumpToolName(): string
+	return SjCfg.ToolName or "SuperJump"
+end
+
+local function hasSuperJumpToolEquipped(character: Model): boolean
+	local tool = character:FindFirstChild(getSuperJumpToolName())
+	return tool ~= nil and tool:IsA("Tool")
+end
+
+local function flatUnit(vector: Vector3): Vector3
+	local flat = Vector3.new(vector.X, 0, vector.Z)
+	if flat.Magnitude < 0.01 then
+		return Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
+end
+
+local function getSteerThreshold(): number
+	local steerCfg = SjCfg.Steering
+	return steerCfg.SteerMoveThreshold or Loc.MoveThreshold
+end
+
+local function getSuperJumpSteerDirection(state: CharacterSuperJumpState): Vector3
+	local camera = workspace.CurrentCamera
+	if camera then
+		local flatLook = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+		if flatLook.Magnitude >= 0.01 then
+			local camDir = flatUnit(flatLook)
+			local move = state.humanoid.MoveDirection
+			if move.Magnitude >= getSteerThreshold() then
+				return flatUnit(camDir * 0.7 + flatUnit(move) * 0.3)
+			end
+			return camDir
+		end
+	end
+
+	local move = state.humanoid.MoveDirection
+	if move.Magnitude >= getSteerThreshold() then
+		return flatUnit(move)
+	end
+	return Vector3.zero
+end
+
+local function publishSteerInput(state: CharacterSuperJumpState, dt: number)
+	if not abilityActive then
+		return
+	end
+
+	local raw = getSuperJumpSteerDirection(state)
+	if raw.Magnitude < 0.01 then
+		return
+	end
+
+	local steerCfg = SjCfg.Steering
+	local smoothRate = steerCfg.SteerSmoothRate or 14
+	local alpha = math.min(1, smoothRate * dt)
+	if smoothedSteerDir then
+		smoothedSteerDir = flatUnit((smoothedSteerDir :: Vector3):Lerp(raw, alpha))
+	else
+		smoothedSteerDir = raw
+	end
+
+	pcall(function()
+		Knit.GetService("SuperJumpService"):UpdateSteerInput(smoothedSteerDir :: Vector3)
+	end)
 end
 
 local function setAbilityBlocking(blocked: boolean)
@@ -127,19 +196,44 @@ local function stopAllTracks(state: CharacterSuperJumpState)
 		state.tracks.downSupes:Stop(Loc.FadeTime)
 	end)
 	state.currentTrack = nil
+	state.leanUpLocked = false
+end
+
+local function playLeanUpOnce(state: CharacterSuperJumpState)
+	if state.leanUpLocked then
+		return
+	end
+	state.leanUpLocked = true
+	crossfadeToTrack(state, state.tracks.leanUp, 0)
+end
+
+local function playDownSupesLanding(state: CharacterSuperJumpState)
+	state.leanUpLocked = false
+	crossfadeToTrack(state, state.tracks.downSupes, getPhaseFadeTime())
 end
 
 local function playPhaseAnim(state: CharacterSuperJumpState, phase: string)
 	if phase == PHASE.LeanUp then
-		crossfadeToTrack(state, state.tracks.leanUp, getPhaseFadeTime())
+		playLeanUpOnce(state)
 	elseif phase == PHASE.DownSupes then
-		crossfadeToTrack(state, state.tracks.downSupes, getPhaseFadeTime())
+		playDownSupesLanding(state)
 	end
+end
+
+local function ensureDownSupesPlaying(state: CharacterSuperJumpState)
+	if currentPhase ~= PHASE.DownSupes then
+		return
+	end
+	if state.currentTrack == state.tracks.downSupes and state.tracks.downSupes.IsPlaying then
+		return
+	end
+	playDownSupesLanding(state)
 end
 
 local function onAbilityEnded()
 	abilityActive = false
 	currentPhase = nil
+	smoothedSteerDir = nil
 	setAbilityBlocking(false)
 
 	local character = player.Character
@@ -170,24 +264,13 @@ local function onPhaseChanged(phase: string)
 	playPhaseAnim(state, phase)
 end
 
-local function syncPhaseFromAttribute()
+local function onAbilityPhaseAttributeChanged()
 	if not abilityActive then
 		return
 	end
-
 	local attrPhase = player:GetAttribute(PHASE_ATTR)
 	if attrPhase == nil or (typeof(attrPhase) == "string" and attrPhase == "") then
-		if abilityActive then
-			onAbilityEnded()
-		end
-		return
-	end
-	if typeof(attrPhase) ~= "string" then
-		return
-	end
-
-	if attrPhase ~= currentPhase then
-		onPhaseChanged(attrPhase)
+		onAbilityEnded()
 	end
 end
 
@@ -196,10 +279,15 @@ local function bindPhaseAttributeSync()
 		phaseAttrConn:Disconnect()
 		phaseAttrConn = nil
 	end
-	phaseAttrConn = player:GetAttributeChangedSignal(PHASE_ATTR):Connect(syncPhaseFromAttribute)
+	phaseAttrConn = player:GetAttributeChangedSignal(PHASE_ATTR):Connect(onAbilityPhaseAttributeChanged)
 end
 
 local function cleanupCharacter(character: Model)
+	if toolUnequipConn then
+		toolUnequipConn:Disconnect()
+		toolUnequipConn = nil
+	end
+
 	local state = characterStates[character]
 	if not state then
 		return
@@ -262,7 +350,7 @@ local function setupCharacter(character: Model)
 
 	local tracks: SuperJumpTracks = {
 		leanUp = loadTrack(leanAnim, true),
-		downSupes = loadTrack(downAnim, true),
+		downSupes = loadTrack(downAnim, false),
 	}
 
 	local state: CharacterSuperJumpState = {
@@ -271,12 +359,23 @@ local function setupCharacter(character: Model)
 		tracks = tracks,
 		currentTrack = nil,
 		heartbeatConn = nil,
+		leanUpLocked = false,
 	}
 	characterStates[character] = state
 
-	state.heartbeatConn = RunService.Heartbeat:Connect(function()
+	state.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if abilityActive then
-			syncPhaseFromAttribute()
+			publishSteerInput(state, dt)
+			ensureDownSupesPlaying(state)
+		end
+	end)
+
+	if toolUnequipConn then
+		toolUnequipConn:Disconnect()
+	end
+	toolUnequipConn = character.ChildRemoved:Connect(function(child: Instance)
+		if child:IsA("Tool") and child.Name == getSuperJumpToolName() and abilityActive then
+			onAbilityEnded()
 		end
 	end)
 
@@ -297,7 +396,21 @@ local function ensureAbilityState(character: Model): CharacterSuperJumpState?
 	return characterStates[character]
 end
 
-function SuperJumpController:TryConsumeSecondTap(): boolean
+local function startAbilitySession(character: Model): CharacterSuperJumpState?
+	abilitySessionId += 1
+	currentPhase = nil
+
+	local state = ensureAbilityState(character)
+	if not state then
+		return nil
+	end
+	state.leanUpLocked = false
+	state.currentTrack = nil
+	smoothedSteerDir = nil
+	return state
+end
+
+function SuperJumpController:TrySuperJumpOnJump(): boolean
 	if not Features.UseSuperJump then
 		return false
 	end
@@ -307,47 +420,28 @@ function SuperJumpController:TryConsumeSecondTap(): boolean
 		return false
 	end
 
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
+	if not hasSuperJumpToolEquipped(character) then
 		return false
 	end
 
 	if CharacterController and CharacterController.IsAbilityBlocking and CharacterController:IsAbilityBlocking() then
-		return false
+		return true
 	end
 
 	if player:GetAttribute(DJ_PHASE_ATTR) then
-		return false
+		return true
 	end
 
 	if abilityActive then
-		return false
-	end
-
-	local now = os.clock()
-	local window = SjCfg.DoubleTapWindow or 0.35
-	local isSecondTap = lastSpaceBeginAt > 0 and (now - lastSpaceBeginAt) <= window
-	lastSpaceBeginAt = now
-
-	if not isSecondTap then
-		return false
-	end
-
-	if isGrounded(humanoid) then
-		return false
+		return true
 	end
 
 	local service = Knit.GetService("SuperJumpService")
 	service:RequestStart():andThen(function(ok: boolean, _reason: string?)
-		if ok then
+		if ok and not abilityActive then
 			abilityActive = true
 			setAbilityBlocking(true)
-			ensureAbilityState(character)
-			syncPhaseFromAttribute()
-			local phase = player:GetAttribute(PHASE_ATTR)
-			if typeof(phase) == "string" and phase ~= "" then
-				onPhaseChanged(phase)
-			end
+			startAbilitySession(character)
 		end
 	end):catch(warn)
 
@@ -358,7 +452,7 @@ function SuperJumpController:KnitInit()
 	CharacterController = Knit.GetController("CharacterController")
 	if CharacterController and CharacterController.RegisterJumpInterceptor then
 		CharacterController:RegisterJumpInterceptor(function()
-			return SuperJumpController:TryConsumeSecondTap()
+			return SuperJumpController:TrySuperJumpOnJump()
 		end)
 	end
 end
@@ -379,7 +473,7 @@ function SuperJumpController:KnitStart()
 			setAbilityBlocking(true)
 			local character = player.Character
 			if character then
-				ensureAbilityState(character)
+				startAbilitySession(character)
 			end
 		end
 		onPhaseChanged(phase)

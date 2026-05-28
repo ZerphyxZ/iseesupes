@@ -1,5 +1,6 @@
 --!strict
 
+local CollectionService = game:GetService("CollectionService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,6 +9,8 @@ local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local ThrustConfigs = SpeedConfigs.Thrust
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 
 type TreadmillTier = TreadmillConfigs.TreadmillTier
@@ -32,6 +35,18 @@ local kickSpawnPart: BasePart? = nil
 
 local MonetizationService: any = nil
 local DataService: any = nil
+
+local KillPartConfigs = {
+	Tag = "KillPart",
+	RagdollDuration = 1.25,
+	TouchDebounce = 1.5,
+}
+pcall(function()
+	KillPartConfigs = require(ReplicatedStorage.Shared.Configs.KillPartConfigs)
+end)
+
+local killCooldownUntil: { [Player]: number } = {}
+local killTouchConns: { [Instance]: RBXScriptConnection } = {}
 
 local timeAccumulator = 0
 
@@ -186,23 +201,29 @@ local function kickFromTreadmill(player: Player, tier: TreadmillTier)
 	end
 end
 
-local function addSpeedPoints(player: Player)
+local function awardTreadmillTick(player: Player, tier: TreadmillTier)
 	if not DataService then
 		return
 	end
 
-	local profile = DataService:GetProfile(player)
-	if not profile then
-		return
-	end
+	local mult = tier.Multiplier
+	local refill = ThrustConfigs.TreadmillRefillPerTick * mult
+	DataService:AddFuel(player, refill)
 
-	local data = profile.Data
-	local amount = GameplayCfg.PointsPerTick
-	if typeof(data.SpeedPoints) ~= "number" then
-		data.SpeedPoints = 0
+	local speedXp = GameplayCfg.SpeedXpPerTick or 0
+	if speedXp > 0 and DataService then
+		local profile = DataService:GetProfile(player)
+		if profile then
+			local data = profile.Data
+			if type(data.Speed) ~= "number" then
+				data.Speed = 0
+			end
+			data.Speed += speedXp * mult
+			local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+			SpeedConfigs.SyncLevelFromSpeed(data)
+			DataService:Replicate(player)
+		end
 	end
-	data.SpeedPoints += amount
-	DataService:Replicate(player)
 end
 
 -- [ TICK ] -------------------------------------------------------------------
@@ -279,8 +300,8 @@ local function checkTreadmills(deltaTime: number)
 				fireActiveTreadmill(player, tier)
 			end
 
-			if shouldAwardPoints then
-				addSpeedPoints(player)
+			if shouldAwardPoints and tier then
+				awardTreadmillTick(player, tier)
 			end
 		else
 			if previousModel then
@@ -322,6 +343,196 @@ function TreadmillService.Client:GetActiveTierKey(player: Player): string?
 	return TreadmillService:GetActiveTierKey(player)
 end
 
+-- [ KILL PARTS ] ---------------------------------------------------------------
+
+local function getKillSpawnCFrame(): CFrame?
+	local offset = GameplayCfg.KickTeleportOffset
+
+	local map = Workspace:FindFirstChild(WorldCfg.MapFolderName)
+	if map then
+		local inMap = map:FindFirstChild(WorldCfg.KickSpawnPartName)
+		if inMap and inMap:IsA("BasePart") then
+			return inMap.CFrame + offset
+		end
+	end
+
+	local rootStart = Workspace:FindFirstChild(WorldCfg.KickSpawnPartName)
+	if rootStart and rootStart:IsA("BasePart") then
+		return rootStart.CFrame + offset
+	end
+
+	for _, child in Workspace:GetChildren() do
+		if child:IsA("SpawnLocation") then
+			return child.CFrame + offset
+		end
+	end
+
+	return nil
+end
+
+local function getCharacterFromKillHit(hit: BasePart): Model?
+	local parent = hit.Parent
+	if parent and parent:IsA("Model") and parent:FindFirstChildOfClass("Humanoid") then
+		return parent
+	end
+	return hit:FindFirstAncestorOfClass("Model")
+end
+
+local function applyKillRagdoll(character: Model)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	humanoid.AutoRotate = false
+	humanoid.PlatformStand = true
+	pcall(function()
+		humanoid:ChangeState(Enum.HumanoidStateType.Ragdoll)
+	end)
+	pcall(function()
+		humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+	end)
+
+	for _, desc in character:GetDescendants() do
+		if desc:IsA("Motor6D") then
+			desc.Enabled = false
+		end
+	end
+end
+
+function TreadmillService:RespawnFromKillPart(player: Player)
+	if not player.Parent then
+		return
+	end
+
+	player:LoadCharacter()
+
+	local character = player.Character
+	if not character then
+		character = player.CharacterAdded:Wait()
+	end
+
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local spawnCf = getKillSpawnCFrame()
+	if root and spawnCf then
+		root.CFrame = spawnCf
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+	end
+
+	if DataService then
+		DataService:RefillThrustToMax(player)
+	end
+end
+
+local function onKillPartPlayerKilled(player: Player, character: Model)
+	local now = os.clock()
+	if (killCooldownUntil[player] or 0) > now then
+		return
+	end
+	killCooldownUntil[player] = now + KillPartConfigs.TouchDebounce
+
+	applyKillRagdoll(character)
+
+	task.delay(KillPartConfigs.RagdollDuration, function()
+		if not player.Parent then
+			return
+		end
+		TreadmillService:RespawnFromKillPart(player)
+	end)
+end
+
+local function onKillPartTouched(killPart: BasePart, hit: BasePart)
+	if not hit or not hit.Parent then
+		return
+	end
+	if hit:IsDescendantOf(killPart) then
+		return
+	end
+
+	local character = getCharacterFromKillHit(hit)
+	if not character then
+		return
+	end
+
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then
+		return
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	onKillPartPlayerKilled(player, character)
+end
+
+local function bindKillPartPart(part: BasePart)
+	if killTouchConns[part] then
+		return
+	end
+
+	part.CanTouch = true
+	killTouchConns[part] = part.Touched:Connect(function(hit)
+		onKillPartTouched(part, hit)
+	end)
+end
+
+local function bindKillPart(instance: Instance)
+	if instance:IsA("BasePart") then
+		bindKillPartPart(instance)
+		return
+	end
+
+	if instance:IsA("Model") then
+		local found = false
+		for _, desc in instance:GetDescendants() do
+			if desc:IsA("BasePart") then
+				found = true
+				bindKillPartPart(desc)
+			end
+		end
+		if not found then
+			warn("[iseesupes] KillPart: tagged model has no BasePart:", instance:GetFullName())
+		end
+		return
+	end
+
+	warn("[iseesupes] KillPart: unsupported tagged type:", instance:GetFullName())
+end
+
+local function unbindKillPart(instance: Instance)
+	if instance:IsA("BasePart") then
+		local conn = killTouchConns[instance]
+		if conn then
+			conn:Disconnect()
+			killTouchConns[instance] = nil
+		end
+		return
+	end
+
+	for _, desc in instance:GetDescendants() do
+		if desc:IsA("BasePart") then
+			local conn = killTouchConns[desc]
+			if conn then
+				conn:Disconnect()
+				killTouchConns[desc] = nil
+			end
+		end
+	end
+end
+
+local function initKillParts()
+	local tag = KillPartConfigs.Tag
+	for _, instance in CollectionService:GetTagged(tag) do
+		bindKillPart(instance)
+	end
+
+	CollectionService:GetInstanceAddedSignal(tag):Connect(bindKillPart)
+	CollectionService:GetInstanceRemovedSignal(tag):Connect(unbindKillPart)
+end
+
 function TreadmillService:KnitStart()
 	MonetizationService = Knit.GetService("MonetizationService")
 	DataService = Knit.GetService("DataService")
@@ -329,14 +540,16 @@ function TreadmillService:KnitStart()
 	buildTierLookups()
 	resolveWorldInstances()
 	indexStudioTreadmills()
+	initKillParts()
 
 	RunService.Heartbeat:Connect(checkTreadmills)
 
 	Players.PlayerRemoving:Connect(function(player)
 		clearPlayerTreadmill(player)
+		killCooldownUntil[player] = nil
 	end)
 
-	print("[iseesupes] TreadmillService ready.")
+	print("[iseesupes] TreadmillService ready. KillPart tag:", KillPartConfigs.Tag)
 end
 
 return TreadmillService

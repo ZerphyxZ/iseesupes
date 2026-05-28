@@ -12,6 +12,7 @@ local CharacterConfigs = {
 		UseDoubleJump = true,
 		UseGlideVfx = true,
 		UseSuperJump = true,
+		ForceRunOnTreadmill = true,
 	},
 
 	Animations = {
@@ -46,6 +47,11 @@ local CharacterConfigs = {
 		MaxAbilityDuration = 7,
 		Debug = false,
 
+		Network = {
+			ClientOwnsFlightPhysics = true,
+			SteerSendHz = 15,
+		},
+
 		AnimFolder = "DoubleJump",
 		Anims = {
 			FlightTransit = "FlightTrannsit",
@@ -62,21 +68,36 @@ local CharacterConfigs = {
 
 		SupermanPose = {
 			TransitStartPitch = 0,
-			TransitEndPitch = -40,
-			TransitPitchLerp = 12,
+			TransitEndPitch = -35,
+			TransitPitchLerp = 8,
+			TransitLaunchClimbDegrees = 10,
 			FlightPitch = -85,
 			PitchLerp = 10,
 			UprightPitch = 0,
+			MaxBankDegrees = 40,
+			BankFollowRate = 3,
+			BankReturnRate = 2,
+			CameraBankBlend = 0.85,
+			CameraYawRateForFullBank = 1.2,
+			CameraYawRateMin = 0.35,
+			--- Launch: forward-lean first, gentle climb, then ease to superman pitch during rise.
+			LaunchClimbStartDegrees = 14,
+			LaunchClimbEndDegrees = 26,
+			LaunchBodyPitch = -72,
+			LaunchPitchLerp = 5,
+			CameraPitchRateForFullAxis = 1.0,
+			CameraPitchRateMin = 0.3,
+			CameraPitchVelocityBlend = 0.35,
 		},
 
 		Phases = {
 			FlightTransit = {
-				Duration = 0.35,
-				ForwardNudgeSpeed = 12,
+				Duration = 0.4,
+				ForwardNudgeSpeed = 16,
 			},
 			AfterTransition = {
-				RiseSpeed = 50,
-				ForwardSpeed = 60,
+				RiseSpeed = 42,
+				ForwardSpeed = 68,
 				TargetHeightAboveStart = 28,
 				MaxDuration = 1.1,
 				MinDuration = 0.5,
@@ -109,6 +130,14 @@ local CharacterConfigs = {
 				SettleDuration = 0.15,
 				MaxStableVelocityY = 4,
 				MaxDuration = 2.5,
+				WalkableNormalMinY = 0.6,
+				GroundProbeDistance = 8,
+				GroundClearanceTolerance = 1.25,
+				AirborneProbeDistance = 64,
+				ObstacleProbeDistance = 4,
+				WallProbeDistance = 5,
+				LandingProbeInterval = 0.12,
+				ObstacleProbeInterval = 0.15,
 			},
 		},
 
@@ -118,10 +147,13 @@ local CharacterConfigs = {
 
 		Steering = {
 			Enabled = true,
+			FollowCameraPitch = true,
+			MaxPitchDegrees = 45,
 			DirectionLerp = 10,
 			HorizontalSpeed = 45,
 			DescentHorizontalBlend = 0.35,
 			SteerMoveThreshold = 0.1,
+			SteerAxisSmoothRate = 14,
 		},
 
 		Cancel = {

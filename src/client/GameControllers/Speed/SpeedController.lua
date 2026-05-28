@@ -11,12 +11,50 @@ local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local ThrustConfigs = SpeedConfigs.Thrust
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local EffectsSystem = require(script.Parent.Parent.Parent.Modules.EffectsSystem)
 local SpeedController = Knit.CreateController({ Name = "SpeedController" })
 
 local TWEEN_INFO_LEVEL = TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local function findThrustBar(bottom: Instance): Frame?
+	local names = { "Thrust", "SpeedPoints" }
+	local list = bottom:FindFirstChild("List")
+	if list then
+		for _, name in names do
+			local inList = list:FindFirstChild(name)
+			if inList and inList:IsA("Frame") then
+				return inList
+			end
+		end
+	end
+	for _, name in names do
+		local direct = bottom:FindFirstChild(name)
+		if direct and direct:IsA("Frame") then
+			return direct
+		end
+	end
+	return nil
+end
+
+local function getThrustNumbers(data: any): (number, number)
+	if not data then
+		return 0, ThrustConfigs and ThrustConfigs.BaseMaxFuel or 75
+	end
+	if ThrustConfigs then
+		ThrustConfigs.EnsureFuelDefaults(data)
+	else
+		if typeof(data.ThrustMax) ~= "number" or data.ThrustMax <= 0 then
+			data.ThrustMax = 75
+		end
+		if typeof(data.ThrustCurrent) ~= "number" then
+			data.ThrustCurrent = data.ThrustMax
+		end
+	end
+	return data.ThrustCurrent, data.ThrustMax
+end
 
 local function getDataNumbers(data: any): (number, number, number, number)
 	if not data then
@@ -42,10 +80,66 @@ function SpeedController:KnitStart()
 
 	local hud = gui:WaitForChild("HUD", 30)
 	local bottom = hud and hud:WaitForChild("Bottom", 10)
-	local barFrame = bottom and bottom:WaitForChild("Bar", 10)
+	local barFrame: Frame? = nil
+	if bottom then
+		local list = bottom:FindFirstChild("List")
+		if list then
+			local inList = list:FindFirstChild("Bar")
+			if inList and inList:IsA("Frame") then
+				barFrame = inList
+			end
+		end
+		if not barFrame then
+			local legacy = bottom:FindFirstChild("Bar")
+			if legacy and legacy:IsA("Frame") then
+				barFrame = legacy
+			end
+		end
+	end
 	if not barFrame then
-		warn("[iseesupes] SpeedController: missing HUD/Bottom/Bar.")
+		warn("[iseesupes] SpeedController: missing HUD/Bottom/List/Bar or Bottom/Bar.")
 		return
+	end
+
+	-- Thrust fuel bar (same Bottom; ThrustController module may not be synced via Rojo)
+	local thrustBarFrame: Frame? = if bottom then findThrustBar(bottom) else nil
+	local thrustProgress: Frame? = nil
+	local thrustLevelLabel: TextLabel? = nil
+	local thrustReqLabel: TextLabel? = nil
+	local lastThrustValue: number? = nil
+
+	if thrustBarFrame then
+		thrustProgress = thrustBarFrame:WaitForChild("Progress") :: Frame
+		thrustLevelLabel = thrustBarFrame:WaitForChild("Level") :: TextLabel
+		thrustReqLabel = thrustBarFrame:WaitForChild("Requirement") :: TextLabel
+	else
+		warn("[iseesupes] SpeedController: missing HUD/Bottom/List/Thrust or SpeedPoints.")
+	end
+
+	local function updateThrustUI()
+		if not thrustProgress or not thrustLevelLabel or not thrustReqLabel then
+			return
+		end
+
+		local current, max = getThrustNumbers(DataLib.GetData())
+
+		if lastThrustValue ~= nil then
+			local gain = current - lastThrustValue
+			if gain > 0.05 then
+				EffectsSystem.ShowThrustPopUp(gain)
+			end
+		end
+		lastThrustValue = current
+
+		thrustLevelLabel.Text = "Thrust"
+		thrustReqLabel.Text = NumberFormatter.Format(math.floor(current))
+			.. "/"
+			.. NumberFormatter.Format(math.floor(max))
+
+		local percent = if max > 0 then current / max else 0
+		percent = math.clamp(percent, 0, 1)
+		local targetSize = UDim2.new(percent, 0, 1, 0)
+		TweenService:Create(thrustProgress, TweenInfo.new(0.3, Enum.EasingStyle.Quint), { Size = targetSize }):Play()
 	end
 
 	local progressFrame = barFrame:WaitForChild("Progress") :: Frame
@@ -211,11 +305,25 @@ function SpeedController:KnitStart()
 	DataLib.OnChanged(function()
 		updateUI()
 		updateWinsPopups()
+		updateThrustUI()
+	end)
+
+	DataLib.OnThrustChanged(function()
+		updateThrustUI()
 	end)
 
 	updateUI()
+	updateThrustUI()
 
 	SpeedService.LevelUp:Connect(showLevelUp)
+
+	local DataService = Knit.GetService("DataService")
+	pcall(function()
+		DataService.ThrustDepleted:Connect(updateThrustUI)
+	end)
+
+	local TreadmillService = Knit.GetService("TreadmillService")
+	TreadmillService.ActiveTreadmillChanged:Connect(updateThrustUI)
 
 	print("[iseesupes] SpeedController ready.")
 end

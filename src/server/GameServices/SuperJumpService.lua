@@ -7,9 +7,12 @@ local RunService = game:GetService("RunService")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
+local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 
 local Features = CharacterConfigs.Features
 local SjCfg = CharacterConfigs.SuperJump
+
+type SjTuning = LevelDesignTuning.SuperJumpTuning
 
 local PHASE = {
 	LeanUp = "LeanUp",
@@ -30,13 +33,15 @@ type SuperJumpSession = {
 	phaseStartedAt: number,
 	abilityStartedAt: number,
 	descentStartedAt: number?,
-	glideStartPosition: Vector3?,
-	glideStartedAt: number?,
-	riseCompleteLatch: boolean,
+	arcComplete: boolean,
+	arcCompletedAt: number?,
 	autoRotateWas: boolean,
 	rayParams: RaycastParams,
 	groundedAt: number?,
 	diedConn: RBXScriptConnection?,
+	tuning: SjTuning,
+	tuningConns: { RBXScriptConnection },
+	clientSteerDirection: Vector3?,
 }
 
 local SuperJumpService = Knit.CreateService({
@@ -51,6 +56,33 @@ local SuperJumpService = Knit.CreateService({
 local sessions: { [Player]: SuperJumpSession } = {}
 local cooldownEndsAt: { [Player]: number } = {}
 local heartbeatConn: RBXScriptConnection? = nil
+
+local function refreshSessionTuning(session: SuperJumpSession)
+	session.tuning = LevelDesignTuning.getSuperJump(session.player)
+end
+
+local function bindTuningChangeListeners(session: SuperJumpSession)
+	for _, conn in session.tuningConns do
+		conn:Disconnect()
+	end
+	table.clear(session.tuningConns)
+
+	local function onAttrChanged(_name: string)
+		refreshSessionTuning(session)
+	end
+
+	table.insert(session.tuningConns, session.player.AttributeChanged:Connect(onAttrChanged))
+	if session.character then
+		table.insert(session.tuningConns, session.character.AttributeChanged:Connect(onAttrChanged))
+	end
+end
+
+local function disconnectTuningListeners(session: SuperJumpSession)
+	for _, conn in session.tuningConns do
+		conn:Disconnect()
+	end
+	table.clear(session.tuningConns)
+end
 
 local function isGrounded(humanoid: Humanoid): boolean
 	return DoubleJumpLanding.isGrounded(humanoid)
@@ -82,6 +114,16 @@ local function applyVelocityOnly(root: BasePart, velocity: Vector3)
 	root.AssemblyLinearVelocity = velocity
 end
 
+local function playerHasSuperJumpToolEquipped(player: Player): boolean
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local toolName = SjCfg.ToolName or "SuperJump"
+	local tool = character:FindFirstChild(toolName)
+	return tool ~= nil and tool:IsA("Tool")
+end
+
 local function getGlideForwardSpeed(leanCfg: { [string]: any }): number
 	local distance = math.max(leanCfg.ForwardDistance or 0, 0)
 	local duration = math.max(leanCfg.MaxGlideDuration or 0.5, 0.05)
@@ -95,15 +137,65 @@ local function restoreUprightPose(root: BasePart, flightDir: Vector3)
 	root.AssemblyAngularVelocity = Vector3.zero
 end
 
+--- Yaw only — never lerp full CFrame (that drifts position and fights velocity).
+local function faceFlightDirectionSmooth(root: BasePart, flightDir: Vector3, dt: number, turnLerp: number)
+	local flat = flatUnit(flightDir)
+	local pos = root.Position
+	local targetRot = CFrame.lookAt(Vector3.zero, flat).Rotation
+	local currentRot = root.CFrame.Rotation
+	if currentRot.LookVector:Dot(targetRot.LookVector) > 0.998 then
+		root.AssemblyAngularVelocity = Vector3.zero
+		return
+	end
+	local alpha = math.min(1, turnLerp * dt)
+	root.CFrame = CFrame.new(pos) * currentRot:Lerp(targetRot, alpha)
+	root.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function isSteeringEnabled(tuning: SjTuning): boolean
+	return tuning.Steering.Enabled ~= false
+end
+
+local function getSteerDirection(session: SuperJumpSession, _tuning: SjTuning): Vector3
+	local clientSteer = session.clientSteerDirection
+	if clientSteer then
+		return flatUnit(clientSteer)
+	end
+	return flatUnit(session.flightDirection)
+end
+
+local function applySteerToFlightDirection(session: SuperJumpSession, dt: number, tuning: SjTuning)
+	if not isSteeringEnabled(tuning) then
+		return
+	end
+
+	local target = getSteerDirection(session, tuning)
+	local alpha = math.min(1, (tuning.Steering.DirectionLerp or 12) * dt)
+	session.flightDirection = flatUnit(session.flightDirection:Lerp(target, alpha))
+end
+
+local function blendHorizontalVelocity(
+	session: SuperJumpSession,
+	baseVel: Vector3,
+	horizontalScale: number,
+	tuning: SjTuning
+): Vector3
+	if horizontalScale <= 0 or not isSteeringEnabled(tuning) then
+		return baseVel
+	end
+
+	local hSpeed = tuning.Steering.HorizontalSpeed or 50
+	return baseVel + session.flightDirection * hSpeed * horizontalScale
+end
+
 function SuperJumpService:_setPhase(session: SuperJumpSession, phase: string)
 	session.phase = phase
 	session.phaseStartedAt = os.clock()
 	if phase == PHASE.LeanUp then
 		session.descentStartedAt = nil
-		session.glideStartPosition = nil
-		session.glideStartedAt = nil
-		session.riseCompleteLatch = false
 		session.groundedAt = nil
+		session.arcComplete = false
+		session.arcCompletedAt = nil
 		restoreUprightPose(session.root, session.flightDirection)
 	elseif phase == PHASE.DownSupes then
 		session.groundedAt = nil
@@ -121,6 +213,7 @@ function SuperJumpService:_endAbility(player: Player)
 	end
 
 	sessions[player] = nil
+	disconnectTuningListeners(session)
 
 	if session.diedConn then
 		session.diedConn:Disconnect()
@@ -160,67 +253,74 @@ function SuperJumpService:_tickSession(session: SuperJumpSession, dt: number)
 	local now = os.clock()
 	local phaseElapsed = now - session.phaseStartedAt
 	local abilityElapsed = now - session.abilityStartedAt
-	local leanCfg = SjCfg.LeanUp
-	local downCfg = SjCfg.DownSupes
+	local tuning = session.tuning
+	local leanCfg = tuning.LeanUp
+	local downCfg = tuning.DownSupes
 
-	if abilityElapsed >= SjCfg.MaxDuration then
+	if abilityElapsed >= tuning.MaxDuration then
 		self:_endAbility(session.player)
 		return
 	end
 
+	if not playerHasSuperJumpToolEquipped(session.player) then
+		self:_endAbility(session.player)
+		return
+	end
+
+	applySteerToFlightDirection(session, dt, tuning)
+	local descentBlend = tuning.Steering.DescentHorizontalBlend or 0.35
+	local turnLerp = tuning.Steering.TurnLerp or 14
+
 	if session.phase == PHASE.LeanUp then
-		local heightGain = root.Position.Y - session.startPosition.Y
-		local riseHeight = leanCfg.RiseHeight or 5
-		local riseMaxTime = leanCfg.RiseMaxDuration or 0.4
+		if not session.arcComplete then
+			local heightGain = root.Position.Y - session.startPosition.Y
+			local riseHeight = leanCfg.RiseHeight or 5
+			local forwardDistance = math.max(leanCfg.ForwardDistance or 0, 0)
+			local flatDist = flatDistance(session.startPosition, root.Position)
 
-		if not session.riseCompleteLatch then
-			if
-				(phaseElapsed >= leanCfg.MinAirTime and heightGain >= riseHeight)
-				or phaseElapsed >= riseMaxTime
-			then
-				session.riseCompleteLatch = true
-				session.glideStartPosition = root.Position
-				session.glideStartedAt = now
+			local riseMaxTime = leanCfg.RiseMaxDuration or 0.4
+			local glideDuration = math.max(leanCfg.MaxGlideDuration or 0.5, 0.05)
+			local arcMaxTime = math.max(riseMaxTime, glideDuration)
+
+			local reachedHeight = heightGain >= riseHeight
+			local reachedDistance = flatDist >= forwardDistance
+			local timeCap = phaseElapsed >= arcMaxTime
+
+			if not ((reachedHeight and reachedDistance) or timeCap) then
+				local forwardSpeed = getGlideForwardSpeed(leanCfg)
+				local riseVy = if reachedHeight then -(leanCfg.GlideFallSpeed or 6) else leanCfg.RiseSpeed
+				local vel = session.flightDirection * forwardSpeed + Vector3.new(0, riseVy, 0)
+				applyVelocityOnly(root, vel)
+				root.AssemblyAngularVelocity = Vector3.zero
+				return
 			end
+
+			session.arcComplete = true
+			session.arcCompletedAt = now
 		end
 
-		if not session.riseCompleteLatch then
-			applyVelocityOnly(root, Vector3.new(0, leanCfg.RiseSpeed, 0))
+		local rayLength = leanCfg.SurfaceRayLength or 250
+		local hit = DoubleJumpLanding.raycastDownFromRoot(root, rayLength, session.rayParams)
+		local descentElapsed = now - (session.arcCompletedAt :: number)
+		if
+			DoubleJumpLanding.shouldStartLeapDown(
+				humanoid,
+				root,
+				hit,
+				{ MinDuration = downCfg.MinDuration },
+				downCfg,
+				descentElapsed,
+				session.rayParams,
+				nil
+			)
+		then
+			self:_setPhase(session, PHASE.DownSupes)
 			return
 		end
 
-		local glideStart = session.glideStartPosition or root.Position
-		if not session.glideStartPosition then
-			session.glideStartPosition = glideStart
-		end
-		if not session.glideStartedAt then
-			session.glideStartedAt = now
-		end
-
-		local glideElapsed = now - (session.glideStartedAt :: number)
-		local glideDuration = math.max(leanCfg.MaxGlideDuration or 0.5, 0.05)
-		local forwardDistance = math.max(leanCfg.ForwardDistance or 0, 0)
-
-		if glideElapsed < glideDuration then
-			local glideSpeed = getGlideForwardSpeed(leanCfg)
-			local fallDrift = leanCfg.GlideFallSpeed or 6
-			local vel = session.flightDirection * glideSpeed + Vector3.new(0, -fallDrift, 0)
-			applyVelocityOnly(root, vel)
-			return
-		end
-
-		-- Finish glide: ensure full ForwardDistance on the horizontal plane for this window.
-		local flatDir = session.flightDirection
-		local glideStartFlat = Vector3.new(glideStart.X, 0, glideStart.Z)
-		local targetFlat = glideStartFlat + flatDir * forwardDistance
-		local pos = root.Position
-		root.CFrame = CFrame.lookAt(
-			Vector3.new(targetFlat.X, pos.Y, targetFlat.Z),
-			Vector3.new(targetFlat.X, pos.Y, targetFlat.Z) + flatDir
-		)
+		local approachVel = Vector3.new(0, -(downCfg.ApproachDescentSpeed or 40), 0)
+		applyVelocityOnly(root, blendHorizontalVelocity(session, approachVel, descentBlend, tuning))
 		root.AssemblyAngularVelocity = Vector3.zero
-
-		self:_setPhase(session, PHASE.DownSupes)
 		return
 	end
 
@@ -228,8 +328,9 @@ function SuperJumpService:_tickSession(session: SuperJumpSession, dt: number)
 		local grounded = DoubleJumpLanding.isGroundedForLanding(humanoid, root, session.rayParams, downCfg)
 		if not grounded then
 			session.groundedAt = nil
-			restoreUprightPose(root, session.flightDirection)
-			applyVelocityOnly(root, Vector3.new(0, -(downCfg.ApproachDescentSpeed or 40), 0))
+			local fallVel = Vector3.new(0, -(downCfg.ApproachDescentSpeed or 40), 0)
+			applyVelocityOnly(root, blendHorizontalVelocity(session, fallVel, descentBlend, tuning))
+			faceFlightDirectionSmooth(root, session.flightDirection, dt, turnLerp)
 			return
 		end
 
@@ -262,13 +363,13 @@ function SuperJumpService:_canStart(player: Player, humanoid: Humanoid): (boolea
 		return false, "double_jump_active"
 	end
 
+	if not playerHasSuperJumpToolEquipped(player) then
+		return false, "no_tool"
+	end
+
 	local ends = cooldownEndsAt[player]
 	if ends and os.clock() < ends then
 		return false, "cooldown"
-	end
-
-	if isGrounded(humanoid) then
-		return false, "must_be_airborne"
 	end
 
 	return true, nil
@@ -291,7 +392,12 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 		return false, reason or "rejected"
 	end
 
-	cooldownEndsAt[player] = os.clock() + SjCfg.Cooldown
+	local tuning = LevelDesignTuning.getSuperJump(player)
+	cooldownEndsAt[player] = os.clock() + tuning.Cooldown
+
+	if RunService:IsStudio() then
+		print("[iseesupes] Super Jump using server tuning:", LevelDesignTuning.formatActiveTuning(player))
+	end
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -309,13 +415,15 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 		phaseStartedAt = os.clock(),
 		abilityStartedAt = os.clock(),
 		descentStartedAt = nil,
-		glideStartPosition = nil,
-		glideStartedAt = nil,
-		riseCompleteLatch = false,
+		arcComplete = false,
+		arcCompletedAt = nil,
 		autoRotateWas = humanoid.AutoRotate,
 		rayParams = rayParams,
 		groundedAt = nil,
 		diedConn = nil,
+		tuning = tuning,
+		tuningConns = {},
+		clientSteerDirection = nil,
 	}
 
 	humanoid.AutoRotate = false
@@ -324,6 +432,7 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 	end)
 
 	sessions[player] = session
+	bindTuningChangeListeners(session)
 
 	session.diedConn = humanoid.Died:Connect(function()
 		self:_endAbility(player)
@@ -332,6 +441,20 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 	player:SetAttribute(PHASE_ATTR, PHASE.LeanUp)
 	self.Client.PhaseChanged:Fire(player, PHASE.LeanUp)
 	return true, nil
+end
+
+function SuperJumpService.Client:UpdateSteerInput(player: Player, direction: Vector3)
+	local session = sessions[player]
+	if not session then
+		return
+	end
+
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude >= 0.01 then
+		session.clientSteerDirection = flatUnit(flat)
+	else
+		session.clientSteerDirection = nil
+	end
 end
 
 function SuperJumpService.Client:RequestStart(player: Player): (boolean, string?)
@@ -359,6 +482,22 @@ function SuperJumpService:KnitStart()
 			SuperJumpService:_endAbility(player)
 		end
 	end)
+
+	local function onPlayerCharacterAdded(player: Player)
+		SuperJumpService:_endAbility(player)
+	end
+
+	Players.PlayerAdded:Connect(function(player)
+		player.CharacterAdded:Connect(function()
+			onPlayerCharacterAdded(player)
+		end)
+	end)
+
+	for _, player in Players:GetPlayers() do
+		player.CharacterAdded:Connect(function()
+			onPlayerCharacterAdded(player)
+		end)
+	end
 
 	print("[iseesupes] SuperJumpService ready.")
 end

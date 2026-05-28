@@ -8,7 +8,7 @@
 	2. Per stage: Part with LD_Zone = true + same attributes; touch copies to Player.
 
 	Key E ability attrs:
-	  E_LeanDist  — how far forward before descent
+	  E_LeanDist  — reference glide distance at 100% thrust (not a runtime cutoff; thrust bar ends flight)
 	  E_LeanSpd   — glide forward speed
 	  E_Fwd / E_Rise / E_Height — rise phase
 ]]
@@ -51,7 +51,7 @@ local LevelDesignConfigs = {
 		{ Name = "E_RiseMin", LegacyName = "Design_DJ_AfterMinDuration", Default = Ph.AfterTransition.MinDuration, Description = "Min rise phase time (prevents instant skip)" },
 
 		{ Name = "E_LeanSpd", LegacyName = "Design_DJ_LeanForwardSpeed", Default = Ph.LeanUp.ForwardSpeed, Description = "Glide speed while holding E", Essential = true },
-		{ Name = "E_LeanDist", LegacyName = "Design_DJ_LeanForwardDistance", Default = Ph.LeanUp.ForwardDistance, Description = "Total forward studs from E press before fall", Essential = true },
+		{ Name = "E_LeanDist", LegacyName = "Design_DJ_LeanForwardDistance", Default = Ph.LeanUp.ForwardDistance, Description = "Reference forward studs at full thrust (glide ends when thrust fuel hits 0)", Essential = true },
 		{ Name = "E_LeanTime", LegacyName = "Design_DJ_LeanMaxDuration", Default = Ph.LeanUp.MaxDuration, Description = "Optional time cap (auto-extends for E_LeanDist)" },
 
 		{ Name = "E_FallSpd", LegacyName = "Design_DJ_DescentSpeed", Default = Ph.LeapDown.DescentSpeed, Description = "How fast you fall down", Essential = true },
@@ -120,7 +120,7 @@ CHANGE: Edit a number — Output shows "Tuning synced → E_LeanDist = ..." then
        (Studio copies your Properties edit to the server automatically.)
 
 ESSENTIAL (only these show by default):
-  E_LeanDist  — total forward studs from E press (25–600, auto-clamped)
+  E_LeanDist  — reference distance at full thrust (25–600); flight ends when thrust bar is empty
   E_LeanSpd   — glide speed (20–200); E_MaxTime auto-extends for long glides
   E_Fwd       — forward speed during rise
   E_Rise      — upward speed during rise

@@ -42,7 +42,9 @@ function SpeedService:AddSpeed(player: Player): boolean
 		data.Speed = 0
 	end
 
-	local gain = SpeedConfigs.SpeedGainPerStudBatch * SpeedConfigs.GetRebirthGainMultiplier(getRebirths(data))
+	local stepBonus = if type(data.StepSpeedBonus) == "number" then data.StepSpeedBonus else 0
+	local gain = (SpeedConfigs.SpeedGainPerStudBatch + stepBonus)
+		* SpeedConfigs.GetRebirthGainMultiplier(getRebirths(data))
 	local oldLevel = type(data.Level) == "number" and data.Level or 1
 
 	data.Speed += gain

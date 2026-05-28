@@ -19,6 +19,9 @@ function DataController:KnitStart()
 	local MonetizationService = Knit.GetService("MonetizationService")
 
 	DataService.DataReplicated:Connect(applySnapshot)
+	DataService.ThrustChanged:Connect(function(current: number, max: number)
+		DataLib.SetThrust(current, max)
+	end)
 	DataService:RequestData():andThen(applySnapshot):catch(warn)
 
 	MonetizationService.GamepassUpdated:Connect(function(key: string, owned: boolean)

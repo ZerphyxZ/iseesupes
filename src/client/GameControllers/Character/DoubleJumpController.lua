@@ -9,9 +9,13 @@ local UserInputService = game:GetService("UserInputService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
+local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJumpFlightPhysics)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local ThrustConfigs = SpeedConfigs.Thrust
 
 local AnimRoot = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
@@ -100,6 +104,41 @@ local animFolder: Folder? = nil
 local actionBound = false
 local abilityActive = false
 local holdingLocally = false
+local smoothedSteerDir: Vector3? = nil
+local smoothedSteerAxis = 0
+local smoothedSteerPitchAxis = 0
+local lastSteerSendAt = 0
+local pendingSteerHasDirection = false
+local pendingSteerDirection: Vector3? = nil
+
+local function clientOwnsFlightPhysics(): boolean
+	local net = DjCfg.Network
+	if net and net.ClientOwnsFlightPhysics == false then
+		return false
+	end
+	return true
+end
+
+local function getSteerSendHz(): number
+	local net = DjCfg.Network
+	if net and typeof(net.SteerSendHz) == "number" and net.SteerSendHz > 0 then
+		return net.SteerSendHz
+	end
+	return 15
+end
+
+local function isClientThrustDepleted(): boolean
+	if not abilityActive then
+		return false
+	end
+	local data = DataLib.GetData()
+	if not data then
+		return false
+	end
+	return (data.ThrustCurrent or 0) <= 0
+end
+local lastCameraYaw: number? = nil
+local lastCameraPitch: number? = nil
 local currentPhase: string? = nil
 
 type AbilityTracks = {
@@ -122,9 +161,13 @@ type CharacterAbilityState = {
 	cancelFallStartedAt: number?,
 	landingPlayed: boolean,
 	startCFrame: CFrame,
+	startPosition: Vector3,
 	flightDirection: Vector3,
+	lastFlatHeading: Vector3?,
 	currentPitch: number,
+	currentRoll: number,
 	phaseStartedAt: number,
+	descentStartedAt: number?,
 	downSupesGroundedFrames: number,
 	touchdownUprightApplied: boolean,
 	leapDownCommitted: boolean,
@@ -135,6 +178,7 @@ type CharacterAbilityState = {
 	locomotionReleasedAfterLanding: boolean,
 	landingGroundedAt: number?,
 	leanAnimSubphase: string?, -- "glide" | "descent" while in LeanUp
+	landingWatchdogAt: number?,
 }
 
 local characterStates: { [Model]: CharacterAbilityState } = {}
@@ -143,6 +187,7 @@ local DEBUG_DOWNSUPES = DjCfg.Debug == true
 
 local globalDjAnimsPreloaded = false
 local DOWNSUPES_PULSE_SEC = 0.25
+local LANDING_WATCHDOG_HEAVY_INTERVAL = 0.15
 
 type DownSupesDiagState = {
 	lastPulseAt: number,
@@ -439,6 +484,44 @@ local function flatUnit(vector: Vector3): Vector3
 	return flat.Unit
 end
 
+local function unit3D(vector: Vector3): Vector3
+	if vector.Magnitude < 0.01 then
+		return Vector3.new(0, 0, -1)
+	end
+	return vector.Unit
+end
+
+local function usesCameraPitchSteer(): boolean
+	return getTuning().Steering.FollowCameraPitch ~= false
+end
+
+local function phaseUsesCameraPitchSteer(_phase: string?): boolean
+	return _phase == PHASE.LeanUp
+end
+
+local function phaseUsesCameraPitchFlight(phase: string?): boolean
+	return phase == PHASE.AfterTransition or phase == PHASE.LeanUp
+end
+
+local function clampSteerPitch(dir: Vector3, maxPitchDeg: number): Vector3
+	local unit = unit3D(dir)
+	local flat = Vector3.new(unit.X, 0, unit.Z)
+	if flat.Magnitude < 0.01 then
+		return unit
+	end
+	flat = flat.Unit
+	local maxY = math.sin(math.rad(math.max(5, maxPitchDeg)))
+	local y = math.clamp(unit.Y, -maxY, maxY)
+	return unit3D(Vector3.new(flat.X, y, flat.Z))
+end
+
+local function normalizeFlightDirection(dir: Vector3, phase: string?): Vector3
+	if usesCameraPitchSteer() and phaseUsesCameraPitchSteer(phase) then
+		return unit3D(dir)
+	end
+	return flatUnit(dir)
+end
+
 local function flatDistance(from: Vector3, to: Vector3): number
 	local a = Vector3.new(from.X, 0, from.Z)
 	local b = Vector3.new(to.X, 0, to.Z)
@@ -455,14 +538,23 @@ local function getSteerThreshold(): number
 end
 
 local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector3
-	local move = state.humanoid.MoveDirection
-	if move.Magnitude >= getSteerThreshold() then
-		return flatUnit(move)
-	end
+	local steering = getTuning().Steering
+	local followPitch = steering.FollowCameraPitch ~= false and phaseUsesCameraPitchSteer(currentPhase)
+	local maxPitch = steering.MaxPitchDegrees or 80
 
 	local camera = workspace.CurrentCamera
 	if not camera then
 		return Vector3.zero
+	end
+
+	local look = camera.CFrame.LookVector
+	local rightVector = camera.CFrame.RightVector
+
+	if not followPitch then
+		local move = state.humanoid.MoveDirection
+		if move.Magnitude >= getSteerThreshold() then
+			return flatUnit(move)
+		end
 	end
 
 	local forward = 0
@@ -480,15 +572,12 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 		right += 1
 	end
 
-	if forward == 0 and right == 0 then
-		return Vector3.zero
-	end
-
-	local look = camera.CFrame.LookVector
-	local rightVector = camera.CFrame.RightVector
 	local flatLook = Vector3.new(look.X, 0, look.Z)
 	local flatRight = Vector3.new(rightVector.X, 0, rightVector.Z)
 	if flatLook.Magnitude < 0.01 then
+		if followPitch then
+			return clampSteerPitch(look, maxPitch)
+		end
 		return Vector3.zero
 	end
 	flatLook = flatLook.Unit
@@ -498,24 +587,256 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 		flatRight = Vector3.new(-flatLook.Z, 0, flatLook.X)
 	end
 
+	if forward == 0 and right == 0 then
+		local move = state.humanoid.MoveDirection
+		if move.Magnitude >= getSteerThreshold() then
+			return flatUnit(move)
+		end
+		if followPitch then
+			-- Include camera pitch so looking up/down moves the player up/down,
+			-- mirroring how yaw already steers left/right.
+			return clampSteerPitch(look, maxPitch)
+		end
+		-- No keys held: steer toward camera's flat horizontal direction so the
+		-- character flies where the player looks without diving from camera pitch.
+		return flatLook
+	end
+
 	return flatUnit(flatLook * forward + flatRight * right)
 end
 
-local function publishSteerInput(state: CharacterAbilityState)
-	if not abilityActive or not holdingLocally then
+local function getTouchSteerAxis(): number
+	if not UserInputService.TouchEnabled then
+		return 0
+	end
+
+	local playerScripts = player:FindFirstChild("PlayerScripts")
+	if not playerScripts then
+		return 0
+	end
+
+	local playerModuleScript = playerScripts:FindFirstChild("PlayerModule")
+	if not playerModuleScript then
+		return 0
+	end
+
+	local ok, controls = pcall(function()
+		return require(playerModuleScript :: ModuleScript):GetControls()
+	end)
+	if not ok or not controls then
+		return 0
+	end
+
+	local okMove, moveVector = pcall(function()
+		return controls:GetMoveVector()
+	end)
+	if not okMove or typeof(moveVector) ~= "Vector3" or moveVector.Magnitude <= 0.1 then
+		return 0
+	end
+
+	if math.abs(moveVector.Z) > math.abs(moveVector.X) then
+		return 0
+	end
+
+	if moveVector.X > 0 then
+		return -1
+	end
+	if moveVector.X < 0 then
+		return 1
+	end
+	return 0
+end
+
+local function wrapYawDelta(delta: number): number
+	while delta > math.pi do
+		delta -= 2 * math.pi
+	end
+	while delta < -math.pi do
+		delta += 2 * math.pi
+	end
+	return delta
+end
+
+local function resetCameraSteerTracking()
+	lastCameraYaw = nil
+	lastCameraPitch = nil
+	lastSteerSendAt = 0
+	pendingSteerHasDirection = false
+	pendingSteerDirection = nil
+end
+
+function DoubleJumpController:resetSteerTrackingAfterMorph()
+	resetCameraSteerTracking()
+end
+
+local function getCameraPitch(): number?
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+	local look = camera.CFrame.LookVector
+	local horizontalMag = math.sqrt(look.X * look.X + look.Z * look.Z)
+	if horizontalMag < 0.01 then
+		return nil
+	end
+	return math.atan2(-look.Y, horizontalMag)
+end
+
+local function getCameraPitchRateSteerAxis(dt: number): number
+	local pitch = getCameraPitch()
+	if pitch == nil then
+		return 0
+	end
+
+	if lastCameraPitch == nil then
+		lastCameraPitch = pitch
+		return 0
+	end
+
+	local safeDt = math.clamp(dt, 1 / 240, 1 / 15)
+	local delta = wrapYawDelta(pitch - lastCameraPitch)
+	lastCameraPitch = pitch
+
+	local poseCfg = getTuning().SupermanPose
+	local fullPitchRate = poseCfg.CameraPitchRateForFullAxis or 1.0
+	if fullPitchRate <= 0 then
+		return 0
+	end
+
+	local pitchRate = delta / safeDt
+	local axis = math.clamp(-pitchRate / fullPitchRate, -1, 1)
+	local minRate = poseCfg.CameraPitchRateMin or 0.3
+	if math.abs(pitchRate) >= minRate and math.abs(axis) < 0.55 then
+		axis = math.sign(pitchRate) * -0.55
+	end
+	return axis
+end
+
+local function getCameraFlatYaw(): number?
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+	local flatLook = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+	if flatLook.Magnitude < 0.01 then
+		return nil
+	end
+	return math.atan2(flatLook.X, flatLook.Z)
+end
+
+--- Bank from how fast the camera is spinning, not angle vs flight (which hits zero once body catches up).
+local function getCameraYawRateSteerAxis(dt: number): number
+	local yaw = getCameraFlatYaw()
+	if yaw == nil then
+		return 0
+	end
+
+	if lastCameraYaw == nil then
+		lastCameraYaw = yaw
+		return 0
+	end
+
+	local safeDt = math.clamp(dt, 1 / 240, 1 / 15)
+	local delta = wrapYawDelta(yaw - lastCameraYaw)
+	lastCameraYaw = yaw
+
+	local poseCfg = getTuning().SupermanPose
+	local fullBankRate = poseCfg.CameraYawRateForFullBank or 1.2
+	if fullBankRate <= 0 then
+		return 0
+	end
+
+	local yawRate = delta / safeDt
+	local axis = math.clamp(yawRate / fullBankRate, -1, 1)
+	local minRate = poseCfg.CameraYawRateMin or 0.35
+	if math.abs(yawRate) >= minRate and math.abs(axis) < 0.55 then
+		axis = math.sign(yawRate) * 0.55
+	end
+	return axis
+end
+
+local function getSteerAxisFromInput(_state: CharacterAbilityState, dt: number): number
+	local steerAxis = 0
+
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+		steerAxis += 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+		steerAxis -= 1
+	end
+
+	local touchSteer = getTouchSteerAxis()
+	if touchSteer ~= 0 then
+		steerAxis = touchSteer
+	end
+
+	local rateAxis = getCameraYawRateSteerAxis(dt)
+	if math.abs(rateAxis) > 0.02 then
+		local blend = getTuning().SupermanPose.CameraBankBlend or 0.85
+		if math.abs(steerAxis) < 0.01 then
+			steerAxis = rateAxis
+		else
+			steerAxis = math.clamp(steerAxis + rateAxis * blend, -1, 1)
+		end
+	end
+
+	return math.clamp(steerAxis, -1, 1)
+end
+
+local function flushSteerToServer()
+	local service = Knit.GetService("DoubleJumpService")
+	pcall(function()
+		service:UpdateSteerState(
+			if pendingSteerHasDirection then pendingSteerDirection else nil,
+			smoothedSteerAxis,
+			smoothedSteerPitchAxis
+		)
+	end)
+end
+
+local function publishSteerInput(state: CharacterAbilityState, dt: number)
+	if not abilityActive then
 		return
 	end
 
-	local steer = getCameraRelativeSteerInput(state)
-	pcall(function()
-		if steer.Magnitude >= getSteerThreshold() then
-			state.humanoid:Move(steer, false)
-		end
-	end)
+	local steerCfg = getTuning().Steering
+	local axisSmoothRate = steerCfg.SteerAxisSmoothRate or steerCfg.SteerSmoothRate or 14
+	local axisAlpha = math.min(1, axisSmoothRate * dt)
+	local targetAxis = getSteerAxisFromInput(state, dt)
+	smoothedSteerAxis = smoothedSteerAxis + (targetAxis - smoothedSteerAxis) * axisAlpha
 
-	pcall(function()
-		Knit.GetService("DoubleJumpService"):UpdateSteerInput(steer)
-	end)
+	if phaseUsesCameraPitchFlight(currentPhase) then
+		local targetPitchAxis = getCameraPitchRateSteerAxis(dt)
+		smoothedSteerPitchAxis = smoothedSteerPitchAxis + (targetPitchAxis - smoothedSteerPitchAxis) * axisAlpha
+	else
+		smoothedSteerPitchAxis = smoothedSteerPitchAxis + (0 - smoothedSteerPitchAxis) * axisAlpha
+	end
+
+	local raw = getCameraRelativeSteerInput(state)
+	if raw.Magnitude >= 0.01 then
+		local smoothRate = steerCfg.SteerSmoothRate or 14
+		local alpha = math.min(1, smoothRate * dt)
+		local normalized = normalizeFlightDirection(raw, currentPhase)
+		if smoothedSteerDir then
+			smoothedSteerDir =
+				normalizeFlightDirection((smoothedSteerDir :: Vector3):Lerp(normalized, alpha), currentPhase)
+		else
+			smoothedSteerDir = normalized
+		end
+		pendingSteerHasDirection = true
+		pendingSteerDirection = smoothedSteerDir
+	else
+		pendingSteerHasDirection = false
+		pendingSteerDirection = nil
+	end
+
+	if not clientOwnsFlightPhysics() then
+		local now = os.clock()
+		if now - lastSteerSendAt >= 1 / getSteerSendHz() then
+			flushSteerToServer()
+			lastSteerSendAt = now
+		end
+	end
 end
 
 local function applySteerToFlightDirection(state: CharacterAbilityState, dt: number)
@@ -527,7 +848,7 @@ local function applySteerToFlightDirection(state: CharacterAbilityState, dt: num
 	local steer = getCameraRelativeSteerInput(state)
 	local target = if steer.Magnitude >= getSteerThreshold() then steer else state.flightDirection
 	local alpha = math.min(1, (steerCfg.DirectionLerp or 10) * dt)
-	state.flightDirection = flatUnit(state.flightDirection:Lerp(target, alpha))
+	state.flightDirection = normalizeFlightDirection(state.flightDirection:Lerp(target, alpha), currentPhase)
 end
 
 local function restoreUprightPose(root: BasePart, flightDir: Vector3)
@@ -546,10 +867,24 @@ local function initFlightDirection(state: CharacterAbilityState)
 	state.flightDirection = flatUnit(state.startCFrame.LookVector)
 end
 
-local function cframeWithPitch(position: Vector3, flightDir: Vector3, pitchDeg: number): CFrame
+local function computeClientFlightVelocity(
+	flightDirection: Vector3,
+	riseSpeed: number,
+	forwardSpeed: number,
+	phase: string?
+): Vector3
+	local dir = normalizeFlightDirection(flightDirection, phase)
+	if usesCameraPitchSteer() and phaseUsesCameraPitchSteer(phase) then
+		local speed = math.sqrt(forwardSpeed * forwardSpeed + riseSpeed * riseSpeed)
+		return dir * speed
+	end
+	return dir * forwardSpeed + Vector3.new(0, riseSpeed, 0)
+end
+
+local function cframeWithPose(position: Vector3, flightDir: Vector3, pitchDeg: number, rollDeg: number): CFrame
 	local flat = flatUnit(flightDir)
 	local base = CFrame.lookAt(position, position + flat)
-	return base * CFrame.Angles(math.rad(pitchDeg), 0, 0)
+	return base * CFrame.Angles(math.rad(pitchDeg), 0, math.rad(rollDeg))
 end
 
 local function lerpPitch(state: CharacterAbilityState, targetPitch: number, dt: number)
@@ -578,37 +913,79 @@ local function applyClientOrientation(state: CharacterAbilityState, phase: strin
 			+ (poseCfg.TransitEndPitch - poseCfg.TransitStartPitch) * progress
 		local alpha = math.min(1, poseCfg.TransitPitchLerp * dt)
 		state.currentPitch = state.currentPitch + (targetPitch - state.currentPitch) * alpha
+		root.CFrame = cframeWithPose(root.Position, state.flightDirection, state.currentPitch, 0)
 	else
 		lerpPitch(state, poseCfg.FlightPitch, dt)
+		root.CFrame = cframeWithPose(root.Position, state.flightDirection, state.currentPitch, 0)
 	end
-
-	root.CFrame = cframeWithPitch(root.Position, state.flightDirection, state.currentPitch)
 end
 
-local function applyClientMovement(state: CharacterAbilityState, phase: string)
+local function buildFlightPhysicsState(state: CharacterAbilityState): DoubleJumpFlightPhysics.FlightState
+	return {
+		flightDirection = state.flightDirection,
+		lastFlatHeading = state.lastFlatHeading,
+		currentPitch = state.currentPitch,
+		currentRoll = state.currentRoll,
+		descentStartedAt = state.descentStartedAt,
+		clientSteerAxis = smoothedSteerAxis,
+		clientSteerPitchAxis = smoothedSteerPitchAxis,
+		clientSteerDirection = smoothedSteerDir,
+	}
+end
+
+local function applyFlightStateFromPhysics(state: CharacterAbilityState, fpState: DoubleJumpFlightPhysics.FlightState)
+	state.flightDirection = fpState.flightDirection
+	state.lastFlatHeading = fpState.lastFlatHeading
+	state.currentPitch = fpState.currentPitch
+	state.currentRoll = fpState.currentRoll
+	state.descentStartedAt = fpState.descentStartedAt
+end
+
+local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number, phase: string)
+	if not clientOwnsFlightPhysics() then
+		return
+	end
+
 	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
 		return
 	end
 
-	local vel: Vector3
-
-	if phase == PHASE.FlightTransit or phase == PHASE.AfterTransition then
-		applySteerToFlightDirection(state, 1 / 60)
+	local steerDir: Vector3? = smoothedSteerDir
+	if not steerDir or steerDir.Magnitude < getSteerThreshold() then
+		steerDir = nil
 	end
 
-	local phaseCfg = getTuning().Phases
-	if phase == PHASE.FlightTransit then
-		local nudge = phaseCfg.FlightTransit.ForwardNudgeSpeed or 0
-		vel = if nudge > 0 then state.flightDirection * nudge else Vector3.zero
-	elseif phase == PHASE.AfterTransition then
-		local cfg = phaseCfg.AfterTransition
-		vel = state.flightDirection * cfg.ForwardSpeed + Vector3.new(0, cfg.RiseSpeed, 0)
-	else
-		return
+	local fpState = buildFlightPhysicsState(state)
+	local phaseElapsed = os.clock() - state.phaseStartedAt
+	local tuning = getTuning()
+
+	local tickOpts: { thrustDepleted: boolean }? = nil
+	if
+		isClientThrustDepleted()
+		and (phase == PHASE.FlightTransit or phase == PHASE.AfterTransition or phase == PHASE.LeanUp)
+	then
+		tickOpts = { thrustDepleted = true }
 	end
 
-	root.AssemblyLinearVelocity = vel
+	DoubleJumpFlightPhysics.tickPhase(
+		root,
+		fpState,
+		{
+			phase = phase,
+			phaseElapsed = phaseElapsed,
+			phaseStartedAt = state.phaseStartedAt,
+			startPosition = state.startPosition,
+			rayParams = state.rayParams,
+			humanoid = state.humanoid,
+			steerDirection = steerDir,
+		},
+		dt,
+		tuning,
+		tickOpts
+	)
+
+	applyFlightStateFromPhysics(state, fpState)
 end
 
 local function getPhaseFadeTime(): number
@@ -730,23 +1107,10 @@ local function playDownSupesDescent(state: CharacterAbilityState, reason: string
 	crossfadeToTrack(state, tracks.downSupes, getPhaseFadeTime())
 end
 
---- Mirrors server LeanUp forward vs descent split (DoubleJumpService LeanUp tick).
-local function isLeanUpInDescent(state: CharacterAbilityState): boolean
-	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root then
-		return false
-	end
-
-	local leanCfg = getTuning().Phases.LeanUp
-	local dist = flatDistance(state.startCFrame.Position, root.Position)
-	local phaseElapsed = os.clock() - state.phaseStartedAt
-	local maxPhaseTime = LevelDesignTuning.getLeanPhaseMaxDuration(
-		leanCfg.ForwardSpeed,
-		leanCfg.ForwardDistance,
-		leanCfg.MaxDuration,
-		dist
-	)
-	return dist >= leanCfg.ForwardDistance or phaseElapsed >= maxPhaseTime
+--- Mirrors server LeanUp: descent anim only on safety cap (thrust fuel ends glide server-side).
+local function isLeanUpInDescent(_state: CharacterAbilityState): boolean
+	local phaseElapsed = os.clock() - _state.phaseStartedAt
+	return phaseElapsed >= ThrustConfigs.LeanUpSafetyMaxDuration
 end
 
 local function updateLeanUpAnimSubphase(state: CharacterAbilityState)
@@ -805,14 +1169,41 @@ local function releaseLandingLocomotion(state: CharacterAbilityState)
 	end
 end
 
-enforceLandingAnim = function(state: CharacterAbilityState)
+local function phaseNeedsHeavyLandingChecks(phase: string?): boolean
+	return phase == PHASE.LeapDown
+		or phase == PHASE.DownSupes
+		or phase == PHASE.CancelLanding
+		or phase == PHASE.CancelFall
+end
+
+enforceLandingAnim = function(state: CharacterAbilityState, runHeavyChecks: boolean?)
 	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
 		return
 	end
 
+	if runHeavyChecks == false then
+		if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
+			updateLeanUpAnimSubphase(state)
+		end
+		return
+	end
+
 	local landingCfg = getTuning().Phases.DownSupes
-	local grounded = DoubleJumpLanding.isGroundedForLanding(state.humanoid, root, state.rayParams, landingCfg)
+	local moveDir = state.flightDirection
+	if DoubleJumpLanding.hasObstacleContact(state.humanoid, root, state.rayParams, landingCfg, moveDir) then
+		stopLeanUpHard(state.tracks)
+		stopDownSupesHard(state.tracks, "wall_contact")
+		pcall(function()
+			if state.tracks.leapDown.IsPlaying then
+				state.tracks.leapDown:Stop(0.08)
+			end
+		end)
+		state.leapDownCommitted = false
+		return
+	end
+
+	local grounded = DoubleJumpLanding.isGroundedForLanding(state.humanoid, root, state.rayParams, landingCfg, moveDir)
 
 	if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
 		if grounded and not state.leapDownCommitted then
@@ -868,6 +1259,12 @@ local function enforceCancelApproachLanding(state: CharacterAbilityState)
 	local tuning = getTuning()
 	local cancelCfg = tuning.Cancel
 	local landingCfg = tuning.Phases.DownSupes
+	if DoubleJumpLanding.hasObstacleContact(state.humanoid, root, state.rayParams, landingCfg, state.flightDirection) then
+		stopLeanUpHard(state.tracks)
+		stopDownSupesHard(state.tracks, "wall_contact")
+		return
+	end
+
 	local started = state.cancelFallStartedAt or state.phaseStartedAt
 	local elapsed = os.clock() - started
 	local hit = DoubleJumpLanding.raycastDownFromRoot(
@@ -875,16 +1272,18 @@ local function enforceCancelApproachLanding(state: CharacterAbilityState)
 		cancelCfg.LandingRayLength or 250,
 		state.rayParams
 	)
+	local walkableHit = if hit and DoubleJumpLanding.isWalkableHit(hit, landingCfg) then hit else nil
 
 	if
 		not DoubleJumpLanding.shouldStartCancelLanding(
 			state.humanoid,
 			root,
-			hit,
+			walkableHit,
 			state.rayParams,
 			landingCfg,
 			cancelCfg,
-			elapsed
+			elapsed,
+			state.flightDirection
 		)
 	then
 		return
@@ -952,8 +1351,25 @@ local function tickLandingWatchdog(state: CharacterAbilityState)
 		return
 	end
 
-	enforceLandingAnim(state)
-	enforceCancelApproachLanding(state)
+	local now = os.clock()
+	local needsHeavy = phaseNeedsHeavyLandingChecks(currentPhase)
+	if not needsHeavy then
+		local last = state.landingWatchdogAt or 0
+		if now - last < LANDING_WATCHDOG_HEAVY_INTERVAL then
+			if currentPhase == PHASE.LeanUp then
+				updateLeanUpAnimSubphase(state)
+			end
+			tickLandingLocomotionRelease(state)
+			tickLandingAnimFailsafe(state)
+			return
+		end
+		state.landingWatchdogAt = now
+	end
+
+	enforceLandingAnim(state, needsHeavy)
+	if needsHeavy or currentPhase == PHASE.CancelFall then
+		enforceCancelApproachLanding(state)
+	end
 	tickLandingLocomotionRelease(state)
 	tickLandingAnimFailsafe(state)
 end
@@ -965,8 +1381,10 @@ end
 local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 	local tracks = state.tracks
 	if phase == PHASE.FlightTransit then
+		state.humanoid.PlatformStand = false
 		playTrack(state, tracks.flightTransit)
 	elseif phase == PHASE.AfterTransition then
+		state.humanoid.PlatformStand = false
 		playTrack(state, tracks.afterTransition)
 	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
 		state.touchdownUprightApplied = false
@@ -1058,6 +1476,10 @@ onAbilityEnded = function()
 	applyAbilityJumpLock(false)
 	abilityActive = false
 	holdingLocally = false
+	smoothedSteerDir = nil
+	smoothedSteerAxis = 0
+	smoothedSteerPitchAxis = 0
+	resetCameraSteerTracking()
 	currentPhase = nil
 	resetDownSupesDiag()
 	setAbilityBlocking(false)
@@ -1114,17 +1536,26 @@ onPhaseChanged = function(phase: string)
 
 	if phase == PHASE.FlightTransit then
 		state.currentPitch = getTuning().SupermanPose.TransitStartPitch
+		state.currentRoll = 0
+		state.descentStartedAt = nil
+	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
+		state.currentPitch = getTuning().SupermanPose.UprightPitch
+		state.currentRoll = 0
+		state.descentStartedAt = nil
+		state.flightDirection = flatUnit(state.flightDirection)
 	elseif
-		phase == PHASE.LeanUp
-		or phase == PHASE.DownSupes
-		or phase == PHASE.LeapDown
+		phase == PHASE.LeapDown
 		or phase == PHASE.CancelFall
 		or phase == PHASE.CancelLanding
 	then
 		state.currentPitch = getTuning().SupermanPose.UprightPitch
+		state.currentRoll = 0
+		state.descentStartedAt = nil
 		state.flightDirection = flatUnit(state.flightDirection)
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if root then
+		if root and clientOwnsFlightPhysics() then
+			DoubleJumpFlightPhysics.restoreUprightPose(root, state.flightDirection)
+		elseif root then
 			restoreUprightPose(root, state.flightDirection)
 		end
 	end
@@ -1233,9 +1664,13 @@ setupCharacter = function(character: Model)
 		cancelFallStartedAt = nil,
 		landingPlayed = false,
 		startCFrame = startCFrame,
+		startPosition = if root then root.Position else Vector3.zero,
 		flightDirection = flatUnit(startCFrame.LookVector),
+		lastFlatHeading = flatUnit(startCFrame.LookVector),
 		currentPitch = getTuning().SupermanPose.TransitStartPitch,
+		currentRoll = 0,
 		phaseStartedAt = os.clock(),
+		descentStartedAt = nil,
 		downSupesGroundedFrames = 0,
 		touchdownUprightApplied = false,
 		leapDownCommitted = false,
@@ -1270,15 +1705,15 @@ setupCharacter = function(character: Model)
 		crossfadeToTrack(state, tracks.afterTransition, getPhaseFadeTime())
 	end)
 
-	state.heartbeatConn = RunService.Heartbeat:Connect(function(_dt)
+	state.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if abilityActive and currentPhase then
 			setAbilityJumpLock(state, true)
-			publishSteerInput(state)
+			publishSteerInput(state, dt)
 			syncPhaseFromAttribute()
+			if clientOwnsFlightPhysics() then
+				tickClientFlightPhysics(state, dt, currentPhase)
+			end
 			tickLandingWatchdog(state)
-			-- Server is NetworkOwner during E and writes CFrame + AssemblyLinearVelocity each tick.
-			-- We deliberately do NOT call applyClientOrientation / applyClientMovement here:
-			-- those would dual-write physics and visibly fight server replication, causing jitter.
 		end
 	end)
 
@@ -1303,8 +1738,9 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 
 	if inputState == Enum.UserInputState.Begin then
 		if abilityActive then
-			service:SetHolding(true)
-			holdingLocally = true
+			-- Toggle: second E press cancels the ability mid-flight.
+			holdingLocally = false
+			service:SetHolding(false)
 			return Enum.ContextActionResult.Sink
 		end
 
@@ -1312,6 +1748,7 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 		service:RequestStart():andThen(function(ok: boolean, _reason: string?)
 			if ok then
 				abilityActive = true
+				resetCameraSteerTracking()
 				service:SetHolding(true)
 
 				local character = player.Character
@@ -1323,7 +1760,13 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 					local abilityState = characterStates[character]
 					if abilityState then
 						initFlightDirection(abilityState)
+						local rootPart = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+						if rootPart then
+							abilityState.startPosition = rootPart.Position
+						end
 						abilityState.currentPitch = getTuning().SupermanPose.TransitStartPitch
+						abilityState.currentRoll = 0
+						abilityState.descentStartedAt = nil
 						abilityState.phaseStartedAt = os.clock()
 					end
 				end
@@ -1348,9 +1791,8 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 
 	if inputState == Enum.UserInputState.End then
 		holdingLocally = false
-		if abilityActive then
-			service:SetHolding(false)
-		end
+		-- Ability runs to completion on its own; only a second E press cancels it.
+		-- Don't call SetHolding(false) here — that would cancel and clear steering.
 		return Enum.ContextActionResult.Sink
 	end
 
@@ -1408,6 +1850,7 @@ function DoubleJumpController:KnitStart()
 		local character = player.Character
 		if not abilityActive and phase == PHASE.FlightTransit then
 			abilityActive = true
+			resetCameraSteerTracking()
 			if character then
 				ensureAbilityState(character)
 				local abilityState = characterStates[character]
@@ -1430,10 +1873,33 @@ function DoubleJumpController:KnitStart()
 
 	DoubleJumpService.AbilityEnded:Connect(onAbilityEnded)
 
-	DoubleJumpService.Rejected:Connect(function(_reason: string) end)
+	DoubleJumpService.Rejected:Connect(function(reason: string)
+		if reason == "no_thrust" then
+			local label = Instance.new("TextLabel")
+			label.Name = "NoThrustHint"
+			label.BackgroundTransparency = 1
+			label.Size = UDim2.fromOffset(280, 36)
+			label.AnchorPoint = Vector2.new(0.5, 0.5)
+			label.Position = UDim2.new(0.5, 0, 0.5, 0)
+			label.Font = Enum.Font.GothamBold
+			label.TextSize = 20
+			label.TextColor3 = Color3.fromRGB(255, 140, 120)
+			label.Text = "Refill Thrust on the treadmill!"
+			label.TextStrokeTransparency = 0.5
+			label.ZIndex = 60
+			local gui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+			local root = gui and (gui:FindFirstChild("GUI") or gui)
+			if root then
+				label.Parent = root
+				task.delay(2, function()
+					label:Destroy()
+				end)
+			end
+		end
+	end)
 
 	player.CharacterAdded:Connect(function(character)
-		if abilityActive then
+		if abilityActive or player:GetAttribute(PHASE_ATTR) then
 			onAbilityEnded()
 		end
 		bindTuningAttrListeners(character)

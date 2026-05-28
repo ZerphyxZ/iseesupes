@@ -69,4 +69,54 @@ function SpeedConfigs.SyncLevelFromSpeed(data: any): (number, number)
 	return oldLevel, newLevel
 end
 
+-- Thrust flight fuel (lives here so one synced module is enough; ThrustConfigs.lua re-exports this).
+local Thrust = {
+	BaseMaxFuel = 75,
+	DrainPerSecond = 10,
+	TreadmillRefillPerTick = 3,
+	MinFuelToStartFlight = 5,
+	EmptyDescentGrace = 0.6,
+	SpeedPointsToMaxFuelBonus = 1,
+	MaxFuelBonusFromProducts = 0,
+	ReplicateMinInterval = 0.25,
+	LeanUpSafetyMaxDuration = 45,
+}
+
+function Thrust.GetAbilityTimeCap(fuelAtStart: number, tuningMax: number): number
+	local drain = Thrust.DrainPerSecond
+	if drain <= 0 then
+		return tuningMax
+	end
+	local fuelSeconds = fuelAtStart / drain
+	return math.max(tuningMax, fuelSeconds + 5)
+end
+
+function Thrust.EnsureFuelDefaults(data: any)
+	if typeof(data.ThrustMax) ~= "number" or data.ThrustMax <= 0 then
+		data.ThrustMax = Thrust.BaseMaxFuel
+	end
+	if typeof(data.ThrustCurrent) ~= "number" then
+		data.ThrustCurrent = data.ThrustMax
+	end
+	data.ThrustCurrent = math.clamp(data.ThrustCurrent, 0, data.ThrustMax)
+end
+
+function Thrust.MigrateProfile(data: any)
+	Thrust.EnsureFuelDefaults(data)
+
+	local legacyPoints = data.SpeedPoints
+	if typeof(legacyPoints) == "number" and legacyPoints > 0 then
+		data.ThrustMax += math.floor(legacyPoints * Thrust.SpeedPointsToMaxFuelBonus)
+		data.SpeedPoints = 0
+		data.ThrustCurrent = math.min(data.ThrustCurrent, data.ThrustMax)
+	end
+end
+
+function Thrust.RefillToMax(data: any)
+	Thrust.EnsureFuelDefaults(data)
+	data.ThrustCurrent = data.ThrustMax
+end
+
+SpeedConfigs.Thrust = Thrust
+
 return SpeedConfigs

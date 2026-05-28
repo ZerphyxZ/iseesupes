@@ -6,7 +6,11 @@
       "mcp__Roblox_Studio__search_game_tree",
       "mcp__Roblox_Studio__execute_luau",
       "mcp__Roblox_Studio__script_read",
-      "mcp__Roblox_Studio__screen_capture"
+      "mcp__Roblox_Studio__screen_capture",
+      "mcp__Roblox_Studio__get_console_output",
+      "Bash(claude mcp *)",
+      "PowerShell(claude mcp add --transport stdio Roblox_Studio -- \"cmd.exe\" \"/c\" \"$env:LOCALAPPDATA\\\\Roblox\\\\mcp.bat\")",
+      "Bash(git checkout *)"
     ]
   }
 }

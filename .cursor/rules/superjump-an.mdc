@@ -1,0 +1,11 @@
+---
+alwaysApply: true
+---
+
+SuperJump = {
+		AnimFolder = "SuperJump",
+		Anims = {
+			LeanUp = "LeanUp",
+			DownSupes = "DownSupes",
+		},
+		DoubleTapWindow = 0.35,

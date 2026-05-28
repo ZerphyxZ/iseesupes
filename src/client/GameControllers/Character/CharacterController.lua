@@ -20,6 +20,7 @@ local animFolder: Folder? = nil
 local jumpActionBound = false
 local abilityBlocking = false
 local jumpInterceptors: { () -> boolean } = {}
+local treadmillController: any = nil
 
 type AnimMode = "locomotion" | "jump" | "fall" | "landing"
 
@@ -160,6 +161,20 @@ local function disconnectJumpLandingConns(state: CharacterState)
 	end
 end
 
+local function isOnTreadmill(): boolean
+	if not Features.ForceRunOnTreadmill then
+		return false
+	end
+	if not treadmillController then
+		treadmillController = Knit.GetController("TreadmillController")
+	end
+	return treadmillController ~= nil and treadmillController:IsOnTreadmill()
+end
+
+local function wantsRunLocomotion(humanoid: Humanoid): boolean
+	return humanoid.MoveDirection.Magnitude > Loc.MoveThreshold or isOnTreadmill()
+end
+
 local function playLocomotion(state: CharacterState, locomotion: "idle" | "run")
 	if not Features.UseCustomLocomotion then
 		return
@@ -200,8 +215,7 @@ enterLocomotion = function(state: CharacterState)
 		return
 	end
 
-	local moving = state.humanoid.MoveDirection.Magnitude > Loc.MoveThreshold
-	playLocomotion(state, if moving then "run" else "idle")
+	playLocomotion(state, if wantsRunLocomotion(state.humanoid) then "run" else "idle")
 end
 
 enterFall = function(state: CharacterState)
@@ -299,8 +313,7 @@ local function resetAirAndLocomotionState(state: CharacterState, playLocomotionA
 	state.airTime = 0
 
 	if playLocomotionAnims and Features.UseCustomLocomotion then
-		local moving = state.humanoid.MoveDirection.Magnitude > Loc.MoveThreshold
-		playLocomotion(state, if moving then "run" else "idle")
+		playLocomotion(state, if wantsRunLocomotion(state.humanoid) then "run" else "idle")
 	else
 		stopLocomotion(state)
 	end
@@ -617,8 +630,7 @@ function setupCharacter(character: Model): boolean
 			return
 		end
 
-		local moving = humanoid.MoveDirection.Magnitude > Loc.MoveThreshold
-		playLocomotion(state, if moving then "run" else "idle")
+		playLocomotion(state, if wantsRunLocomotion(humanoid) then "run" else "idle")
 	end)
 
 	humanoid.Died:Once(function()
@@ -662,6 +674,8 @@ function CharacterController:KnitStart()
 	end
 
 	task.defer(bindJumpAction)
+
+	treadmillController = Knit.GetController("TreadmillController")
 
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then

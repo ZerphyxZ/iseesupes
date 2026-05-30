@@ -18,7 +18,7 @@ local HudConfigs = {
 	CloseButtonNames = { "Close", "X", "CloseButton", "Exit" },
 
 	--- Frames under GUI.Frames that are not HUD-toggled (e.g. level-up popup).
-	ExcludeFromNavigator = { "LevelUp", "Notifications" },
+	ExcludeFromNavigator = { "LevelUp", "Notifications", "ThrustBoosts" },
 
 	--- HUD buttons that open a full-screen / panel under GUI.Frames
 	FrameLinks = {

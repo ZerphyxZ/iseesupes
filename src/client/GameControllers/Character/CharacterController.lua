@@ -15,6 +15,10 @@ local Features = CharacterConfigs.Features
 
 local CharacterController = Knit.CreateController({ Name = "CharacterController" })
 
+export type LocomotionSignal = "idle" | "run" | "landing"
+
+local locomotionChanged = Instance.new("BindableEvent")
+
 local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local jumpActionBound = false
@@ -175,6 +179,16 @@ local function wantsRunLocomotion(humanoid: Humanoid): boolean
 	return humanoid.MoveDirection.Magnitude > Loc.MoveThreshold or isOnTreadmill()
 end
 
+local function notifyLocomotion(character: Model, locomotion: LocomotionSignal)
+	locomotionChanged:Fire(character, locomotion)
+end
+
+function CharacterController:ConnectLocomotionChanged(
+	fn: (character: Model, locomotion: LocomotionSignal) -> ()
+): RBXScriptConnection
+	return locomotionChanged.Event:Connect(fn)
+end
+
 local function playLocomotion(state: CharacterState, locomotion: "idle" | "run")
 	if not Features.UseCustomLocomotion then
 		return
@@ -193,6 +207,8 @@ local function playLocomotion(state: CharacterState, locomotion: "idle" | "run")
 		state.runTrack:Stop(Loc.FadeTime)
 		state.idleTrack:Play(Loc.FadeTime)
 	end
+
+	notifyLocomotion(state.character, locomotion)
 end
 
 local enterLocomotion: (state: CharacterState) -> ()
@@ -266,6 +282,7 @@ enterLanding = function(state: CharacterState)
 	end
 
 	state.landingTrack:Play(Loc.FadeTime)
+	notifyLocomotion(state.character, "landing")
 
 	disconnectJumpLandingConns(state)
 	state.landingStoppedConn = state.landingTrack.Stopped:Connect(function()
@@ -545,6 +562,7 @@ function setupCharacter(character: Model): boolean
 
 	if Features.UseCustomLocomotion then
 		idleTrack:Play(Loc.FadeTime)
+		notifyLocomotion(character, "idle")
 	end
 
 	if Features.UseBasicJumpAnims then

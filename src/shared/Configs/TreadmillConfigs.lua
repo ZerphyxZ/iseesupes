@@ -41,7 +41,7 @@ local TreadmillConfigs = {
 		RaycastDistance = 3.5,
 		KickTeleportOffset = Vector3.new(0, 3, 0),
 		PointsPerTick = 1,
-		SpeedXpPerTick = 0,
+		SpeedXpPerTick = 5,
 	} :: TreadmillGameplayConfig,
 
 	--- Keys are tier ids; ModelName must match the Model in Studio.

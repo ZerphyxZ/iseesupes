@@ -602,6 +602,11 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 		return flatLook
 	end
 
+	-- LeanUp: A/D alone uses slow axis yaw + bank; avoid snapping heading to camera strafe.
+	if currentPhase == PHASE.LeanUp and forward == 0 and right ~= 0 then
+		return Vector3.zero
+	end
+
 	return flatUnit(flatLook * forward + flatRight * right)
 end
 
@@ -758,6 +763,7 @@ end
 local function getSteerAxisFromInput(_state: CharacterAbilityState, dt: number): number
 	local steerAxis = 0
 
+	-- A = left, D = right (bank roll sign)
 	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
 		steerAxis += 1
 	end
@@ -770,8 +776,9 @@ local function getSteerAxisFromInput(_state: CharacterAbilityState, dt: number):
 		steerAxis = touchSteer
 	end
 
+	local adHeld = UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D)
 	local rateAxis = getCameraYawRateSteerAxis(dt)
-	if math.abs(rateAxis) > 0.02 then
+	if math.abs(rateAxis) > 0.02 and not (currentPhase == PHASE.LeanUp and adHeld) then
 		local blend = getTuning().SupermanPose.CameraBankBlend or 0.85
 		if math.abs(steerAxis) < 0.01 then
 			steerAxis = rateAxis
@@ -800,9 +807,13 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 	end
 
 	local steerCfg = getTuning().Steering
-	local axisSmoothRate = steerCfg.SteerAxisSmoothRate or steerCfg.SteerSmoothRate or 14
-	local axisAlpha = math.min(1, axisSmoothRate * dt)
 	local targetAxis = getSteerAxisFromInput(state, dt)
+	local adHeldOnLeanUp = currentPhase == PHASE.LeanUp
+		and (UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D))
+	local axisSmoothRate = if adHeldOnLeanUp
+		then (steerCfg.KeyboardAxisSmoothRateLeanUp or 48)
+		else (steerCfg.SteerAxisSmoothRate or steerCfg.SteerSmoothRate or 14)
+	local axisAlpha = math.min(1, axisSmoothRate * dt)
 	smoothedSteerAxis = smoothedSteerAxis + (targetAxis - smoothedSteerAxis) * axisAlpha
 
 	if phaseUsesCameraPitchFlight(currentPhase) then
@@ -813,6 +824,13 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 	end
 
 	local raw = getCameraRelativeSteerInput(state)
+	local adOnlyOnLeanUp = currentPhase == PHASE.LeanUp
+		and not UserInputService:IsKeyDown(Enum.KeyCode.W)
+		and not UserInputService:IsKeyDown(Enum.KeyCode.S)
+		and (UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D))
+	if adOnlyOnLeanUp then
+		raw = Vector3.zero
+	end
 	if raw.Magnitude >= 0.01 then
 		local smoothRate = steerCfg.SteerSmoothRate or 14
 		local alpha = math.min(1, smoothRate * dt)
@@ -828,6 +846,7 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 	else
 		pendingSteerHasDirection = false
 		pendingSteerDirection = nil
+		smoothedSteerDir = nil
 	end
 
 	if not clientOwnsFlightPhysics() then
@@ -951,9 +970,9 @@ local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number,
 		return
 	end
 
-	local steerDir: Vector3? = smoothedSteerDir
-	if not steerDir or steerDir.Magnitude < getSteerThreshold() then
-		steerDir = nil
+	local steerDir: Vector3? = nil
+	if pendingSteerHasDirection and smoothedSteerDir and smoothedSteerDir.Magnitude >= getSteerThreshold() then
+		steerDir = smoothedSteerDir
 	end
 
 	local fpState = buildFlightPhysicsState(state)
@@ -1884,7 +1903,7 @@ function DoubleJumpController:KnitStart()
 			label.Font = Enum.Font.GothamBold
 			label.TextSize = 20
 			label.TextColor3 = Color3.fromRGB(255, 140, 120)
-			label.Text = "Refill Thrust on the treadmill!"
+			label.Text = "No Thrust — wait a moment to recharge!"
 			label.TextStrokeTransparency = 0.5
 			label.ZIndex = 60
 			local gui = Players.LocalPlayer:FindFirstChild("PlayerGui")

@@ -11,7 +11,8 @@ local CharacterConfigs = {
 		UseBasicJumpAnims = true,
 		UseDoubleJump = true,
 		UseGlideVfx = true,
-		UseSuperJump = true,
+		UseCapeVfx = true,
+		UseSuperJump = false,
 		ForceRunOnTreadmill = true,
 	},
 
@@ -74,8 +75,8 @@ local CharacterConfigs = {
 			FlightPitch = -85,
 			PitchLerp = 10,
 			UprightPitch = 0,
-			MaxBankDegrees = 40,
-			BankFollowRate = 3,
+			MaxBankDegrees = 55,
+			BankFollowRate = 6,
 			BankReturnRate = 2,
 			CameraBankBlend = 0.85,
 			CameraYawRateForFullBank = 1.2,
@@ -154,6 +155,14 @@ local CharacterConfigs = {
 			DescentHorizontalBlend = 0.35,
 			SteerMoveThreshold = 0.1,
 			SteerAxisSmoothRate = 14,
+			-- LeanUp A/D: snap axis + high yaw so hold time = turn amount (no camera fight).
+			UseSlowKeyboardYawOnLeanUp = true,
+			KeyboardYawDegreesPerSecond = 115,
+			KeyboardStrafeSpeed = 58,
+			KeyboardAxisSmoothRateLeanUp = 48,
+			KeyboardBankOnlyPhases = {
+				LeanUp = true,
+			},
 		},
 
 		Cancel = {

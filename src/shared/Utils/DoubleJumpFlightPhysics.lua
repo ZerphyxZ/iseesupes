@@ -194,11 +194,124 @@ function DoubleJumpFlightPhysics.applySteerToFlightDirection(
 
 	local target = getSteerDirection(state, tuning, phase, steerDirection)
 	local alpha = math.min(1, (tuning.Steering.DirectionLerp or 10) * dt)
+	state.flightDirection =
+		DoubleJumpFlightPhysics.normalizeFlightDirection(state.flightDirection:Lerp(target, alpha), tuning, phase)
+end
+
+local function rotateFlatY(flatDir: Vector3, radians: number): Vector3
+	local c = math.cos(radians)
+	local s = math.sin(radians)
+	local x, z = flatDir.X, flatDir.Z
+	return Vector3.new(x * c - z * s, 0, x * s + z * c)
+end
+
+function DoubleJumpFlightPhysics.usesKeyboardBankOnlySteer(tuning: DjTuning, phase: string): boolean
+	if phase ~= PHASE.LeanUp then
+		return false
+	end
+	local steerCfg = tuning.Steering
+	local phases = steerCfg.KeyboardBankOnlyPhases
+	if typeof(phases) == "table" and phases.LeanUp == true then
+		return true
+	end
+	return steerCfg.UseSlowKeyboardYawOnLeanUp == true
+end
+
+function DoubleJumpFlightPhysics.isLateralKeyboardSteer(
+	state: FlightState,
+	steerDirection: Vector3?,
+	tuning: DjTuning
+): boolean
+	local axis = math.clamp(state.clientSteerAxis or 0, -1, 1)
+	if math.abs(axis) < 0.01 then
+		return false
+	end
+	-- Forward / camera steer (W or mouse) keeps fast DirectionLerp; A/D alone uses slow axis yaw.
+	local threshold = getSteerThreshold(tuning)
+	if not steerDirection then
+		return true
+	end
+	return steerDirection.Magnitude < threshold
+end
+
+function DoubleJumpFlightPhysics.applyKeyboardYawFromAxis(
+	state: FlightState,
+	dt: number,
+	tuning: DjTuning,
+	phase: string
+)
+	if not isSteeringEnabled(tuning) then
+		return
+	end
+
+	local axis = math.clamp(state.clientSteerAxis or 0, -1, 1)
+	if math.abs(axis) < 0.01 then
+		return
+	end
+
+	local yawRate = tuning.Steering.KeyboardYawDegreesPerSecond or 115
+	-- Negative: A (+axis) yaws left, D (-axis) yaws right (camera-relative).
+	local radians = math.rad(-yawRate * axis * dt)
+	local flat = Vector3.new(state.flightDirection.X, 0, state.flightDirection.Z)
+	if flat.Magnitude < 0.01 then
+		return
+	end
+
+	local rotated = rotateFlatY(flat.Unit, radians)
 	state.flightDirection = DoubleJumpFlightPhysics.normalizeFlightDirection(
-		state.flightDirection:Lerp(target, alpha),
+		Vector3.new(rotated.X, state.flightDirection.Y, rotated.Z),
 		tuning,
 		phase
 	)
+	state.lastFlatHeading = Vector3.new(rotated.X, 0, rotated.Z).Unit
+end
+
+function DoubleJumpFlightPhysics.applyKeyboardStrafeVelocity(
+	state: FlightState,
+	velocity: Vector3,
+	tuning: DjTuning
+): Vector3
+	local axis = math.clamp(state.clientSteerAxis or 0, -1, 1)
+	if math.abs(axis) < 0.01 then
+		return velocity
+	end
+
+	local strafeSpeed = tuning.Steering.KeyboardStrafeSpeed or 58
+	local camera = workspace.CurrentCamera
+	if camera then
+		local camRight = camera.CFrame.RightVector
+		local flatRight = Vector3.new(camRight.X, 0, camRight.Z)
+		if flatRight.Magnitude >= 0.01 then
+			-- A (+axis) strafes camera-left; D (-axis) camera-right.
+			return velocity - flatRight.Unit * axis * strafeSpeed
+		end
+	end
+
+	local heading = DoubleJumpFlightPhysics.getOrientationHeading(state)
+	local right = Vector3.new(-heading.Z, 0, heading.X)
+	return velocity - right * axis * strafeSpeed
+end
+
+function DoubleJumpFlightPhysics.applyLeanUpHeadingSteer(
+	state: FlightState,
+	dt: number,
+	tuning: DjTuning,
+	phase: string,
+	steerDirection: Vector3?
+)
+	local axis = math.clamp(state.clientSteerAxis or 0, -1, 1)
+	local keyboardActive = DoubleJumpFlightPhysics.usesKeyboardBankOnlySteer(tuning, phase) and math.abs(axis) > 0.01
+
+	if keyboardActive then
+		-- A/D only: continuous yaw from hold time; do not lerp heading toward camera.
+		DoubleJumpFlightPhysics.applyKeyboardYawFromAxis(state, dt, tuning, phase)
+		return
+	end
+
+	local threshold = getSteerThreshold(tuning)
+	if steerDirection and steerDirection.Magnitude >= threshold then
+		DoubleJumpFlightPhysics.applySteerToFlightDirection(state, dt, tuning, phase, steerDirection)
+	end
 end
 
 function DoubleJumpFlightPhysics.lerpRollToward(state: FlightState, targetRoll: number, dt: number, ratePerSec: number)
@@ -243,12 +356,7 @@ function DoubleJumpFlightPhysics.computeLaunchRiseVelocity(
 	return DoubleJumpFlightPhysics.velocityAlongClimbAngle(state.flightDirection, climbDeg, speed)
 end
 
-function DoubleJumpFlightPhysics.updateBankRoll(
-	state: FlightState,
-	dt: number,
-	tuning: DjTuning,
-	enabled: boolean
-)
+function DoubleJumpFlightPhysics.updateBankRoll(state: FlightState, dt: number, tuning: DjTuning, enabled: boolean)
 	local poseCfg = tuning.SupermanPose
 	if not enabled or poseCfg.BankEnabled == false then
 		DoubleJumpFlightPhysics.lerpRollToward(state, 0, dt, poseCfg.BankReturnRate or 2)
@@ -256,10 +364,10 @@ function DoubleJumpFlightPhysics.updateBankRoll(
 	end
 
 	local steer = math.clamp(state.clientSteerAxis or 0, -1, 1)
-	local maxBank = poseCfg.MaxBankDegrees or 40
-	if math.abs(steer) > 0.05 then
+	local maxBank = poseCfg.MaxBankDegrees or 55
+	if math.abs(steer) > 0.01 then
 		local target = steer * maxBank
-		DoubleJumpFlightPhysics.lerpRollToward(state, target, dt, poseCfg.BankFollowRate or 3)
+		DoubleJumpFlightPhysics.lerpRollToward(state, target, dt, poseCfg.BankFollowRate or 6)
 	else
 		DoubleJumpFlightPhysics.lerpRollToward(state, 0, dt, poseCfg.BankReturnRate or 2)
 	end
@@ -421,7 +529,7 @@ function DoubleJumpFlightPhysics.tickPhase(
 		local descentBlend = DoubleJumpFlightPhysics.getDescentHorizontalBlend(tuning)
 
 		root.AssemblyAngularVelocity = Vector3.zero
-		DoubleJumpFlightPhysics.applySteerToFlightDirection(state, dt, tuning, phase, steerDirection)
+		DoubleJumpFlightPhysics.applyLeanUpHeadingSteer(state, dt, tuning, phase, steerDirection)
 
 		local maxPhaseTime = ThrustConfigs.LeanUpSafetyMaxDuration
 		local inDescent = phaseElapsed >= maxPhaseTime
@@ -429,6 +537,7 @@ function DoubleJumpFlightPhysics.tickPhase(
 		if not inDescent then
 			local flightDir = DoubleJumpFlightPhysics.getFlightDirectionWithPitch(state, tuning, phase, steerDirection)
 			local vel = flightDir * cfg.ForwardSpeed
+			vel = DoubleJumpFlightPhysics.applyKeyboardStrafeVelocity(state, vel, tuning)
 			DoubleJumpFlightPhysics.updateBankRoll(state, dt, tuning, true)
 			DoubleJumpFlightPhysics.applyFlightYawRollAndVelocity(
 				root,
@@ -483,33 +592,21 @@ function DoubleJumpFlightPhysics.tickPhase(
 
 		root.AssemblyAngularVelocity = Vector3.zero
 
-		local grounded = DoubleJumpLanding.isGroundedForLanding(
-			humanoid,
-			root,
-			rayParams,
-			landingCfg,
-			state.flightDirection
-		)
+		local grounded =
+			DoubleJumpLanding.isGroundedForLanding(humanoid, root, rayParams, landingCfg, state.flightDirection)
 		if not grounded then
 			local fallSpeed = DoubleJumpFlightPhysics.getCancelFallSpeed(tuning)
 			DoubleJumpFlightPhysics.restoreUprightPose(root, state.flightDirection)
 
 			local walkableHit: RaycastResult? = nil
-			local hit = DoubleJumpLanding.raycastDownFromRoot(
-				root,
-				phaseCfg.LeapDown.SurfaceRayLength or 250,
-				rayParams
-			)
+			local hit =
+				DoubleJumpLanding.raycastDownFromRoot(root, phaseCfg.LeapDown.SurfaceRayLength or 250, rayParams)
 			if hit and DoubleJumpLanding.isWalkableHit(hit, landingCfg) then
 				walkableHit = hit
 			end
 			if walkableHit then
-				local effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(
-					walkableHit,
-					root,
-					humanoid,
-					landingCfg
-				)
+				local effectiveHeight =
+					DoubleJumpLanding.getEffectiveHeightAbove(walkableHit, root, humanoid, landingCfg)
 				local softHeight = (landingCfg.TriggerHeightAboveSurface or 6) + 2
 				if effectiveHeight <= softHeight then
 					fallSpeed = approachSpeed
@@ -540,13 +637,8 @@ function DoubleJumpFlightPhysics.tickPhase(
 		local fallSpeed = DoubleJumpFlightPhysics.getCancelFallSpeed(tuning)
 
 		root.AssemblyAngularVelocity = Vector3.zero
-		local grounded = DoubleJumpLanding.isGroundedForLanding(
-			humanoid,
-			root,
-			rayParams,
-			landingCfg,
-			state.flightDirection
-		)
+		local grounded =
+			DoubleJumpLanding.isGroundedForLanding(humanoid, root, rayParams, landingCfg, state.flightDirection)
 		if not grounded then
 			DoubleJumpFlightPhysics.restoreUprightPose(root, state.flightDirection)
 			DoubleJumpFlightPhysics.applyVelocityOnly(root, Vector3.new(0, -fallSpeed, 0))

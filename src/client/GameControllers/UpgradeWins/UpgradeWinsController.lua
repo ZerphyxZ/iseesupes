@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
+local CapeVfx = require(script.Parent.Parent.Parent.Modules.CapeVfx)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
 local DJ_PHASE_ATTR = "DjAbilityPhase"
@@ -41,6 +42,12 @@ function UpgradeWinsController:KnitStart()
 		if kind == "Unlocked" or kind == "Equipped" then
 			resetSteerAfterMorph()
 			-- Full character swap snaps via CharacterAdded; palette-only equip keeps the same instance.
+			local character = player.Character
+			if character then
+				task.defer(function()
+					CapeVfx.refreshAfterShowcaseEquip(character)
+				end)
+			end
 		end
 
 		if kind == "Unlocked" then

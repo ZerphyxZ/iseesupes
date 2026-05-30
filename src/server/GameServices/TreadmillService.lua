@@ -9,8 +9,6 @@ local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
-local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
-local ThrustConfigs = SpeedConfigs.Thrust
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 
 type TreadmillTier = TreadmillConfigs.TreadmillTier
@@ -207,9 +205,6 @@ local function awardTreadmillTick(player: Player, tier: TreadmillTier)
 	end
 
 	local mult = tier.Multiplier
-	local refill = ThrustConfigs.TreadmillRefillPerTick * mult
-	DataService:AddFuel(player, refill)
-
 	local speedXp = GameplayCfg.SpeedXpPerTick or 0
 	if speedXp > 0 and DataService then
 		local profile = DataService:GetProfile(player)

@@ -71,15 +71,19 @@ end
 
 -- Thrust flight fuel (lives here so one synced module is enough; ThrustConfigs.lua re-exports this).
 local Thrust = {
-	BaseMaxFuel = 75,
+	BaseMaxFuel = 150,
 	DrainPerSecond = 10,
-	TreadmillRefillPerTick = 3,
-	MinFuelToStartFlight = 5,
+	TreadmillRefillPerTick = 0,
+	PassiveRefillRate = 20,
+	MinFuelToStartFlight = 10,
 	EmptyDescentGrace = 0.6,
 	SpeedPointsToMaxFuelBonus = 1,
 	MaxFuelBonusFromProducts = 0,
 	ReplicateMinInterval = 0.25,
 	LeanUpSafetyMaxDuration = 45,
+	-- Player attribute (Properties panel) to set max thrust fuel directly. 0 = use BaseMaxFuel.
+	PowerAttribute = "ThrustPower",
+	DefaultPower = 0,
 }
 
 function Thrust.GetAbilityTimeCap(fuelAtStart: number, tuningMax: number): number
@@ -115,6 +119,29 @@ end
 function Thrust.RefillToMax(data: any)
 	Thrust.EnsureFuelDefaults(data)
 	data.ThrustCurrent = data.ThrustMax
+end
+
+-- Apply the ThrustPower attribute value as the player's max fuel.
+-- power > 0 sets ThrustMax to that value; power <= 0 (or nil) resets to BaseMaxFuel.
+-- refill = true tops current fuel up to the new max (used on set / respawn).
+function Thrust.ApplyPower(data: any, power: number?, refill: boolean?): boolean
+	Thrust.EnsureFuelDefaults(data)
+
+	local targetMax: number
+	if typeof(power) == "number" and power > 0 then
+		targetMax = power
+	else
+		targetMax = Thrust.BaseMaxFuel
+	end
+
+	local changed = data.ThrustMax ~= targetMax
+	data.ThrustMax = targetMax
+	if refill then
+		data.ThrustCurrent = targetMax
+	else
+		data.ThrustCurrent = math.clamp(data.ThrustCurrent, 0, targetMax)
+	end
+	return changed
 end
 
 SpeedConfigs.Thrust = Thrust

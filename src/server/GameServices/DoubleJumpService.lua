@@ -1019,7 +1019,25 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 
 		if not clientOwnsFlightPhysics() then
 			root.AssemblyAngularVelocity = Vector3.zero
-			applySteerToFlightDirection(session, dt, tuning)
+			local fpState: DoubleJumpFlightPhysics.FlightState = {
+				flightDirection = session.flightDirection,
+				lastFlatHeading = session.lastFlatHeading,
+				currentPitch = session.currentPitch,
+				currentRoll = session.currentRoll,
+				descentStartedAt = session.descentStartedAt,
+				clientSteerAxis = session.clientSteerAxis,
+				clientSteerPitchAxis = session.clientSteerPitchAxis,
+				clientSteerDirection = session.clientSteerDirection,
+			}
+			DoubleJumpFlightPhysics.applyLeanUpHeadingSteer(
+				fpState,
+				dt,
+				tuning,
+				phase,
+				session.clientSteerDirection
+			)
+			session.flightDirection = fpState.flightDirection
+			session.lastFlatHeading = fpState.lastFlatHeading
 		end
 
 		-- Glide ends when thrust fuel hits 0 (_onThrustEmpty), not ForwardDistance / E_LeanDist.
@@ -1033,12 +1051,26 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 			end
 
 			local flightDir = getFlightDirectionWithPitch(session, tuning)
+			local vel = flightDir * cfg.ForwardSpeed
+			if not clientOwnsFlightPhysics() then
+				local fpState: DoubleJumpFlightPhysics.FlightState = {
+					flightDirection = session.flightDirection,
+					lastFlatHeading = session.lastFlatHeading,
+					currentPitch = session.currentPitch,
+					currentRoll = session.currentRoll,
+					descentStartedAt = session.descentStartedAt,
+					clientSteerAxis = session.clientSteerAxis,
+					clientSteerPitchAxis = session.clientSteerPitchAxis,
+					clientSteerDirection = session.clientSteerDirection,
+				}
+				vel = DoubleJumpFlightPhysics.applyKeyboardStrafeVelocity(fpState, vel, tuning)
+			end
 			updateBankRoll(session, dt, tuning, true)
 			applyFlightYawRollAndVelocity(
 				session,
 				getOrientationHeading(session),
 				session.currentRoll,
-				flightDir * cfg.ForwardSpeed
+				vel
 			)
 			return
 		end

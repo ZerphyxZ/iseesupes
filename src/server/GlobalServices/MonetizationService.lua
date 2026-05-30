@@ -21,6 +21,7 @@ local gpCache: { [number]: { [number]: boolean } } = {}
 
 local DataService: any = nil
 local RebirthService: any = nil
+local ThrustUpgradeService: any = nil
 
 local function getProductById(productId: number): any?
 	return ProductConfigs.GetProductById(productId)
@@ -122,6 +123,7 @@ end
 function MonetizationService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	RebirthService = Knit.GetService("RebirthService")
+	ThrustUpgradeService = Knit.GetService("ThrustUpgradeService")
 
 	Players.PlayerAdded:Connect(function(player)
 		task.spawn(checkGamepasses, player)
@@ -181,6 +183,11 @@ function MonetizationService:KnitStart()
 				DataService:Replicate(player)
 				print("[iseesupes] Granted", product.GrantCoins, "coins to", player.Name)
 			end
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+
+		if ThrustUpgradeService:GrantTierFromProduct(player, info.ProductId) then
+			DataService:Replicate(player)
 			return Enum.ProductPurchaseDecision.PurchaseGranted
 		end
 

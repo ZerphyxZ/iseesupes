@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -11,6 +12,8 @@ local RewardTiming = require(ReplicatedStorage.Shared.Utils.RewardTiming)
 local LeaderstatsSync = require(script.Parent.Parent.Modules.LeaderstatsSync)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
+local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
+local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 assert(ThrustConfigs, "[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again.")
 
@@ -49,6 +52,41 @@ local function replicateThrust(player: Player)
 		return
 	end
 	replicateThrustOnly(player, profile)
+end
+
+-- Reads the ThrustPower attribute and applies it as the player's max fuel.
+local function applyThrustPower(player: Player, refill: boolean)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local power = player:GetAttribute(ThrustConfigs.PowerAttribute)
+	if typeof(power) ~= "number" then
+		power = nil
+	end
+	ThrustConfigs.ApplyPower(profile.Data, power, refill)
+	replicateThrust(player)
+end
+
+-- Creates the ThrustPower attribute (so it shows in the Properties panel) and
+-- keeps max fuel synced when it is edited live.
+local function setupThrustPowerAttribute(player: Player)
+	local data = profiles[player] and profiles[player].Data
+	if not data then
+		return
+	end
+
+	local attr = ThrustConfigs.PowerAttribute
+	if typeof(player:GetAttribute(attr)) ~= "number" then
+		ThrustConfigs.EnsureFuelDefaults(data)
+		player:SetAttribute(attr, data.ThrustMax)
+	end
+
+	applyThrustPower(player, true)
+
+	player:GetAttributeChangedSignal(attr):Connect(function()
+		applyThrustPower(player, true)
+	end)
 end
 
 local function resolveLobbySpawn(): BasePart?
@@ -186,6 +224,18 @@ function DataService:AddWins(player: Player, amount: number): boolean
 	return true
 end
 
+function DataService:ApplyUpgradedMax(player: Player, newMax: number): boolean
+	local data = self:GetData(player)
+	if not data then
+		return false
+	end
+	ThrustConfigs.EnsureFuelDefaults(data)
+	data.ThrustMax = newMax
+	data.ThrustCurrent = math.min(data.ThrustCurrent, data.ThrustMax)
+	replicateThrust(player)
+	return true
+end
+
 function DataService:RefillThrustToMax(player: Player): boolean
 	local data = self:GetData(player)
 	if not data then
@@ -240,6 +290,15 @@ local function onPlayerAdded(player: Player)
 	profile:AddUserId(player.UserId)
 	profile:Reconcile()
 	ThrustConfigs.MigrateProfile(profile.Data)
+	TrailConfigs.EnsureDefaultTrail(profile.Data)
+
+	-- Re-apply any purchased Thrust upgrade tier so ThrustMax is correct after relog.
+	local savedTier = profile.Data.ThrustUpgradeTier
+	if type(savedTier) == "number" and savedTier > 0 then
+		local bonus = ThrustUpgradeConfigs.GetTotalBonusForTier(savedTier)
+		profile.Data.ThrustMax = ThrustConfigs.BaseMaxFuel + bonus
+	end
+
 	ThrustConfigs.RefillToMax(profile.Data)
 	SpeedConfigs.SyncLevelFromSpeed(profile.Data)
 	RewardTiming.ensureAnchor(profile.Data)
@@ -255,6 +314,7 @@ local function onPlayerAdded(player: Player)
 	end
 
 	profiles[player] = profile
+	setupThrustPowerAttribute(player)
 	replicateData(player, profile)
 	print("[iseesupes] Profile loaded for", player.Name)
 
@@ -297,12 +357,62 @@ function DataService.Client:RequestData(player: Player)
 	return profile.Data
 end
 
+--- Studio: Properties edits the client Player; apply ThrustPower on the authoritative server copy.
+function DataService.Client:SyncThrustPower(player: Player, power: number)
+	if not RunService:IsStudio() then
+		return
+	end
+	if typeof(power) ~= "number" then
+		return
+	end
+
+	local attr = ThrustConfigs.PowerAttribute
+	player:SetAttribute(attr, power)
+	applyThrustPower(player, true)
+end
+
+local function tickPassiveRefill(dt: number)
+	local rate = ThrustConfigs.PassiveRefillRate
+	if not rate or rate <= 0 then
+		return
+	end
+
+	for _, player in Players:GetPlayers() do
+		-- Don't refill while Superman flight (E key) is active
+		if player:GetAttribute("DjAbilityPhase") ~= nil then
+			continue
+		end
+
+		local profile = profiles[player]
+		if not profile then
+			continue
+		end
+
+		local data = profile.Data
+		ThrustConfigs.EnsureFuelDefaults(data)
+		if data.ThrustCurrent >= data.ThrustMax then
+			continue
+		end
+
+		data.ThrustCurrent = math.min(data.ThrustMax, data.ThrustCurrent + rate * dt)
+
+		local now = os.clock()
+		local last = lastThrustReplicateAt[player] or 0
+		if now - last >= ThrustConfigs.ReplicateMinInterval then
+			lastThrustReplicateAt[player] = now
+			replicateThrustOnly(player, profile)
+		end
+	end
+end
+
 function DataService:KnitStart()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	for _, player in Players:GetPlayers() do
 		task.spawn(onPlayerAdded, player)
 	end
+
+	RunService.Heartbeat:Connect(tickPassiveRefill)
 end
 
 return DataService

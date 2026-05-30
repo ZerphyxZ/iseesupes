@@ -9,6 +9,9 @@ local RunService = game:GetService("RunService")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local ThrustConfigs = SpeedConfigs.Thrust
 
 local LevelDesignController = Knit.CreateController({ Name = "LevelDesignController" })
 
@@ -58,12 +61,30 @@ local function bindTuningAttributes(instance: Instance)
 	end
 end
 
+local function syncThrustPowerFromClient(value: number)
+	if typeof(value) ~= "number" then
+		return
+	end
+	Knit.GetService("DataService"):SyncThrustPower(value):catch(warn)
+end
+
+local function bindThrustPowerAttribute(instance: Instance)
+	if not ThrustConfigs or instance ~= player then
+		return
+	end
+	local attr = ThrustConfigs.PowerAttribute
+	instance:GetAttributeChangedSignal(attr):Connect(function()
+		syncThrustPowerFromClient(instance:GetAttribute(attr) :: any)
+	end)
+end
+
 function LevelDesignController:KnitStart()
 	if not RunService:IsStudio() then
 		return
 	end
 
 	bindTuningAttributes(player)
+	bindThrustPowerAttribute(player)
 
 	player.CharacterAdded:Connect(function(character)
 		bindTuningAttributes(character)
@@ -72,6 +93,28 @@ function LevelDesignController:KnitStart()
 	if player.Character then
 		bindTuningAttributes(player.Character)
 	end
+
+	task.defer(function()
+		local power = player:GetAttribute(ThrustConfigs.PowerAttribute)
+		if typeof(power) == "number" then
+			syncThrustPowerFromClient(power)
+		end
+	end)
+
+	local thrustMismatchSynced = false
+	DataLib.OnChanged(function(data)
+		if thrustMismatchSynced or not data then
+			return
+		end
+		local power = player:GetAttribute(ThrustConfigs.PowerAttribute)
+		if typeof(power) ~= "number" or power <= 0 then
+			return
+		end
+		if typeof(data.ThrustMax) == "number" and math.abs(power - data.ThrustMax) > 0.5 then
+			thrustMismatchSynced = true
+			syncThrustPowerFromClient(power)
+		end
+	end)
 
 	print("[iseesupes] LevelDesignController — edit Attributes in Properties; values sync to server on change.")
 end

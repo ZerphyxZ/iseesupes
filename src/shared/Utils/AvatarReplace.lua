@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local UpgradeWinsConfigs = require(script.Parent.Parent.Configs.UpgradeWinsConfigs)
+local CapeRigEnsure = require(script.Parent.CapeRigEnsure)
 
 local CLOTHING_CHILD_NAMES = { "Shirt", "Pants", "ShirtGraphic" }
 
@@ -326,6 +327,7 @@ local function applyShowcaseVisuals(character: Model, template: Model)
 	end
 
 	applyShowcaseClothing(character, template)
+	CapeRigEnsure.ensureOnCharacter(character, template)
 end
 
 local function syncHumanoidFromTemplate(character: Model, template: Model)

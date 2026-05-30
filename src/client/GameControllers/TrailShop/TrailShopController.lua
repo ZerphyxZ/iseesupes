@@ -1,8 +1,8 @@
 --!strict
 
--- Trail shop UI. Expects Studio instances:
---   PlayerGui → GUI → Frames → Trails → Scrolling
---   ReplicatedStorage → Templates → TrailTemplate
+-- Trail shop UI. Expects:
+--   PlayerGui → GUI → Frames → Trails → Scrolling → TrailTemplate (hidden)
+--   ReplicatedStorage → Templates → TrailTemplate (fallback)
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
+local TrailShopUi = require(ReplicatedStorage.Shared.Utils.TrailShopUi)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 
@@ -17,56 +18,35 @@ local TrailShopController = Knit.CreateController({ Name = "TrailShopController"
 
 local ROBUX_PREFIX = utf8.char(0xE002)
 
-local TEMPLATE_PATH_CANDIDATES = {
-	TrailConfigs.ShopTemplatePath,
-	TrailConfigs.ShopTemplatePathLegacy,
-}
+local priceCache: { [number]: number } = {}
 
-local priceCache = {} -- [productId] = robux price
+local scrolling: ScrollingFrame? = nil
+local trailsFrame: Frame? = nil
+local rowSource: GuiObject? = nil
+local populateShop: (() -> ())? = nil
 
-local function waitPath(root: Instance, segments: { string }, timeout: number?)
-	local current: Instance? = root
-	for _, name in segments do
-		if not current then
-			return nil
-		end
-		current = current:WaitForChild(name, timeout or 10)
-	end
-	return current
-end
-
-local function resolveShopRowTemplate(root: Instance): GuiObject?
-	for _, segments in TEMPLATE_PATH_CANDIDATES do
-		local found = waitPath(root, segments, 3)
-		if found and found:IsA("GuiObject") then
-			return found
-		end
-	end
-	return nil
-end
-
-local function updateButtons(frame: Frame, info: any, isOwned: boolean, isEquipped: boolean)
+local function updateButtons(frame: Frame, info: TrailConfigs.TrailInfo, isOwned: boolean, isEquipped: boolean)
 	local buttons = frame:FindFirstChild("Buttons")
 	if not buttons then
 		return
 	end
 
-	local winBtn = buttons:FindFirstChild("Wins") :: ImageButton?
-	local robuxBtn = buttons:FindFirstChild("Robux") :: ImageButton?
-	local equipBtn = buttons:FindFirstChild("Equip") :: ImageButton?
+	local winBtn = buttons:FindFirstChild("Wins")
+	local robuxBtn = buttons:FindFirstChild("Robux")
+	local equipBtn = buttons:FindFirstChild("Equip")
 
-	if winBtn then
+	if winBtn and winBtn:IsA("GuiButton") then
 		winBtn.Visible = false
 	end
-	if robuxBtn then
+	if robuxBtn and robuxBtn:IsA("GuiButton") then
 		robuxBtn.Visible = false
 	end
-	if equipBtn then
+	if equipBtn and equipBtn:IsA("GuiButton") then
 		equipBtn.Visible = false
 	end
 
 	if isOwned then
-		if equipBtn then
+		if equipBtn and equipBtn:IsA("GuiButton") then
 			equipBtn.Visible = true
 			local btnText = equipBtn:FindFirstChild("Text") :: TextLabel?
 			if isEquipped then
@@ -84,7 +64,8 @@ local function updateButtons(frame: Frame, info: any, isOwned: boolean, isEquipp
 			end
 		end
 	else
-		if winBtn then
+		local isFreeDefault = info.ID == TrailConfigs.DefaultTrailId and info.WinCost <= 0
+		if winBtn and winBtn:IsA("GuiButton") and not isFreeDefault then
 			winBtn.Visible = true
 			local t = winBtn:FindFirstChild("Text") :: TextLabel?
 			if t then
@@ -92,7 +73,7 @@ local function updateButtons(frame: Frame, info: any, isOwned: boolean, isEquipp
 			end
 		end
 
-		if robuxBtn then
+		if robuxBtn and robuxBtn:IsA("GuiButton") then
 			robuxBtn.Visible = info.ProductId ~= 0
 			local t = robuxBtn:FindFirstChild("Text") :: TextLabel?
 			if t then
@@ -122,6 +103,15 @@ local function updateButtons(frame: Frame, info: any, isOwned: boolean, isEquipp
 end
 
 function TrailShopController:KnitStart()
+	local ok, err = pcall(function()
+		self:_start()
+	end)
+	if not ok then
+		warn("[iseesupes] TrailShopController failed:", err)
+	end
+end
+
+function TrailShopController:_start()
 	local TrailService = Knit.GetService("TrailService")
 
 	local player = Players.LocalPlayer
@@ -137,28 +127,27 @@ function TrailShopController:KnitStart()
 		warn("[iseesupes] TrailShopController: missing GUI.Frames.")
 		return
 	end
-	local trailsFrame = frames:WaitForChild("Trails", 30)
+
+	trailsFrame = frames:WaitForChild("Trails", 30) :: Frame?
 	if not trailsFrame then
 		warn("[iseesupes] TrailShopController: missing GUI.Frames.Trails.")
 		return
 	end
-	local scrolling = trailsFrame:WaitForChild("Scrolling", 30)
+
+	scrolling = trailsFrame:WaitForChild("Scrolling", 30) :: ScrollingFrame?
 	if not scrolling then
 		warn("[iseesupes] TrailShopController: missing Frames/Trails/Scrolling under GUI.")
 		return
 	end
 
-	local template = resolveShopRowTemplate(ReplicatedStorage)
+	local template = TrailShopUi.resolveTrailTemplate(scrolling, ReplicatedStorage)
 	if not template then
-		warn(
-			"[iseesupes] TrailShopController: missing template ReplicatedStorage."
-				.. table.concat(TrailConfigs.ShopTemplatePath, ".")
-				.. " (or legacy "
-				.. table.concat(TrailConfigs.ShopTemplatePathLegacy, ".")
-				.. ")"
-		)
+		warn("[iseesupes] TrailShopController: missing TrailTemplate in Scrolling or ReplicatedStorage.Templates")
 		return
 	end
+
+	TrailShopUi.prepareTemplate(template)
+	rowSource = TrailShopUi.ensureRowSource(scrolling, template)
 
 	local function getTrailStateFromData(data: any)
 		if not data then
@@ -180,11 +169,14 @@ function TrailShopController:KnitStart()
 	end
 
 	local function refreshShopStates()
+		if not scrolling then
+			return
+		end
 		local data = DataLib.GetData()
 		local equippedId, owned = getTrailStateFromData(data)
 
 		for _, child in scrolling:GetChildren() do
-			if child:IsA("Frame") then
+			if child:IsA("Frame") and TrailConfigs.IsTrailRowName(child.Name) then
 				local info = TrailConfigs.GetTrailById(child.Name)
 				if info then
 					local isOwned = owned[info.ID] == true
@@ -195,42 +187,46 @@ function TrailShopController:KnitStart()
 		end
 	end
 
-	local function populateShop()
+	local function clearShopRows()
+		if not scrolling then
+			return
+		end
 		for _, child in scrolling:GetChildren() do
-			if child:IsA("Frame") then
+			if child:IsA("Frame") and TrailConfigs.IsTrailRowName(child.Name) then
 				child:Destroy()
 			end
 		end
+	end
 
-		for _, info in TrailConfigs.Trails do
-			local clone = template:Clone()
+	populateShop = function()
+		if not scrolling or not rowSource then
+			return
+		end
+
+		clearShopRows()
+
+		local trailList = TrailConfigs.Trails
+		local rowCount = 0
+
+		for index, info in trailList do
+			local clone = rowSource:Clone()
 			clone.Name = info.ID
-			clone.Visible = true
-
-			local nameLabel = clone:FindFirstChild("Name") :: TextLabel?
-			if nameLabel then
-				nameLabel.Text = info.Name
+			local bindOk, bindErr = pcall(TrailShopUi.bindTrailRowLabels, clone, info, index)
+			if not bindOk then
+				warn("[iseesupes] TrailShop row bind failed:", info.ID, bindErr)
+				clone:Destroy()
+				continue
 			end
-
-			local speedLabel = clone:FindFirstChild("SpeedBoost") :: TextLabel?
-			if speedLabel then
-				speedLabel.Text = "x" .. tostring(info.SpeedBoost) .. " Points"
-			end
-
-			local imageLabel = clone:FindFirstChild("Image") :: ImageLabel?
-			if imageLabel and info.Image then
-				imageLabel.Image = info.Image
-			end
-
 			clone.Parent = scrolling
+			rowCount += 1
 
 			local btns = clone:FindFirstChild("Buttons")
 			if btns then
-				local winBtn = btns:FindFirstChild("Wins") :: ImageButton?
-				local robuxBtn = btns:FindFirstChild("Robux") :: ImageButton?
-				local equipBtn = btns:FindFirstChild("Equip") :: ImageButton?
+				local winBtn = btns:FindFirstChild("Wins")
+				local robuxBtn = btns:FindFirstChild("Robux")
+				local equipBtn = btns:FindFirstChild("Equip")
 
-				if winBtn then
+				if winBtn and winBtn:IsA("GuiButton") then
 					winBtn.MouseButton1Click:Connect(function()
 						TrailService:BuyWithWins(info.ID):andThen(function(result)
 							if not result.success and result.message then
@@ -240,17 +236,16 @@ function TrailShopController:KnitStart()
 					end)
 				end
 
-				if robuxBtn then
+				if robuxBtn and robuxBtn:IsA("GuiButton") then
 					robuxBtn.MouseButton1Click:Connect(function()
 						if info.ProductId == 0 then
 							return
 						end
-						local localPlayer = Players.LocalPlayer
-						MarketplaceService:PromptProductPurchase(localPlayer, info.ProductId)
+						MarketplaceService:PromptProductPurchase(player, info.ProductId)
 					end)
 				end
 
-				if equipBtn then
+				if equipBtn and equipBtn:IsA("GuiButton") then
 					equipBtn.MouseButton1Click:Connect(function()
 						local d = DataLib.GetData()
 						local equippedId = (d and type(d.EquippedTrail) == "string") and d.EquippedTrail or ""
@@ -272,13 +267,38 @@ function TrailShopController:KnitStart()
 			end
 		end
 
+		TrailShopUi.updateScrollingCanvas(scrolling)
 		refreshShopStates()
+		print("[iseesupes] TrailShop populated", rowCount, "rows")
+	end
+
+	local function ensurePopulated()
+		if not scrolling then
+			return
+		end
+		if TrailShopUi.countTrailRows(scrolling) == 0 then
+			populateShop()
+		else
+			refreshShopStates()
+		end
 	end
 
 	populateShop()
 	DataLib.OnChanged(function()
-		refreshShopStates()
+		ensurePopulated()
 	end)
+
+	trailsFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+		if trailsFrame and trailsFrame.Visible then
+			task.defer(ensurePopulated)
+		end
+	end)
+
+	-- Frame open animation finishes slightly after Visible=true
+	task.defer(ensurePopulated)
+	task.delay(0.5, ensurePopulated)
+
+	print("[iseesupes] TrailShopController ready.")
 end
 
 return TrailShopController

@@ -135,6 +135,15 @@ local function stopConstantFlyingLoop()
 	constantFlyingSound = nil
 end
 
+local function playLandingSounds()
+	local sounds = SupermanVfxConfigs.Sounds
+	playOneShot(
+		sounds.GroundCracking,
+		sounds.GroundCrackingLifetime,
+		sounds.GroundCrackingVolume
+	)
+end
+
 local function sampleFallSpeed(hrp: BasePart, now: number): number
 	local fromVelocity = math.max(0, -hrp.AssemblyLinearVelocity.Y)
 	local fromDrop = 0
@@ -230,6 +239,9 @@ local function startTouchdownWatch()
 
 		landingFiredForAbility = true
 		local spawned = SupermanGroundVfx.spawnSurfaceBreak("Landing", result, player.Character)
+		if spawned then
+			playLandingSounds()
+		end
 		debugLog(
 			"landing break fired peak=",
 			math.floor(peakFallSpeed),
@@ -251,11 +263,10 @@ local function onPhaseChanged(phase: string)
 		SupermanGroundVfx.resetAbilityState()
 
 		playOneShot(
-			SupermanVfxConfigs.Sounds.GroundCracking,
-			SupermanVfxConfigs.Sounds.GroundCrackingLifetime,
-			SupermanVfxConfigs.Sounds.GroundCrackingVolume
+			SupermanVfxConfigs.Sounds.StartFlying,
+			SupermanVfxConfigs.Sounds.StartFlyingLifetime,
+			SupermanVfxConfigs.Sounds.StartFlyingVolume
 		)
-		playOneShot(SupermanVfxConfigs.Sounds.StartFlying, SupermanVfxConfigs.Sounds.StartFlyingLifetime)
 
 		local hrp = getHrp()
 		if hrp then

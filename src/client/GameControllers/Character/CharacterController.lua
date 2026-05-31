@@ -420,7 +420,14 @@ local function bindJumpAction()
 		return
 	end
 	jumpActionBound = true
-	ContextActionService:BindAction(JumpCfg.JumpActionName, onJumpAction, false, Enum.KeyCode.Space)
+	ContextActionService:BindAction(
+		JumpCfg.JumpActionName,
+		onJumpAction,
+		false,
+		Enum.KeyCode.Space,
+		Enum.PlayerActions.CharacterJump,
+		Enum.KeyCode.ButtonA
+	)
 end
 
 local function cleanupCharacter(character: Model)

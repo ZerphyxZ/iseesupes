@@ -13,6 +13,7 @@ local CharacterConfigs = {
 		UseGlideVfx = true,
 		UseCapeVfx = true,
 		UseSuperJump = false,
+		UseLongJump = true,
 		ForceRunOnTreadmill = true,
 	},
 
@@ -180,6 +181,18 @@ local CharacterConfigs = {
 			AllowGrounded = true,
 			AllowAirborne = true,
 		},
+	},
+
+	LongJump = {
+		DoubleTapWindow = 0.35,
+		ForwardPower = 110,
+		UpPower = 95,
+		Cooldown = 1.0,
+		-- SupesAnimations / SuperJump / LeanUp (same asset as SuperJump ability)
+		AnimFolder = "SuperJump",
+		LeanUpAnim = "LeanUp",
+		LeanUpFadeTime = 0.12,
+		LeanUpDuration = 0.9,
 	},
 
 	SuperJump = {

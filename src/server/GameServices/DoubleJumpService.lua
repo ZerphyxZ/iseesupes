@@ -909,9 +909,12 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	-- Hard-grounded fail-safe: feet on walkable floor only (not "near landing" while still gliding).
 	if onWalkableGround then
 		session.hardLandedAt = session.hardLandedAt or now
+		local hardLandDelay = if session.phase == PHASE.LeapDown or session.phase == PHASE.DownSupes
+			then 0.35
+			else HARD_LANDED_END_SECONDS
 		if
 			session.phase ~= PHASE.FlightTransit
-			and now - (session.hardLandedAt :: number) >= HARD_LANDED_END_SECONDS
+			and now - (session.hardLandedAt :: number) >= hardLandDelay
 		then
 			self:_endAbility(session.player)
 			return
@@ -940,7 +943,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		return
 	end
 
-	if phaseConsumesThrust(phase) and DataService then
+	if phaseConsumesThrust(phase) and not onWalkableGround and DataService then
 		local drain = ThrustConfigs.DrainPerSecond * dt
 		if not DataService:TryConsumeThrust(session.player, drain) then
 			self:_onThrustEmpty(session)
@@ -1045,6 +1048,11 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		local inDescent = phaseElapsed >= maxPhaseTime
 
 		if not inDescent then
+			if onWalkableGround then
+				self:_setPhase(session, PHASE.LeapDown)
+				return
+			end
+
 			if probe and DoubleJumpLanding.shouldApproachLandFromGlide(probe) then
 				self:_setPhase(session, PHASE.LeapDown)
 				return
@@ -1539,6 +1547,12 @@ function DoubleJumpService:KnitStart()
 				DoubleJumpService:_tickSession(session, dt)
 			else
 				DoubleJumpService:_endAbility(player)
+			end
+		end
+
+		for _, player in Players:GetPlayers() do
+			if not sessions[player] and player:GetAttribute(PHASE_ATTR) ~= nil then
+				player:SetAttribute(PHASE_ATTR, nil)
 			end
 		end
 	end)

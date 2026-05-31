@@ -6,7 +6,7 @@ export type BreakTier = "Takeoff" | "ImpactWall" | "ImpactFloor" | "Landing"
 
 local SupermanVfxConfigs = {
 
-	Debug = true,
+	Debug = false,
 
 	Sounds = {
 		FolderPath = { "Shared", "Assets", "SupermanFlightSounds" },
@@ -16,7 +16,8 @@ local SupermanVfxConfigs = {
 		ConstantFlyingParentName   = "ConstantFlyingSfx",
 		GroundCrackingLifetime     = 6,
 		StartFlyingLifetime        = 6,
-		GroundCrackingVolume       = 0.55,
+		StartFlyingVolume          = 1,
+		GroundCrackingVolume       = 1,
 		ImpactBreak                = "ImpactBreak",
 		ImpactBreakLifetime        = 3,
 	},

@@ -378,8 +378,8 @@ local function tickPassiveRefill(dt: number)
 	end
 
 	for _, player in Players:GetPlayers() do
-		-- Don't refill while Superman flight (E key) is active
-		if player:GetAttribute("DjAbilityPhase") ~= nil then
+		-- Refill on ground during landing; block only in-air thrust phases.
+		if ThrustConfigs.BlocksPassiveRefill(player:GetAttribute("DjAbilityPhase")) then
 			continue
 		end
 
@@ -394,11 +394,13 @@ local function tickPassiveRefill(dt: number)
 			continue
 		end
 
+		local wasBelowMax = data.ThrustCurrent < data.ThrustMax
 		data.ThrustCurrent = math.min(data.ThrustMax, data.ThrustCurrent + rate * dt)
 
 		local now = os.clock()
+		local reachedMax = wasBelowMax and data.ThrustCurrent >= data.ThrustMax
 		local last = lastThrustReplicateAt[player] or 0
-		if now - last >= ThrustConfigs.ReplicateMinInterval then
+		if reachedMax or now - last >= ThrustConfigs.ReplicateMinInterval then
 			lastThrustReplicateAt[player] = now
 			replicateThrustOnly(player, profile)
 		end

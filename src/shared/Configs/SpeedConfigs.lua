@@ -84,7 +84,23 @@ local Thrust = {
 	-- Player attribute (Properties panel) to set max thrust fuel directly. 0 = use BaseMaxFuel.
 	PowerAttribute = "ThrustPower",
 	DefaultPower = 0,
+	--- DjAbilityPhase values that block passive refill (in-air thrust use only).
+	PassiveRefillBlockPhases = {
+		FlightTransit = true,
+		AfterTransition = true,
+		LeanUp = true,
+	},
 }
+
+function Thrust.BlocksPassiveRefill(djPhase: any): boolean
+	if djPhase == nil or djPhase == "" then
+		return false
+	end
+	if typeof(djPhase) ~= "string" then
+		return true
+	end
+	return Thrust.PassiveRefillBlockPhases[djPhase] == true
+end
 
 function Thrust.GetAbilityTimeCap(fuelAtStart: number, tuningMax: number): number
 	local drain = Thrust.DrainPerSecond

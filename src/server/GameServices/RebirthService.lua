@@ -55,6 +55,7 @@ function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean):
 	end
 
 	DataService:Replicate(player)
+	DataService:NotifyLeaderboards(player, { "Rebirths", "Speed" })
 	self:SyncLeaderstats(player, data)
 	RebirthService.Client.RebirthSuccess:Fire(player)
 	return true

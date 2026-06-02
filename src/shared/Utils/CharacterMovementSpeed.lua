@@ -1,0 +1,48 @@
+--!strict
+
+-- Applies level-based walk/swim speed to the live character (server authority + client mirror).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+
+local CharacterMovementSpeed = {}
+
+function CharacterMovementSpeed.getLevel(data: any): number
+	if data and type(data.Level) == "number" then
+		return math.max(1, math.floor(data.Level))
+	end
+	return 1
+end
+
+function CharacterMovementSpeed.getSpeedForLevel(player: Player, level: number): number
+	local base = SpeedConfigs.GetSpeedFromLevel(level)
+	return LevelDesignTuning.resolveSwimSpeed(player, base)
+end
+
+function CharacterMovementSpeed.getSpeedForData(player: Player, data: any): number
+	return CharacterMovementSpeed.getSpeedForLevel(player, CharacterMovementSpeed.getLevel(data))
+end
+
+function CharacterMovementSpeed.applyToCharacter(player: Player, character: Model, data: any?): boolean
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return false
+	end
+
+	local speed = CharacterMovementSpeed.getSpeedForData(player, data)
+	humanoid.WalkSpeed = speed
+	character:SetAttribute(SpeedConfigs.SwimSpeedAttribute, speed)
+	return true
+end
+
+function CharacterMovementSpeed.applyToPlayer(player: Player, data: any?): boolean
+	local character = player.Character
+	if not character then
+		return false
+	end
+	return CharacterMovementSpeed.applyToCharacter(player, character, data)
+end
+
+return CharacterMovementSpeed

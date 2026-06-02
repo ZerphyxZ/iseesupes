@@ -9,11 +9,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
+local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 
 local ZONE_ATTR = LevelDesignConfigs.ZoneMarkerAttribute
 local LEGACY_ZONE_ATTR = LevelDesignConfigs.LegacyZoneMarkerAttribute
 local ZONE_TAGS = { LevelDesignConfigs.ZoneCollectionTag, LevelDesignConfigs.LegacyZoneCollectionTag }
+
+local DataService: any = nil
 
 local LevelDesignService = Knit.CreateService({
 	Name = "LevelDesignService",
@@ -61,6 +64,9 @@ local function onZoneTouched(part: BasePart, hit: BasePart)
 	perPlayer[part] = now
 
 	LevelDesignTuning.copyDesignAttributes(part, player)
+	if DataService then
+		CharacterMovementSpeed.applyToPlayer(player, DataService:GetData(player))
+	end
 	if RunService:IsStudio() then
 		print("[iseesupes] Zone tuning applied:", LevelDesignTuning.formatActiveTuning(player))
 	end
@@ -90,11 +96,16 @@ function LevelDesignService.Client:SyncAttribute(player: Player, attributeName: 
 		return
 	end
 	if LevelDesignTuning.setTuningAttribute(player, attributeName, value) then
+		if DataService then
+			CharacterMovementSpeed.applyToPlayer(player, DataService:GetData(player))
+		end
 		print("[iseesupes] Tuning synced →", attributeName, "=", value, "|", LevelDesignTuning.formatActiveTuning(player))
 	end
 end
 
 function LevelDesignService:KnitStart()
+	DataService = Knit.GetService("DataService")
+
 	local function onPlayer(player: Player)
 		LevelDesignTuning.applyDefaults(player)
 		LevelDesignTuning.printStudioGuide(player)

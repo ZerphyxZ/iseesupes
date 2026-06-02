@@ -8,6 +8,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
 local StepBonusParser = require(ReplicatedStorage.Shared.Utils.StepBonusParser)
 local UpgradeWinsConfigs = require(ReplicatedStorage.Shared.Configs.UpgradeWinsConfigs)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 
@@ -167,7 +168,8 @@ end
 
 local function getShowcaseTemplate(avatarId: string): Model?
 	if not showcaseFolder then
-		showcaseFolder = Workspace:FindFirstChild(UpgradeWinsConfigs.ShowcaseFolderName) :: Folder?
+		local found = MapWorld.findChildInMap(UpgradeWinsConfigs.ShowcaseFolderName)
+		showcaseFolder = if found and found:IsA("Folder") then found :: Folder else nil
 	end
 	if not showcaseFolder then
 		return nil
@@ -442,10 +444,11 @@ local function stampShowcaseRigIds(folder: Folder)
 end
 
 local function initUpgradeWins()
-	showcaseFolder = Workspace:FindFirstChild(UpgradeWinsConfigs.ShowcaseFolderName) :: Folder?
+	local showcaseInst = MapWorld.findChildInMap(UpgradeWinsConfigs.ShowcaseFolderName)
+	showcaseFolder = if showcaseInst and showcaseInst:IsA("Folder") then showcaseInst :: Folder else nil
 	if not showcaseFolder then
 		warn(
-			"[iseesupes] UpgradeWinsService: Workspace.",
+			"[iseesupes] UpgradeWinsService: Workspace.Map.",
 			UpgradeWinsConfigs.ShowcaseFolderName,
 			"not found."
 		)
@@ -453,10 +456,10 @@ local function initUpgradeWins()
 		stampShowcaseRigIds(showcaseFolder)
 	end
 
-	local folder = Workspace:FindFirstChild(UpgradeWinsConfigs.FolderName)
+	local folder = MapWorld.findChildInMap(UpgradeWinsConfigs.FolderName)
 	if not folder or not folder:IsA("Folder") then
 		warn(
-			"[iseesupes] UpgradeWinsService: Workspace.",
+			"[iseesupes] UpgradeWinsService: Workspace.Map.",
 			UpgradeWinsConfigs.FolderName,
 			"not found."
 		)

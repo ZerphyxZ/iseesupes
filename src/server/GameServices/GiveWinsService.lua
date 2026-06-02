@@ -6,6 +6,7 @@ local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 
 local GiveWinsService = Knit.CreateService({
@@ -169,10 +170,10 @@ local function scanGiveWinsFolder(folder: Folder)
 end
 
 local function initGiveWins()
-	local folder = Workspace:FindFirstChild(GiveWinsConfigs.FolderName)
+	local folder = MapWorld.findChildInMap(GiveWinsConfigs.FolderName)
 	if not folder or not folder:IsA("Folder") then
 		warn(
-			"[iseesupes] GiveWinsService: Workspace.",
+			"[iseesupes] GiveWinsService: Workspace.Map.",
 			GiveWinsConfigs.FolderName,
 			"not found. Add stage-end Button models (Button1, …) with Touch + WinAmount."
 		)

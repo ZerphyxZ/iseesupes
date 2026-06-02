@@ -1,8 +1,8 @@
 --!strict
 
 -- Global ordered-datastore leaderboards on Workspace models.
--- Expects: Workspace/Leaderboards/{SpeedLeaderboard,WinsLeaderboard,RebirthLeaderboard}
---   each with a SurfaceGui → ScrollingFrame → Template (Frame)
+-- Expects: Workspace/Map/Leaderboards/{Speed,Wins,Rebirth,Time}Leaderboard
+--   each with Leaderboard → Board → SurfaceGui → ScrollingFrame → Template or Entry_1
 -- Fallback template: ReplicatedStorage/Templates/LeaderboardEntry
 
 local DataStoreService = game:GetService("DataStoreService")
@@ -21,6 +21,7 @@ local LeaderboardService = Knit.CreateService({
 })
 
 local orderedDataStores: { [string]: OrderedDataStore } = {}
+local sessionStartAt: { [Player]: number } = {}
 
 local function getODS(storeName: string): OrderedDataStore?
 	if orderedDataStores[storeName] then
@@ -48,10 +49,62 @@ local function waitPath(root: Instance, segments: { string }, timeout: number?):
 	return current
 end
 
-local function resolveEntryTemplate(scrollingFrame: ScrollingFrame): GuiObject?
+local function getLeaderboardsFolder(): Folder?
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+
+	local bestFolder: Folder? = nil
+	local bestCount = -1
+
+	for _, child in map:GetChildren() do
+		if not child:IsA("Folder") or child.Name ~= "Leaderboards" then
+			continue
+		end
+
+		local boardCount = 0
+		for _, config in LeaderboardConfigs.Boards do
+			if child:FindFirstChild(config.ModelName) then
+				boardCount += 1
+			end
+		end
+
+		if boardCount > bestCount then
+			bestCount = boardCount
+			bestFolder = child
+		end
+	end
+
+	return bestFolder
+end
+
+local function findStudioEntryRow(scrollingFrame: ScrollingFrame): GuiObject?
+	local entry1 = scrollingFrame:FindFirstChild("Entry_1")
+	if entry1 and entry1:IsA("GuiObject") then
+		return entry1
+	end
+	for _, child in scrollingFrame:GetChildren() do
+		if child:IsA("GuiObject") and string.match(child.Name, "^Entry_") then
+			return child
+		end
+	end
+	return nil
+end
+
+local function ensureEntryTemplate(scrollingFrame: ScrollingFrame): GuiObject?
 	local template = scrollingFrame:FindFirstChild("Template")
 	if template and template:IsA("GuiObject") then
 		return template
+	end
+
+	local studioRow = findStudioEntryRow(scrollingFrame)
+	if studioRow then
+		local clone = studioRow:Clone()
+		clone.Name = "Template"
+		clone.Visible = false
+		clone.Parent = scrollingFrame
+		return clone
 	end
 
 	local fromStorage = waitPath(ReplicatedStorage, LeaderboardConfigs.TemplatePath, 2)
@@ -65,16 +118,137 @@ end
 local function clearDisplay(scrollingFrame: ScrollingFrame)
 	local template = scrollingFrame:FindFirstChild("Template")
 	for _, child in scrollingFrame:GetChildren() do
-		if not child:IsA("UILayout") and child ~= template then
-			child:Destroy()
+		if child:IsA("UILayout") then
+			continue
 		end
+		if child == template then
+			continue
+		end
+		child:Destroy()
 	end
 end
 
+-- Studio layout: {Model}Leaderboard → Leaderboard → Board (Part) → SurfaceGui → ScrollingFrame.
+-- A sibling [UnionOperation] Board also has SurfaceGui (title only); FindFirstChildWhichIsA("SurfaceGui")
+-- often picks that one first, so ScrollingFrame lookup fails.
+local function resolveLeaderboardScrollingFrame(leaderboardModel: Instance): ScrollingFrame?
+	local inner = leaderboardModel:FindFirstChild("Leaderboard")
+	if inner then
+		local board = inner:FindFirstChild("Board")
+		if board then
+			local surfaceGui = board:FindFirstChild("SurfaceGui")
+			if surfaceGui then
+				local scrollingFrame = surfaceGui:FindFirstChild("ScrollingFrame")
+				if scrollingFrame and scrollingFrame:IsA("ScrollingFrame") then
+					return scrollingFrame
+				end
+			end
+		end
+	end
+
+	for _, descendant in leaderboardModel:GetDescendants() do
+		if descendant:IsA("ScrollingFrame") then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
+local function trackSessionStart(player: Player)
+	sessionStartAt[player] = os.clock()
+end
+
+local function flushPlayTimeToProfile(player: Player)
+	local profile = DataService:GetProfile(player)
+	if not profile or not profile.Data then
+		return
+	end
+
+	local started = sessionStartAt[player]
+	if not started then
+		return
+	end
+
+	local elapsed = math.floor(os.clock() - started)
+	if elapsed <= 0 then
+		return
+	end
+
+	local data = profile.Data
+	if type(data.TotalPlayTime) ~= "number" then
+		data.TotalPlayTime = 0
+	end
+	data.TotalPlayTime += elapsed
+	sessionStartAt[player] = os.clock()
+end
+
+local function renderEntry(
+	entryTemplate: GuiObject,
+	scrollingFrame: ScrollingFrame,
+	rank: number,
+	userId: number,
+	playerName: string,
+	scoreText: string
+)
+	local newEntry = entryTemplate:Clone()
+	newEntry.Name = "Entry_" .. tostring(rank)
+
+	local rankLabel = newEntry:FindFirstChild("RankLabel")
+	local nameLabel = newEntry:FindFirstChild("NameLabel")
+	local scoreLabel = newEntry:FindFirstChild("ScoreLabel")
+	local imageLabel = newEntry:FindFirstChild("ImageLabel")
+
+	if rankLabel and rankLabel:IsA("TextLabel") then
+		rankLabel.Text = "#" .. tostring(rank)
+	end
+	if nameLabel and nameLabel:IsA("TextLabel") then
+		nameLabel.Text = playerName
+	end
+	if scoreLabel and scoreLabel:IsA("TextLabel") then
+		scoreLabel.Text = scoreText
+	end
+	if imageLabel and imageLabel:IsA("ImageLabel") then
+		imageLabel.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
+	end
+
+	newEntry.Parent = scrollingFrame
+	newEntry.Visible = true
+end
+
+local function getServerFallbackRows(config: LeaderboardConfigs.LeaderboardConfig): { { userId: number, name: string, score: number } }
+	local rows: { { userId: number, name: string, score: number } } = {}
+
+	for _, player in Players:GetPlayers() do
+		local profile = DataService:GetProfile(player)
+		if not profile or not profile.Data then
+			continue
+		end
+		local score = config.GetScore(profile.Data)
+		if type(score) ~= "number" then
+			continue
+		end
+		table.insert(rows, {
+			userId = player.UserId,
+			name = player.Name,
+			score = math.floor(score),
+		})
+	end
+
+	table.sort(rows, function(a, b)
+		return a.score > b.score
+	end)
+
+	return rows
+end
+
 function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.LeaderboardConfig)
-	local folder = Workspace:FindFirstChild(LeaderboardConfigs.FolderName)
+	local folder = getLeaderboardsFolder()
 	if not folder then
-		warn("[iseesupes] LeaderboardService: missing Workspace/" .. LeaderboardConfigs.FolderName)
+		warn(
+			"[iseesupes] LeaderboardService: missing Workspace."
+				.. table.concat(LeaderboardConfigs.RootPath, ".")
+		)
 		return
 	end
 
@@ -84,31 +258,20 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 		return
 	end
 
-	local surfaceGui = leaderboardModel:FindFirstChildWhichIsA("SurfaceGui", true)
-	if not surfaceGui then
-		warn("[iseesupes] LeaderboardService: missing SurfaceGui in", config.ModelName)
-		return
-	end
-
-	local scrollingFrame = surfaceGui:FindFirstChildWhichIsA("ScrollingFrame", true)
+	local scrollingFrame = resolveLeaderboardScrollingFrame(leaderboardModel)
 	if not scrollingFrame then
 		warn("[iseesupes] LeaderboardService: missing ScrollingFrame in", config.ModelName)
 		return
 	end
 
-	local entryTemplate = resolveEntryTemplate(scrollingFrame)
+	local entryTemplate = ensureEntryTemplate(scrollingFrame)
 	if not entryTemplate then
 		warn(
-			"[iseesupes] LeaderboardService: missing entry template (ScrollingFrame/Template or ReplicatedStorage."
+			"[iseesupes] LeaderboardService: missing entry template (ScrollingFrame/Template, Entry_1, or ReplicatedStorage."
 				.. table.concat(LeaderboardConfigs.TemplatePath, ".")
 				.. ")"
 		)
 		return
-	end
-
-	clearDisplay(scrollingFrame)
-	if entryTemplate.Parent == scrollingFrame then
-		entryTemplate.Visible = false
 	end
 
 	local orderedDataStore = getODS(config.StoreName)
@@ -126,7 +289,24 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 	end
 
 	local dataPage = pages:GetCurrentPage()
+
+	clearDisplay(scrollingFrame)
+	if entryTemplate.Parent == scrollingFrame then
+		entryTemplate.Visible = false
+	end
+
 	if #dataPage == 0 then
+		local fallbackRows = getServerFallbackRows(config)
+		for rank, row in ipairs(fallbackRows) do
+			renderEntry(
+				entryTemplate,
+				scrollingFrame,
+				rank,
+				row.userId,
+				row.name,
+				config.ScoreFormatter(row.score)
+			)
+		end
 		return
 	end
 
@@ -149,29 +329,7 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 				return
 			end
 
-			local newEntry = entryTemplate:Clone()
-			newEntry.Name = "Entry_" .. tostring(rank)
-
-			local rankLabel = newEntry:FindFirstChild("RankLabel")
-			local nameLabel = newEntry:FindFirstChild("NameLabel")
-			local scoreLabel = newEntry:FindFirstChild("ScoreLabel")
-			local imageLabel = newEntry:FindFirstChild("ImageLabel")
-
-			if rankLabel and rankLabel:IsA("TextLabel") then
-				rankLabel.Text = "#" .. tostring(rank)
-			end
-			if nameLabel and nameLabel:IsA("TextLabel") then
-				nameLabel.Text = playerName
-			end
-			if scoreLabel and scoreLabel:IsA("TextLabel") then
-				scoreLabel.Text = config.ScoreFormatter(score)
-			end
-			if imageLabel and imageLabel:IsA("ImageLabel") then
-				imageLabel.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
-			end
-
-			newEntry.Parent = scrollingFrame
-			newEntry.Visible = true
+			renderEntry(entryTemplate, scrollingFrame, rank, userId, playerName, config.ScoreFormatter(score))
 		end)
 	end
 end
@@ -183,6 +341,8 @@ function LeaderboardService:RefreshAllDisplays()
 end
 
 function LeaderboardService:SavePlayer(player: Player)
+	flushPlayTimeToProfile(player)
+
 	local profile = DataService:GetProfile(player)
 	if not profile or not profile.Data then
 		return
@@ -193,11 +353,11 @@ function LeaderboardService:SavePlayer(player: Player)
 
 	for _, config in LeaderboardConfigs.Boards do
 		local score = config.GetScore(data)
-		if score and score > 0 then
+		if type(score) == "number" then
 			local ods = getODS(config.StoreName)
 			if ods then
 				pcall(function()
-					ods:SetAsync(userKey, score)
+					ods:SetAsync(userKey, math.max(0, math.floor(score)))
 				end)
 			end
 		end
@@ -213,7 +373,35 @@ end
 function LeaderboardService:KnitStart()
 	DataService = Knit.GetService("DataService")
 
+	local function onPlayerAdded(player: Player)
+		trackSessionStart(player)
+		task.spawn(function()
+			local deadline = os.clock() + 30
+			while os.clock() < deadline do
+				local profile = DataService:GetProfile(player)
+				if profile and profile.Data then
+					self:SavePlayer(player)
+					self:RefreshAllDisplays()
+					break
+				end
+				task.wait(1)
+			end
+		end)
+	end
+
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	for _, player in Players:GetPlayers() do
+		onPlayerAdded(player)
+	end
+
+	Players.PlayerRemoving:Connect(function(player)
+		self:SavePlayer(player)
+		sessionStartAt[player] = nil
+	end)
+
 	task.delay(5, function()
+		self:SaveAllPlayers()
+		task.wait(1)
 		self:RefreshAllDisplays()
 	end)
 
@@ -229,10 +417,6 @@ function LeaderboardService:KnitStart()
 			task.wait(LeaderboardConfigs.SaveInterval)
 			self:SaveAllPlayers()
 		end
-	end)
-
-	Players.PlayerRemoving:Connect(function(player)
-		self:SavePlayer(player)
 	end)
 
 	game:BindToClose(function()

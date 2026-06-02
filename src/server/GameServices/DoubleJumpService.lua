@@ -643,30 +643,21 @@ function DoubleJumpService:_onThrustEmpty(session: AbilitySession)
 	destroyFlightMovers(session)
 	session.humanoid.PlatformStand = false
 
-	if not clientOwnsFlightPhysics() then
+	local phase = session.phase
+	if
+		phase ~= PHASE.CancelFall
+		and phase ~= PHASE.CancelLanding
+		and phase ~= PHASE.LeapDown
+		and phase ~= PHASE.DownSupes
+	then
+		self:_transitionToCancelFall(session)
+	elseif not clientOwnsFlightPhysics() then
 		local fallSpeed = getCancelFallSpeed(session.tuning)
 		applyVelocityOnly(session.root, Vector3.new(0, -fallSpeed, 0))
 	end
-end
 
-function DoubleJumpService:_tickThrustDepleted(session: AbilitySession, tuning: DjTuning, now: number)
-	local humanoid = session.humanoid
-	local root = session.root
-
-	if not isGrounded(humanoid) then
-		local fallSpeed = getCancelFallSpeed(tuning)
-		applyVelocityOnly(root, Vector3.new(0, -fallSpeed, 0))
-		return
-	end
-
-	local emptyAt = session.thrustEmptyAt or now
-	if now - emptyAt >= ThrustConfigs.EmptyDescentGrace then
-		local player = session.player
-		self:_endAbility(player)
-		if DataService then
-			DataService:TeleportToLobby(player)
-		end
-	end
+	-- Let normal CancelFall / LeapDown landing ticks finish the ability (no lobby teleport).
+	session.thrustDepleted = false
 end
 
 function DoubleJumpService:_setPhase(session: AbilitySession, phase: string)
@@ -938,16 +929,10 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		return
 	end
 
-	if session.thrustDepleted then
-		self:_tickThrustDepleted(session, tuning, now)
-		return
-	end
-
 	if phaseConsumesThrust(phase) and not onWalkableGround and DataService then
 		local drain = ThrustConfigs.DrainPerSecond * dt
 		if not DataService:TryConsumeThrust(session.player, drain) then
 			self:_onThrustEmpty(session)
-			self:_tickThrustDepleted(session, tuning, now)
 			return
 		end
 	end

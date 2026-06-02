@@ -1,6 +1,9 @@
 --!strict
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+
+local HudConfigs = require(ReplicatedStorage.Shared.Configs.HudConfigs)
 
 local HudAnimations = {}
 
@@ -9,6 +12,14 @@ local SIZE_KEY = "_HudBaseSize"
 
 local baseSizes: { [GuiObject]: UDim2 } = {}
 local activeFrameTweens: { [GuiObject]: Tween } = {}
+local activeScaleTweens: { [GuiObject]: Tween } = {}
+local activeCountUpConns: { [TextLabel]: RBXScriptConnection } = {}
+local buttonHovered: { [GuiButton]: boolean } = {}
+local buttonPressed: { [GuiButton]: boolean } = {}
+
+local function getButtonFxCfg()
+	return HudConfigs.ButtonEffects
+end
 
 local function getOrCreateUIScale(gui: GuiObject): UIScale
 	local existing = gui:FindFirstChildOfClass("UIScale")
@@ -49,17 +60,131 @@ function HudAnimations.pulse(gui: GuiObject, peakScale: number?, duration: numbe
 	end)
 end
 
-function HudAnimations.buttonPress(button: GuiButton, onComplete: (() -> ())?)
+local function cancelScaleTween(gui: GuiObject)
+	local tween = activeScaleTweens[gui]
+	if tween then
+		tween:Cancel()
+		activeScaleTweens[gui] = nil
+	end
+end
+
+function HudAnimations.setButtonScale(button: GuiButton, targetScale: number, duration: number?, easingStyle: Enum.EasingStyle?)
+	if not button.Parent then
+		return
+	end
 	HudAnimations.rememberBaseScale(button)
 	local uiScale = getOrCreateUIScale(button)
-	local base = button:GetAttribute(SCALE_KEY) :: number? or 1
+	cancelScaleTween(button)
+	local dur = duration or 0.12
+	local tween = TweenService:Create(
+		uiScale,
+		TweenInfo.new(dur, easingStyle or Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Scale = targetScale }
+	)
+	activeScaleTweens[button] = tween
+	tween:Play()
+	tween.Completed:Connect(function()
+		if activeScaleTweens[button] == tween then
+			activeScaleTweens[button] = nil
+		end
+	end)
+end
 
-	local press = TweenService:Create(uiScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Scale = base * 0.92,
-	})
-	local release = TweenService:Create(uiScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-		Scale = base,
-	})
+local function getBaseScale(button: GuiButton): number
+	return button:GetAttribute(SCALE_KEY) :: number? or 1
+end
+
+function HudAnimations.buttonHoverIn(button: GuiButton)
+	local cfg = getButtonFxCfg()
+	HudAnimations.setButtonScale(button, getBaseScale(button) * cfg.HoverScale, cfg.HoverDuration)
+end
+
+function HudAnimations.buttonHoverOut(button: GuiButton)
+	local cfg = getButtonFxCfg()
+	if buttonPressed[button] then
+		return
+	end
+	HudAnimations.setButtonScale(button, getBaseScale(button), cfg.HoverDuration)
+end
+
+function HudAnimations.buttonPressDown(button: GuiButton)
+	local cfg = getButtonFxCfg()
+	buttonPressed[button] = true
+	HudAnimations.setButtonScale(button, getBaseScale(button) * cfg.PressScale, cfg.PressDuration)
+end
+
+function HudAnimations.buttonPressUp(button: GuiButton)
+	local cfg = getButtonFxCfg()
+	buttonPressed[button] = nil
+	if buttonHovered[button] then
+		HudAnimations.setButtonScale(
+			button,
+			getBaseScale(button) * cfg.HoverScale,
+			cfg.ReleaseDuration,
+			Enum.EasingStyle.Back
+		)
+	else
+		HudAnimations.setButtonScale(button, getBaseScale(button), cfg.ReleaseDuration, Enum.EasingStyle.Back)
+	end
+end
+
+function HudAnimations.bindButtonEffects(button: GuiButton)
+	local cfg = getButtonFxCfg()
+	if button:GetAttribute(cfg.BoundAttribute) == true then
+		return
+	end
+	if not button.Active then
+		return
+	end
+
+	button:SetAttribute(cfg.BoundAttribute, true)
+	HudAnimations.rememberBaseScale(button)
+
+	button.MouseEnter:Connect(function()
+		if not button.Active then
+			return
+		end
+		buttonHovered[button] = true
+		if not buttonPressed[button] then
+			HudAnimations.buttonHoverIn(button)
+		end
+	end)
+
+	button.MouseLeave:Connect(function()
+		buttonHovered[button] = nil
+		buttonPressed[button] = nil
+		HudAnimations.buttonHoverOut(button)
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		if not button.Active then
+			return
+		end
+		HudAnimations.buttonPressDown(button)
+	end)
+
+	button.MouseButton1Up:Connect(function()
+		HudAnimations.buttonPressUp(button)
+	end)
+end
+
+function HudAnimations.buttonPress(button: GuiButton, onComplete: (() -> ())?)
+	local cfg = getButtonFxCfg()
+	HudAnimations.rememberBaseScale(button)
+	local uiScale = getOrCreateUIScale(button)
+	local base = getBaseScale(button)
+
+	cancelScaleTween(button)
+	local press = TweenService:Create(
+		uiScale,
+		TweenInfo.new(cfg.PressDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Scale = base * cfg.PressScale }
+	)
+	local release = TweenService:Create(
+		uiScale,
+		TweenInfo.new(cfg.ReleaseDuration, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = base }
+	)
 
 	press:Play()
 	press.Completed:Connect(function()
@@ -101,6 +226,12 @@ function HudAnimations.countUpText(
 	formatter: (number) -> string,
 	duration: number?
 )
+	local prior = activeCountUpConns[label]
+	if prior then
+		prior:Disconnect()
+		activeCountUpConns[label] = nil
+	end
+
 	if fromValue == toValue then
 		label.Text = formatter(toValue)
 		return
@@ -119,8 +250,12 @@ function HudAnimations.countUpText(
 			if conn then
 				conn:Disconnect()
 			end
+			if activeCountUpConns[label] == conn then
+				activeCountUpConns[label] = nil
+			end
 		end
 	end)
+	activeCountUpConns[label] = conn
 end
 
 function HudAnimations.rememberBaseSize(gui: GuiObject)

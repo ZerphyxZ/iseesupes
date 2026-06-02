@@ -3,10 +3,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
+local TimeFormat = require(ReplicatedStorage.Shared.Utils.TimeFormat)
 
 export type LeaderboardConfig = {
 	StoreName: string,
 	ModelName: string,
+	ProfileKey: string,
 	GetScore: (data: any) -> number?,
 	ScoreFormatter: (score: number) -> string,
 }
@@ -16,7 +18,7 @@ local LeaderboardConfigs = {}
 LeaderboardConfigs.RefreshInterval = 60
 LeaderboardConfigs.SaveInterval = 60
 LeaderboardConfigs.TopN = 50
-LeaderboardConfigs.FolderName = "Leaderboards"
+LeaderboardConfigs.RootPath = { "Map", "Leaderboards" }
 LeaderboardConfigs.EntryTemplateName = "LeaderboardEntry"
 LeaderboardConfigs.TemplatePath = { "Templates", "LeaderboardEntry" }
 
@@ -35,6 +37,7 @@ LeaderboardConfigs.Boards = {
 	Speed = {
 		StoreName = "GlobalSpeed_v1",
 		ModelName = "SpeedLeaderboard",
+		ProfileKey = "Speed",
 		GetScore = function(data)
 			return profileInt(data, "Speed")
 		end,
@@ -45,6 +48,7 @@ LeaderboardConfigs.Boards = {
 	Wins = {
 		StoreName = "GlobalWins_v1",
 		ModelName = "WinsLeaderboard",
+		ProfileKey = "Wins",
 		GetScore = function(data)
 			return profileInt(data, "Wins")
 		end,
@@ -55,11 +59,23 @@ LeaderboardConfigs.Boards = {
 	Rebirths = {
 		StoreName = "GlobalRebirths_v1",
 		ModelName = "RebirthLeaderboard",
+		ProfileKey = "Rebirths",
 		GetScore = function(data)
 			return profileInt(data, "Rebirths")
 		end,
 		ScoreFormatter = function(score)
 			return NumberFormatter.Format(score) .. " Rebirths"
+		end,
+	} :: LeaderboardConfig,
+	Time = {
+		StoreName = "GlobalPlayTime_v1",
+		ModelName = "TimeLeaderboard",
+		ProfileKey = "TotalPlayTime",
+		GetScore = function(data)
+			return profileInt(data, "TotalPlayTime")
+		end,
+		ScoreFormatter = function(score)
+			return TimeFormat.formatPlayTime(score)
 		end,
 	} :: LeaderboardConfig,
 }

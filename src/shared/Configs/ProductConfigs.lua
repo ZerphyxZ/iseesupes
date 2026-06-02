@@ -70,7 +70,7 @@ ProductConfigs.SpeedProducts = {
 
 -- Right HUD SpeedPeak tier gamepasses (first unowned tier is shown)
 ProductConfigs.SpeedPeakTiers = {
-	{ Id = 0, Key = "SpeedPeak1", Level = 2 } :: SpeedPeakTier,
+	{ Id = 3602192012, Key = "SpeedPeak1", Level = 2 } :: SpeedPeakTier,
 	{ Id = 0, Key = "SpeedPeak2", Level = 5 } :: SpeedPeakTier,
 } :: { SpeedPeakTier }
 

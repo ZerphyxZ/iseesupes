@@ -65,7 +65,8 @@ local function setupWinsHUD(hud: Instance, player: Player)
 
 	local function updateWinsText()
 		local wins = getWinsFromData(DataLib.GetData())
-		if wins == lastWins and winTextLabel.Text ~= "" then
+		local targetText = NumberFormatter.Format(wins)
+		if wins == lastWins and winTextLabel.Text == targetText then
 			return
 		end
 
@@ -75,13 +76,11 @@ local function setupWinsHUD(hud: Instance, player: Player)
 	end
 
 	moreButton.MouseButton1Click:Connect(function()
-		HudAnimations.buttonPress(moreButton, function()
-			local pass = ProductConfigs.GetGamepassByKey("DoubleWins")
-			if not pass or pass.Id == 0 then
-				return
-			end
-			MarketplaceService:PromptGamePassPurchase(player, pass.Id)
-		end)
+		local pass = ProductConfigs.GetGamepassByKey("DoubleWins")
+		if not pass or pass.Id == 0 then
+			return
+		end
+		MarketplaceService:PromptGamePassPurchase(player, pass.Id)
 	end)
 
 	DataLib.OnChanged(updateWinsText)
@@ -103,20 +102,16 @@ local function setupSpeedShopHUD(hud: Instance, player: Player)
 			continue
 		end
 
-		HudAnimations.rememberBaseScale(button)
-
 		local textLabel = button:FindFirstChild("Text") :: TextLabel?
 		if textLabel then
 			textLabel.Text = "+" .. NumberFormatter.Format(productInfo.Amount) .. " Speed"
 		end
 
 		button.MouseButton1Click:Connect(function()
-			HudAnimations.buttonPress(button, function()
-				if productInfo.Id == 0 then
-					return
-				end
-				MarketplaceService:PromptProductPurchase(player, productInfo.Id)
-			end)
+			if productInfo.Id == 0 then
+				return
+			end
+			MarketplaceService:PromptProductPurchase(player, productInfo.Id)
 		end)
 	end
 end
@@ -270,11 +265,9 @@ local function setupSpeedPeakHUD(hud: Instance, player: Player)
 	end
 
 	speedPeakButton.MouseButton1Click:Connect(function()
-		HudAnimations.buttonPress(speedPeakButton, function()
-			if currentTargetTier and currentTargetTier.Id ~= 0 then
-				MarketplaceService:PromptGamePassPurchase(player, currentTargetTier.Id)
-			end
-		end)
+		if currentTargetTier and currentTargetTier.Id ~= 0 then
+			MarketplaceService:PromptGamePassPurchase(player, currentTargetTier.Id)
+		end
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(buyer, passId, purchased)

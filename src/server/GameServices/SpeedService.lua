@@ -53,6 +53,7 @@ function SpeedService:AddSpeed(player: Player): boolean
 	DataService:Replicate(player)
 
 	if newLevel > oldLevel then
+		DataService:NotifyLeaderboards(player, { "Speed" })
 		SpeedService.Client.LevelUp:Fire(player, oldLevel, newLevel)
 	end
 

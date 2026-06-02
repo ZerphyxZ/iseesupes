@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local HumanoidLocomotion = require(ReplicatedStorage.Shared.Utils.HumanoidLocomotion)
 
 local Anim = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
@@ -45,6 +46,7 @@ type CharacterState = {
 	landingPlayed: boolean,
 	airTime: number,
 	hasLeftGround: boolean,
+	engineLocomotionActive: boolean,
 }
 
 local characterStates: { [Model]: CharacterState } = {}
@@ -132,6 +134,16 @@ local function getRootPart(character: Model): BasePart?
 	return character:FindFirstChild("HumanoidRootPart") :: BasePart?
 end
 
+local function setDefaultAnimateEnabled(character: Model, enabled: boolean)
+	if not Features.DisableDefaultAnimate then
+		return
+	end
+	local animate = character:FindFirstChild("Animate")
+	if animate and animate:IsA("LocalScript") then
+		animate.Disabled = not enabled
+	end
+end
+
 local function stopLocomotion(state: CharacterState)
 	pcall(function()
 		state.idleTrack:Stop(Loc.FadeTime)
@@ -209,6 +221,23 @@ local function playLocomotion(state: CharacterState, locomotion: "idle" | "run")
 	end
 
 	notifyLocomotion(state.character, locomotion)
+end
+
+local setEngineLocomotionActive: (state: CharacterState, active: boolean) -> ()
+
+setEngineLocomotionActive = function(state: CharacterState, active: boolean)
+	if state.engineLocomotionActive == active then
+		return
+	end
+
+	state.engineLocomotionActive = active
+	setDefaultAnimateEnabled(state.character, active)
+
+	if active then
+		stopLocomotion(state)
+	elseif state.mode == "locomotion" and Features.UseCustomLocomotion then
+		playLocomotion(state, if wantsRunLocomotion(state.humanoid) then "run" else "idle")
+	end
 end
 
 local enterLocomotion: (state: CharacterState) -> ()
@@ -382,6 +411,10 @@ local function tryCustomJump(character: Model)
 		return
 	end
 
+	if HumanoidLocomotion.usesEngineLocomotion(state.humanoid) then
+		return
+	end
+
 	local root = getRootPart(character)
 	if not root then
 		return
@@ -402,6 +435,11 @@ local function onJumpAction(_actionName: string, inputState: Enum.UserInputState
 
 	local character = player.Character
 	if not character then
+		return Enum.ContextActionResult.Pass
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid and HumanoidLocomotion.usesEngineLocomotion(humanoid) then
 		return Enum.ContextActionResult.Pass
 	end
 
@@ -564,6 +602,7 @@ function setupCharacter(character: Model): boolean
 		landingPlayed = false,
 		airTime = 0,
 		hasLeftGround = false,
+		engineLocomotionActive = false,
 	}
 	characterStates[character] = state
 
@@ -576,6 +615,19 @@ function setupCharacter(character: Model): boolean
 		state.stateChangedConn = humanoid.StateChanged:Connect(function(_old, new)
 			if abilityBlocking then
 				return
+			end
+
+			if new == Enum.HumanoidStateType.Climbing or new == Enum.HumanoidStateType.Swimming then
+				setEngineLocomotionActive(state, true)
+				HumanoidLocomotion.ensureClimbControl(humanoid)
+				return
+			end
+
+			if state.engineLocomotionActive
+				and new ~= Enum.HumanoidStateType.Climbing
+				and new ~= Enum.HumanoidStateType.Swimming
+			then
+				setEngineLocomotionActive(state, false)
 			end
 
 			if new == Enum.HumanoidStateType.Freefall then
@@ -607,6 +659,13 @@ function setupCharacter(character: Model): boolean
 		end
 
 		if abilityBlocking then
+			return
+		end
+
+		HumanoidLocomotion.ensureClimbControl(humanoid)
+		local engineLoco = HumanoidLocomotion.usesEngineLocomotion(humanoid)
+		setEngineLocomotionActive(state, engineLoco)
+		if engineLoco then
 			return
 		end
 

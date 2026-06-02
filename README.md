@@ -22,6 +22,28 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 1. **Game Settings → Security → Enable Studio Access to API Services** — required for DataStores and Marketplace testing.
 2. Create a place file in Studio (not committed) for world content.
 
+## Testing profiles & leaderboards (Studio)
+
+**Fresh profile store for everyone:** bump `DATA_VERSION` in [`DataService.lua`](src/server/GlobalServices/DataService.lua) (currently `iseesupes_v6`). That uses a new ProfileStore namespace; old saves stay under the previous version string.
+
+**Reset your player in-session** (profile + global leaderboard scores for your user id → 0, HUD refresh):
+
+1. Play in Studio with **API Services** enabled.
+2. Open the **Command Bar** (View → Command Bar). Run as **Server** (not Client):
+
+```lua
+local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
+Knit.OnStart():await()
+local DataService = Knit.GetService("DataService")
+local player = game:GetService("Players"):GetPlayers()[1] -- or GetPlayers() by name
+DataService:ResetProfileForStudioTest(player, true) -- true = wipe saved DataStore too
+```
+
+3. Check **Output** for `Studio profile reset for … → Speed=0 Level=1 Wins=0 …`.
+4. Earn speed / wins / rebirth, then confirm **HUD**, **leaderstats**, and **Map leaderboards** match (boards update within ~20s while playing, or immediately after wins/rebirth).
+
+`ResetProfileForStudioTest` does **not** run in published live servers.
+
 ## Project layout
 
 | Path | Role |
@@ -109,17 +131,28 @@ Edit `src/shared/Configs/ProductConfigs.lua`:
 ## HUD
 
 - **Client:** [`HUDController`](src/client/GameControllers/HUD/HUDController.lua) — wins display, speed shop, custom swim speed, speed peak tiers.
-- **Animations:** [`HudAnimations`](src/client/Modules/HudAnimations.lua) — count-up wins, button press, pulse, slide-in, textbox highlight.
+- **Animations:** [`HudAnimations`](src/client/Modules/HudAnimations.lua) — count-up wins, pulse, slide-in, textbox highlight.
+- **Button FX:** [`UIButtonEffectsController`](src/client/GameControllers/HUD/UIButtonEffectsController.lua) — hover scale + click press on all `GuiButton` under `PlayerGui.GUI` (dynamic trail rows included). Tune in [`HudConfigs.ButtonEffects`](src/shared/Configs/HudConfigs.lua). Opt out: set attribute `HudSkipButtonFx` on a button. `HUD/Right/SupesMobile` is excluded (uses its own press on the flight button).
 - **Config:** [`SpeedConfigs`](src/shared/Configs/SpeedConfigs.lua) (swim formula), [`ProductConfigs`](src/shared/Configs/ProductConfigs.lua) (`SpeedProducts`, `SpeedPeakTiers`, `DoubleWins` gamepass).
 - **Data:** reads **`DataLib`**; server mirrors `Level` / `Wins` / `Rebirths` to **`leaderstats`** via [`LeaderstatsSync`](src/server/Modules/LeaderstatsSync.lua).
 - **Swim:** sets `character` attribute `SwimSpeed` (see `SpeedConfigs.SwimSpeedAttribute`) for your swim module.
 - **Studio UI:** `HUD/Left/Wins`, `HUD/Bottom/Speed/Product1…`, `HUD/Right/CustomSpeed`, `HUD/Right/SpeedPeark`.
 
+## FriendStand (invite friends)
+
+- **Studio:** `Workspace → Map → FriendStand` (Model) with parts **`CharacterSpawn`** (display rig anchor) and **`Hitbox`** (`CanTouch = true`). Billboard text is optional in Studio (“Invite Any 10 Friends!” / “+700 Speed”).
+- **Config:** [`FriendStandConfigs.lua`](src/shared/Configs/FriendStandConfigs.lua) — max **10** referred friends, **+700 Speed** each, **3s** touch debounce, **6s** friend carousel (`DisplayCycleSeconds`), friend list re-fetch every **300s**. Run showcase uses `ReplicatedStorage.SupesAnimations.RunAnimation`.
+- **Server:** [`FriendStandService`](src/server/GameServices/FriendStandService.lua) — `GetFriendsAsync` for the client showcase; when a new player joins with `Player:GetJoinData().ReferredByPlayerId` set to someone **in the server**, that referrer gets speed once per unique friend (`FriendInviteRewards` in profile).
+- **Client:** [`FriendStandController`](src/client/GameControllers/FriendStand/FriendStandController.lua) — local-only friend models at `CharacterSpawn` with looped **run** animation; rotates to another random friend every **6s**; server touch on **`Hitbox` / `Stand` / `CharacterSpawn`** opens the invite prompt for the **currently displayed** friend.
+- **Profile:** `FriendInviteRewards` map in [`ProfileTemplate.lua`](src/shared/Utils/ProfileTemplate.lua).
+- **Test (2 accounts):** Player A touches Hitbox → invites B → B joins from the invite link while A is in the server → A gets +700 Speed toast and HUD/board update. Rewards do **not** apply if the referrer left before the friend joined.
+
 ## Leaderboards
 
-- **Config:** [`LeaderboardConfigs.lua`](src/shared/Configs/LeaderboardConfigs.lua) — Speed (from rebirth speed multiplier), Wins, Rebirths; store names and model names match your Studio boards.
-- **Server:** [`LeaderboardService`](src/server/GameServices/LeaderboardService.lua) — refreshes displays every 60s, saves scores from `DataService` profiles every 60s, on leave, and on shutdown.
-- **Studio:** `Workspace → Leaderboards → SpeedLeaderboard | WinsLeaderboard | RebirthLeaderboard`, each with `SurfaceGui → ScrollingFrame → Template`. Optional row template: `ReplicatedStorage → Templates → LeaderboardEntry`.
+- **Config:** [`LeaderboardConfigs.lua`](src/shared/Configs/LeaderboardConfigs.lua) — Speed, Wins, Rebirths, Time (total play time); Top 50 global per board.
+- **Server:** [`LeaderboardService`](src/server/GameServices/LeaderboardService.lua) — global boards read **OrderedDataStores**; **HUD / `DataLib` / `leaderstats` read the profile**. On first join per `DATA_VERSION`, [`DataService`](src/server/GlobalServices/DataService.lua) restores any higher global score into the profile (one-time). Profile scores are pushed to ODS on join, after wins/rebirth changes, on a debounced timer while stats change, and every 60s / on leave. Displays refresh every 60s plus after those pushes.
+- **Studio:** `Workspace → Map → Leaderboards → SpeedLeaderboard | WinsLeaderboard | RebirthLeaderboard | TimeLeaderboard`, each with `Leaderboard → Board → SurfaceGui → ScrollingFrame` and row frames (`Entry_1` … or hidden `Template`). Row labels: `RankLabel`, `NameLabel`, `ScoreLabel`. Optional fallback: `ReplicatedStorage → Templates → LeaderboardEntry`.
+- **Profile:** `TotalPlayTime` (seconds) in [`ProfileTemplate.lua`](src/shared/Utils/ProfileTemplate.lua); displayed via [`TimeFormat.formatPlayTime`](src/shared/Utils/TimeFormat.lua).
 - **Enable Studio API access** for DataStores (Game Settings → Security).
 
 ## Rebirth

@@ -78,9 +78,7 @@ function FrameNavigator.new(gui: Instance, hud: Instance): FrameNavigator
 			local closeBtn = findCloseButton(child)
 			if closeBtn then
 				closeBtn.MouseButton1Click:Connect(function()
-					HudAnimations.buttonPress(closeBtn, function()
-						self:Close()
-					end)
+					self:Close()
 				end)
 			end
 		end
@@ -104,13 +102,9 @@ function FrameNavigator.new(gui: Instance, hud: Instance): FrameNavigator
 			continue
 		end
 
-		HudAnimations.rememberBaseScale(button)
-
 		local frameName = link.FrameName
 		button.MouseButton1Click:Connect(function()
-			HudAnimations.buttonPress(button, function()
-				self:Toggle(frameName)
-			end)
+			self:Toggle(frameName)
 		end)
 	end
 

@@ -8,6 +8,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local HumanoidLocomotion = require(ReplicatedStorage.Shared.Utils.HumanoidLocomotion)
+local SupermanLaunchFeedback = require(script.Parent.Parent.Parent.Modules.SupermanLaunchFeedback)
 
 local AnimRoot = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
@@ -125,6 +127,18 @@ local function applyLongJump(character: Model): boolean
 		return false
 	end
 
+	if LjCfg.UseLaunchFeedback ~= false then
+		local fallbacks = LjCfg.LaunchSoundFallbacks
+		local soundNames: { string } = if type(fallbacks) == "table" and #fallbacks > 0
+			then fallbacks
+			else { LjCfg.LaunchSound or "QuickWhoosh", "Woosh" }
+		SupermanLaunchFeedback.playLaunchBurst(character, {
+			vfxTier = LjCfg.LaunchVfxTier or "LongJumpLaunch",
+			soundNames = soundNames,
+			soundFolders = LjCfg.LaunchSoundFolders,
+		})
+	end
+
 	local forward = flatUnit(hrp.CFrame.LookVector)
 	hrp.AssemblyLinearVelocity = forward * LjCfg.ForwardPower + Vector3.new(0, LjCfg.UpPower, 0)
 
@@ -153,6 +167,11 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 
 	local character = player.Character
 	if not character then
+		return false
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid and HumanoidLocomotion.usesEngineLocomotion(humanoid) then
 		return false
 	end
 

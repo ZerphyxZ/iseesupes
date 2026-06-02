@@ -1,5 +1,6 @@
 --!strict
 
+local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -10,6 +11,9 @@ local ProfileStore = require(script.Parent.Parent.Modules.ProfileService)
 local ProfileTemplate = require(ReplicatedStorage.Shared.Utils.ProfileTemplate)
 local RewardTiming = require(ReplicatedStorage.Shared.Utils.RewardTiming)
 local LeaderstatsSync = require(script.Parent.Parent.Modules.LeaderstatsSync)
+local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
@@ -17,9 +21,12 @@ local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 assert(ThrustConfigs, "[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again.")
 
-local DATA_VERSION = "iseesupes_v4"
+local LeaderboardConfigs = require(ReplicatedStorage.Shared.Configs.LeaderboardConfigs)
 
-local PlayerDataStore = ProfileStore.GetProfileStore(DATA_VERSION, ProfileTemplate)
+-- Bump when you need a fresh ProfileStore namespace (e.g. testing saves from scratch).
+local DATA_VERSION = "iseesupes_v6"
+
+local PlayerDataStore = ProfileStore.GetProfileStore(DATA_VERSION, ProfileTemplate.Data)
 
 local DataService = Knit.CreateService({
 	Name = "DataService",
@@ -33,11 +40,208 @@ local DataService = Knit.CreateService({
 local profiles: { [Player]: any } = {}
 local lastThrustReplicateAt: { [Player]: number } = {}
 local lobbySpawnPart: BasePart? = nil
+local orderedStoreCache: { [string]: OrderedDataStore? } = {}
+local pendingLeaderboardSave: { [Player]: thread } = {}
+local pendingSaveStartedAt: { [Player]: number } = {}
+local lastLeaderboardScores: { [Player]: { [string]: number } } = {}
+
+local LEADERBOARD_SAVE_DEBOUNCE = 8
+local LEADERBOARD_SAVE_MAX_WAIT = 15
+
+local function getOrderedStore(storeName: string): OrderedDataStore?
+	if orderedStoreCache[storeName] ~= nil then
+		return orderedStoreCache[storeName]
+	end
+	local ok, ods = pcall(function()
+		return DataStoreService:GetOrderedDataStore(storeName)
+	end)
+	if ok and ods then
+		orderedStoreCache[storeName] = ods
+		return ods
+	end
+	orderedStoreCache[storeName] = nil
+	return nil
+end
+
+local function snapshotLeaderboardScores(data: any): { [string]: number }
+	local snap: { [string]: number } = {}
+	for boardKey, config in LeaderboardConfigs.Boards do
+		local score = config.GetScore(data)
+		snap[boardKey] = if type(score) == "number" then math.floor(score) else 0
+	end
+	return snap
+end
+
+local function clearGlobalLeaderboardScores(player: Player)
+	local userKey = tostring(player.UserId)
+	for _, config in LeaderboardConfigs.Boards do
+		local ods = getOrderedStore(config.StoreName)
+		if ods then
+			pcall(function()
+				ods:SetAsync(userKey, 0)
+			end)
+		end
+	end
+end
+
+local function syncLeaderboards(player: Player, refreshBoardKeys: { string }?)
+	task.defer(function()
+		local ok, leaderboardService = pcall(function()
+			return Knit.GetService("LeaderboardService")
+		end)
+		if not ok or not leaderboardService then
+			return
+		end
+		leaderboardService:SavePlayer(player)
+		if refreshBoardKeys then
+			for _, boardKey in refreshBoardKeys do
+				local config = LeaderboardConfigs.Boards[boardKey]
+				if config then
+					leaderboardService:UpdateDisplay(config)
+				end
+			end
+		else
+			leaderboardService:RefreshAllDisplays()
+		end
+	end)
+end
+
+local function pushLeaderboardScores(player: Player, refreshBoardKeys: { string }?)
+	local profile = profiles[player]
+	if profile then
+		lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
+	end
+
+	local ok, leaderboardService = pcall(function()
+		return Knit.GetService("LeaderboardService")
+	end)
+	if not ok or not leaderboardService then
+		return
+	end
+
+	leaderboardService:SavePlayer(player)
+	local keys = refreshBoardKeys or { "Speed", "Time" }
+	for _, boardKey in keys do
+		local config = LeaderboardConfigs.Boards[boardKey]
+		if config then
+			leaderboardService:UpdateDisplay(config)
+		end
+	end
+end
+
+local function scheduleLeaderboardSave(player: Player, profile: any)
+	local snap = snapshotLeaderboardScores(profile.Data)
+	local previous = lastLeaderboardScores[player]
+	if previous then
+		local changed = false
+		for boardKey, score in snap do
+			if previous[boardKey] ~= score then
+				changed = true
+				break
+			end
+		end
+		if not changed then
+			return
+		end
+	end
+
+	local pending = pendingLeaderboardSave[player]
+	if pending then
+		-- Speed changes constantly on the treadmill; do not cancel the timer each time or ODS never updates.
+		local started = pendingSaveStartedAt[player] or os.clock()
+		if os.clock() - started >= LEADERBOARD_SAVE_MAX_WAIT then
+			task.cancel(pending)
+			pendingLeaderboardSave[player] = nil
+			pendingSaveStartedAt[player] = nil
+			pushLeaderboardScores(player, { "Speed", "Time" })
+		end
+		return
+	end
+
+	lastLeaderboardScores[player] = snap
+	pendingSaveStartedAt[player] = os.clock()
+	pendingLeaderboardSave[player] = task.delay(LEADERBOARD_SAVE_DEBOUNCE, function()
+		pendingLeaderboardSave[player] = nil
+		pendingSaveStartedAt[player] = nil
+		pushLeaderboardScores(player, { "Speed", "Time" })
+	end)
+end
+
+local function bindProfileSaveSanitize(profile: any)
+	local save = profile.Save
+	profile.Save = function(self: any)
+		ProfileTemplate.sanitizeForStore(self.Data)
+		return save(self)
+	end
+end
+
+local function applyMovementSpeed(player: Player, profile: any?)
+	local resolved = profile or profiles[player]
+	local data = if resolved then resolved.Data else nil
+	CharacterMovementSpeed.applyToPlayer(player, data)
+end
 
 local function replicateData(player: Player, profile: any)
 	ThrustConfigs.EnsureFuelDefaults(profile.Data)
 	LeaderstatsSync.Apply(player, profile.Data)
+	applyMovementSpeed(player, profile)
 	DataService.Client.DataReplicated:Fire(player, profile.Data)
+end
+
+-- One-time per DATA_VERSION: pull higher global ODS scores into profile after store migrations.
+local function reconcileProfileFromLeaderboards(player: Player, profile: any)
+	local data = profile.Data
+	if data.LeaderboardOdsVersion == DATA_VERSION then
+		return
+	end
+
+	local userKey = tostring(player.UserId)
+	local restoredAny = false
+
+	for boardKey, config in LeaderboardConfigs.Boards do
+		local profileKey = config.ProfileKey
+		local current = config.GetScore(data)
+		if type(current) ~= "number" then
+			if type(data[profileKey]) ~= "number" then
+				data[profileKey] = 0
+			end
+			current = 0
+		end
+
+		local ods = getOrderedStore(config.StoreName)
+		if not ods then
+			continue
+		end
+
+		local ok, stored = pcall(function()
+			return ods:GetAsync(userKey)
+		end)
+		if not ok or type(stored) ~= "number" then
+			continue
+		end
+
+		local storedScore = math.max(0, math.floor(stored))
+		if storedScore > current then
+			data[profileKey] = storedScore
+			restoredAny = true
+			print(
+				"[iseesupes] Restored",
+				storedScore,
+				config.ProfileKey,
+				"from global leaderboard for",
+				player.Name,
+				"(",
+				boardKey,
+				")"
+			)
+		end
+	end
+
+	data.LeaderboardOdsVersion = DATA_VERSION
+	if restoredAny then
+		SpeedConfigs.SyncLevelFromSpeed(data)
+		replicateData(player, profile)
+	end
 end
 
 local function replicateThrustOnly(player: Player, profile: any)
@@ -90,34 +294,11 @@ local function setupThrustPowerAttribute(player: Player)
 end
 
 local function resolveLobbySpawn(): BasePart?
-	if lobbySpawnPart and lobbySpawnPart.Parent then
-		return lobbySpawnPart
+	local spawn = MapWorld.resolveLobbySpawn(lobbySpawnPart)
+	if spawn then
+		lobbySpawnPart = spawn
 	end
-
-	local worldCfg = TreadmillConfigs.World
-	local map = Workspace:FindFirstChild(worldCfg.MapFolderName)
-	if map then
-		local spawn = map:FindFirstChild(worldCfg.KickSpawnPartName)
-		if spawn and spawn:IsA("BasePart") then
-			lobbySpawnPart = spawn
-			return spawn
-		end
-	end
-
-	local rootStart = Workspace:FindFirstChild(worldCfg.KickSpawnPartName)
-	if rootStart and rootStart:IsA("BasePart") then
-		lobbySpawnPart = rootStart
-		return rootStart
-	end
-
-	for _, child in Workspace:GetChildren() do
-		if child:IsA("SpawnLocation") then
-			lobbySpawnPart = child
-			return child
-		end
-	end
-
-	return nil
+	return spawn
 end
 
 function DataService:GetFuel(player: Player): (number, number)
@@ -202,6 +383,7 @@ function DataService:TrySpendWins(player: Player, amount: number): boolean
 
 	data.Wins -= amount
 	replicateData(player, profile)
+	syncLeaderboards(player, { "Wins" })
 	return true
 end
 
@@ -221,6 +403,7 @@ function DataService:AddWins(player: Player, amount: number): boolean
 	end
 	data.Wins += amount
 	replicateData(player, profile)
+	syncLeaderboards(player, { "Wins" })
 	return true
 end
 
@@ -259,7 +442,13 @@ function DataService:TeleportToLobby(player: Player)
 
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local spawn = resolveLobbySpawn()
-	if not root or not spawn then
+	if not root then
+		return
+	end
+	if not spawn then
+		warn(
+			"[iseesupes] TeleportToLobby: no spawn under Workspace.Map (add Start or SpawnLocation; see WorldMapConfigs.LobbySpawnPartNames)"
+		)
 		return
 	end
 
@@ -289,6 +478,7 @@ local function onPlayerAdded(player: Player)
 
 	profile:AddUserId(player.UserId)
 	profile:Reconcile()
+	ProfileTemplate.sanitizeForStore(profile.Data)
 	ThrustConfigs.MigrateProfile(profile.Data)
 	TrailConfigs.EnsureDefaultTrail(profile.Data)
 
@@ -314,22 +504,48 @@ local function onPlayerAdded(player: Player)
 	end
 
 	profiles[player] = profile
+	bindProfileSaveSanitize(profile)
 	setupThrustPowerAttribute(player)
 	replicateData(player, profile)
+	task.spawn(function()
+		reconcileProfileFromLeaderboards(player, profile)
+		lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
+		syncLeaderboards(player)
+	end)
 	print("[iseesupes] Profile loaded for", player.Name)
 
 	player.CharacterAdded:Connect(function()
-		task.defer(refillThrustOnRespawn, player)
+		task.defer(function()
+			refillThrustOnRespawn(player)
+			applyMovementSpeed(player, profile)
+		end)
 	end)
+
+	for _, attrName in {
+		LevelDesignConfigs.Speed.MultiplierAttribute,
+		LevelDesignConfigs.Speed.OverrideAttribute,
+	} do
+		player:GetAttributeChangedSignal(attrName):Connect(function()
+			applyMovementSpeed(player, profile)
+		end)
+	end
 end
 
 local function onPlayerRemoving(player: Player)
 	local profile = profiles[player]
 	if profile then
+		ProfileTemplate.sanitizeForStore(profile.Data)
 		profile:Release()
 		profiles[player] = nil
 	end
 	lastThrustReplicateAt[player] = nil
+	local pendingSave = pendingLeaderboardSave[player]
+	if pendingSave then
+		task.cancel(pendingSave)
+		pendingLeaderboardSave[player] = nil
+	end
+	pendingSaveStartedAt[player] = nil
+	lastLeaderboardScores[player] = nil
 end
 
 function DataService:GetProfile(player: Player): any?
@@ -345,7 +561,16 @@ function DataService:Replicate(player: Player)
 	local profile = profiles[player]
 	if profile then
 		replicateData(player, profile)
+		scheduleLeaderboardSave(player, profile)
 	end
+end
+
+function DataService:NotifyLeaderboards(player: Player, refreshBoardKeys: { string }?)
+	local profile = profiles[player]
+	if profile then
+		lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
+	end
+	syncLeaderboards(player, refreshBoardKeys)
 end
 
 function DataService.Client:RequestData(player: Player)
@@ -355,6 +580,61 @@ function DataService.Client:RequestData(player: Player)
 	end
 	ThrustConfigs.EnsureFuelDefaults(profile.Data)
 	return profile.Data
+end
+
+--- Studio only: reset profile to defaults, zero global leaderboard entries, replicate HUD, refresh boards.
+--- wipeSavedData: also calls ProfileStore:WipeProfileAsync (persistent delete in current DATA_VERSION store).
+function DataService:ResetProfileForStudioTest(player: Player, wipeSavedData: boolean?): boolean
+	if not RunService:IsStudio() then
+		warn("[iseesupes] ResetProfileForStudioTest is Studio-only.")
+		return false
+	end
+
+	local profile = profiles[player]
+	if not profile then
+		warn("[iseesupes] ResetProfileForStudioTest: no profile for", player.Name)
+		return false
+	end
+
+	local userKey = tostring(player.UserId)
+	if wipeSavedData == true then
+		local wiped = PlayerDataStore:WipeProfileAsync(userKey)
+		if not wiped then
+			warn("[iseesupes] WipeProfileAsync failed for", player.Name)
+		end
+	end
+
+	ProfileTemplate.applyTo(profile.Data)
+	profile.Data.LeaderboardOdsVersion = DATA_VERSION
+	ProfileTemplate.sanitizeForStore(profile.Data)
+	ThrustConfigs.MigrateProfile(profile.Data)
+	TrailConfigs.EnsureDefaultTrail(profile.Data)
+	ThrustConfigs.RefillToMax(profile.Data)
+	SpeedConfigs.SyncLevelFromSpeed(profile.Data)
+	RewardTiming.ensureAnchor(profile.Data)
+
+	clearGlobalLeaderboardScores(player)
+	lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
+
+	profile:Save()
+	replicateData(player, profile)
+	syncLeaderboards(player)
+
+	print(
+		"[iseesupes] Studio profile reset for",
+		player.Name,
+		"→",
+		ProfileTemplate.describeStats(profile.Data),
+		if wipeSavedData then "(DataStore wiped)" else "(template applied + saved)"
+	)
+	return true
+end
+
+function DataService.Client:ResetProfileForStudioTest(player: Player, wipeSavedData: boolean?): boolean
+	if not RunService:IsStudio() then
+		return false
+	end
+	return DataService:ResetProfileForStudioTest(player, wipeSavedData)
 end
 
 --- Studio: Properties edits the client Player; apply ThrustPower on the authoritative server copy.
@@ -415,6 +695,15 @@ function DataService:KnitStart()
 	end
 
 	RunService.Heartbeat:Connect(tickPassiveRefill)
+
+	task.spawn(function()
+		while true do
+			task.wait(15)
+			for _, profile in profiles do
+				ProfileTemplate.sanitizeForStore(profile.Data)
+			end
+		end
+	end)
 end
 
 return DataService

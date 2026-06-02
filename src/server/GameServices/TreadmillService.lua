@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 
 type TreadmillTier = TreadmillConfigs.TreadmillTier
 
@@ -81,9 +82,11 @@ local function resolveWorldInstances()
 		)
 	end
 
-	kickSpawnPart = Workspace:FindFirstChild(WorldCfg.KickSpawnPartName) :: BasePart?
+	kickSpawnPart = MapWorld.resolveLobbySpawn(kickSpawnPart)
 	if not kickSpawnPart then
-		warn("[iseesupes] TreadmillService: kick spawn part", WorldCfg.KickSpawnPartName, "not found in Workspace.")
+		warn(
+			"[iseesupes] TreadmillService: lobby spawn not found under Workspace.Map (Start or SpawnLocation)."
+		)
 	end
 end
 
@@ -342,26 +345,11 @@ end
 
 local function getKillSpawnCFrame(): CFrame?
 	local offset = GameplayCfg.KickTeleportOffset
-
-	local map = Workspace:FindFirstChild(WorldCfg.MapFolderName)
-	if map then
-		local inMap = map:FindFirstChild(WorldCfg.KickSpawnPartName)
-		if inMap and inMap:IsA("BasePart") then
-			return inMap.CFrame + offset
-		end
+	local spawn = MapWorld.resolveLobbySpawn(kickSpawnPart)
+	if spawn then
+		kickSpawnPart = spawn
+		return spawn.CFrame + offset
 	end
-
-	local rootStart = Workspace:FindFirstChild(WorldCfg.KickSpawnPartName)
-	if rootStart and rootStart:IsA("BasePart") then
-		return rootStart.CFrame + offset
-	end
-
-	for _, child in Workspace:GetChildren() do
-		if child:IsA("SpawnLocation") then
-			return child.CFrame + offset
-		end
-	end
-
 	return nil
 end
 

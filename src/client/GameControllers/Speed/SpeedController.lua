@@ -13,6 +13,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
+local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local EffectsSystem = require(script.Parent.Parent.Parent.Modules.EffectsSystem)
 local SpeedController = Knit.CreateController({ Name = "SpeedController" })
@@ -302,10 +303,19 @@ function SpeedController:KnitStart()
 		lastWinValue = type(data.Wins) == "number" and data.Wins or 0
 	end
 
+	local function applyMovementSpeed()
+		CharacterMovementSpeed.applyToPlayer(player, DataLib.GetData())
+	end
+
+	player.CharacterAdded:Connect(function()
+		task.defer(applyMovementSpeed)
+	end)
+
 	DataLib.OnChanged(function()
 		updateUI()
 		updateWinsPopups()
 		updateThrustUI()
+		applyMovementSpeed()
 	end)
 
 	DataLib.OnThrustChanged(function()
@@ -314,6 +324,7 @@ function SpeedController:KnitStart()
 
 	updateUI()
 	updateThrustUI()
+	applyMovementSpeed()
 
 	SpeedService.LevelUp:Connect(showLevelUp)
 

@@ -13,6 +13,7 @@ local HudConfigs = require(ReplicatedStorage.Shared.Configs.HudConfigs)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -254,9 +255,7 @@ local function bindCloseButton(frame: Instance)
 	end
 
 	closeBtn.MouseButton1Click:Connect(function()
-		HudAnimations.buttonPress(closeBtn, function()
-			closeShop()
-		end)
+		closeShop()
 	end)
 end
 
@@ -371,9 +370,9 @@ function ThrustController:KnitStart()
 	end)
 
 	-- Find touch part in workspace
-	local shopFolder = Workspace:FindFirstChild(ThrustUpgradeConfigs.FolderName)
+	local shopFolder = MapWorld.findChildInMap(ThrustUpgradeConfigs.FolderName)
 	if not shopFolder then
-		warn("[iseesupes] ThrustController: Workspace." .. ThrustUpgradeConfigs.FolderName .. " not found")
+		warn("[iseesupes] ThrustController: Workspace.Map." .. ThrustUpgradeConfigs.FolderName .. " not found")
 		return
 	end
 

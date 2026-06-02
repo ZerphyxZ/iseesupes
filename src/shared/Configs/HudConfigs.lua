@@ -30,6 +30,20 @@ local HudConfigs = {
 	--- Right HUD: developer product keys (ProductConfigs.DeveloperProducts)
 	BoostProductKey = "SpeedPack1",
 	SkipStageProductKey = "SkipStage",
+
+	--- Global GuiButton hover / click scale (UIButtonEffectsController)
+	ButtonEffects = {
+		HoverScale = 1.06,
+		PressScale = 0.92,
+		HoverDuration = 0.12,
+		PressDuration = 0.08,
+		ReleaseDuration = 0.18,
+		ExcludePaths = {
+			{ "HUD", "Right", "SupesMobile" },
+		},
+		SkipAttribute = "HudSkipButtonFx",
+		BoundAttribute = "_HudButtonFxBound",
+	},
 }
 
 return HudConfigs

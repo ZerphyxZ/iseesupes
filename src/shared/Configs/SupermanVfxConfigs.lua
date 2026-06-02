@@ -2,7 +2,7 @@
 
 -- Tuning for Superman surface-break VFX (takeoff / wall impact / landing) and flight sounds.
 
-export type BreakTier = "Takeoff" | "ImpactWall" | "ImpactFloor" | "Landing"
+export type BreakTier = "Takeoff" | "LongJumpLaunch" | "ImpactWall" | "ImpactFloor" | "Landing"
 
 local SupermanVfxConfigs = {
 
@@ -10,6 +10,13 @@ local SupermanVfxConfigs = {
 
 	Sounds = {
 		FolderPath = { "Shared", "Assets", "SupermanFlightSounds" },
+		AlternateFolderPaths = {
+			{ "Shared", "Assets", "GlideVfxSounds" },
+		},
+		QuickWhoosh                = "QuickWhoosh",
+		QuickWhooshLifetime        = 4,
+		QuickWhooshVolume          = 1,
+		QuickWhooshPlaybackSpeed  = 1.15,
 		GroundCracking             = "GroundCracking",
 		StartFlying                = "StartFlying",
 		ConstantFlying             = "ConstantFlying",
@@ -63,6 +70,26 @@ local SupermanVfxConfigs = {
 			ColorSequenceKeypoint.new(1,   Color3.fromRGB(12, 11, 10)),
 		}),
 
+		--- Bright white foot smoke for double-tap long jump.
+		LongJumpSmoke = {
+			Texture        = "rbxassetid://243660364",
+			Burst          = 48,
+			Scale          = 1.25,
+			SpeedMin       = 14,
+			SpeedMax       = 28,
+			LifetimeMin    = 0.35,
+			LifetimeMax    = 0.7,
+			Spread         = Vector2.new(80, 80),
+			SizePeak       = 3.2,
+			LightEmission  = 0.12,
+			LightInfluence = 0,
+			DustColor      = ColorSequence.new({
+				ColorSequenceKeypoint.new(0,   Color3.fromRGB(255, 255, 255)),
+				ColorSequenceKeypoint.new(0.4, Color3.fromRGB(248, 250, 255)),
+				ColorSequenceKeypoint.new(1,   Color3.fromRGB(225, 230, 238)),
+			}),
+		},
+
 		LandingParticles = {
 			--- Neutral gray smoke (1370553768 is green-tinted; do not use for landing).
 			Texture       = "rbxassetid://243660364",
@@ -92,6 +119,13 @@ local SupermanVfxConfigs = {
 				ScorchDiameter  = 3.5,
 				ScorchAlpha     = 0.55,
 				Ring            = false,
+			},
+			--- Double-tap long jump: white smoke at feet (no dark scorch).
+			LongJumpLaunch = {
+				ParticleBurst   = 0,
+				ScorchDiameter  = 0,
+				Ring            = false,
+				UseLongJumpSmoke = true,
 			},
 			ImpactFloor = {
 				ParticleBurst   = 6,
@@ -150,7 +184,8 @@ local SupermanVfxConfigs = {
 		},
 
 		Cooldowns = {
-			Takeoff      = 0.5,
+			Takeoff          = 0.5,
+			LongJumpLaunch   = 0.15,
 			ImpactWall   = 0.4,
 			ImpactFloor  = 0.55,
 			Landing      = 0.8,

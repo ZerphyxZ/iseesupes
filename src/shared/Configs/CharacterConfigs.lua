@@ -193,6 +193,15 @@ local CharacterConfigs = {
 		LeanUpAnim = "LeanUp",
 		LeanUpFadeTime = 0.12,
 		LeanUpDuration = 0.9,
+		-- Foot smoke + whoosh (Studio: QuickWhoosh in SupermanFlightSounds or Woosh in GlideVfxSounds)
+		UseLaunchFeedback = true,
+		LaunchSound = "QuickWhoosh",
+		LaunchSoundFallbacks = { "QuickWhoosh", "Quick Whoosh", "Woosh" },
+		LaunchSoundFolders = {
+			{ "Shared", "Assets", "SupermanFlightSounds" },
+			{ "Shared", "Assets", "GlideVfxSounds" },
+		},
+		LaunchVfxTier = "LongJumpLaunch",
 	},
 
 	SuperJump = {

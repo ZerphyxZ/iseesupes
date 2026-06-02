@@ -17,16 +17,13 @@ local AUTO_SWING_ATTR = "AutoSwingEnabled"
 local GuiFrameController = Knit.CreateController({ Name = "GuiFrameController" })
 
 local function bindProductButton(button: GuiButton, player: Player, productKey: string)
-	HudAnimations.rememberBaseScale(button)
 	button.MouseButton1Click:Connect(function()
-		HudAnimations.buttonPress(button, function()
-			local product = ProductConfigs.GetProductByKey(productKey)
-			if not product or product.Id == 0 then
-				warn("[iseesupes] GuiFrameController: product not configured:", productKey)
-				return
-			end
-			MarketplaceService:PromptProductPurchase(player, product.Id)
-		end)
+		local product = ProductConfigs.GetProductByKey(productKey)
+		if not product or product.Id == 0 then
+			warn("[iseesupes] GuiFrameController: product not configured:", productKey)
+			return
+		end
+		MarketplaceService:PromptProductPurchase(player, product.Id)
 	end)
 end
 
@@ -37,8 +34,6 @@ local function setupAutoSwing(hud: Instance, player: Player)
 		return
 	end
 
-	HudAnimations.rememberBaseScale(button)
-
 	local function applyVisual()
 		local enabled = player:GetAttribute(AUTO_SWING_ATTR) == true
 		button.BackgroundTransparency = if enabled then 0.2 else 0.5
@@ -48,9 +43,7 @@ local function setupAutoSwing(hud: Instance, player: Player)
 	applyVisual()
 
 	button.MouseButton1Click:Connect(function()
-		HudAnimations.buttonPress(button, function()
-			player:SetAttribute(AUTO_SWING_ATTR, player:GetAttribute(AUTO_SWING_ATTR) ~= true)
-		end)
+		player:SetAttribute(AUTO_SWING_ATTR, player:GetAttribute(AUTO_SWING_ATTR) ~= true)
 	end)
 end
 

@@ -1,6 +1,6 @@
 --!strict
 
--- Workspace/GiveWins stage-end buttons (Button1, Button2, …) with Touch + WinAmount label.
+-- Workspace/Map/GiveWins stage-end buttons (Button1, Button2, …) with Touch + WinAmount label.
 
 export type GiveWinsConfig = {
 	FolderName: string,

@@ -1,6 +1,6 @@
 --!strict
 
--- Workspace/UpgradeWins buttons + Workspace/AvatarsShowcase character templates.
+-- Workspace/Map/UpgradeWins buttons + Workspace/Map/AvatarsShowcase character templates.
 
 export type ButtonDefaults = {
 	WinCost: number,

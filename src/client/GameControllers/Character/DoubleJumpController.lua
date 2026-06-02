@@ -99,6 +99,10 @@ end
 
 local DoubleJumpController = Knit.CreateController({ Name = "DoubleJumpController" })
 
+local function getDoubleJumpService()
+	return Knit.GetService("DoubleJumpService")
+end
+
 local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local actionBound = false
@@ -179,6 +183,7 @@ type CharacterAbilityState = {
 	landingGroundedAt: number?,
 	leanAnimSubphase: string?, -- "glide" | "descent" while in LeanUp
 	landingWatchdogAt: number?,
+	thrustCancelSent: boolean,
 }
 
 local characterStates: { [Model]: CharacterAbilityState } = {}
@@ -984,6 +989,11 @@ local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number,
 		isClientThrustDepleted()
 		and (phase == PHASE.FlightTransit or phase == PHASE.AfterTransition or phase == PHASE.LeanUp)
 	then
+		if not state.thrustCancelSent then
+			state.thrustCancelSent = true
+			holdingLocally = false
+			getDoubleJumpService():SetHolding(false)
+		end
 		tickOpts = { thrustDepleted = true }
 	end
 
@@ -1518,11 +1528,22 @@ onAbilityEnded = function()
 			state.locomotionReleasedAfterLanding = false
 			state.landingGroundedAt = nil
 			state.touchdownUprightApplied = false
+			state.thrustCancelSent = false
 			pcall(function()
 				state.humanoid.PlatformStand = false
 			end)
 		end
 	end
+end
+
+local function cancelActiveAbilityFromInput()
+	if not abilityActive and not player:GetAttribute(PHASE_ATTR) then
+		return false
+	end
+
+	holdingLocally = false
+	getDoubleJumpService():SetHolding(false)
+	return true
 end
 
 local function ensureAbilityState(character: Model): CharacterAbilityState?
@@ -1700,6 +1721,7 @@ setupCharacter = function(character: Model)
 		locomotionReleasedAfterLanding = false,
 		landingGroundedAt = nil,
 		leanAnimSubphase = nil,
+		thrustCancelSent = false,
 	}
 	characterStates[character] = state
 
@@ -1744,10 +1766,6 @@ setupCharacter = function(character: Model)
 	end)
 end
 
-local function getDoubleJumpService()
-	return Knit.GetService("DoubleJumpService")
-end
-
 local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInputState, _inputObject: InputObject)
 	if not Features.UseDoubleJump then
 		return Enum.ContextActionResult.Pass
@@ -1756,10 +1774,9 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 	local service = getDoubleJumpService()
 
 	if inputState == Enum.UserInputState.Begin then
-		if abilityActive then
-			-- Toggle: second E press cancels the ability mid-flight.
-			holdingLocally = false
-			service:SetHolding(false)
+		if abilityActive or player:GetAttribute(PHASE_ATTR) then
+			-- Toggle: second E press ends Superman flight (cancel fall → land).
+			cancelActiveAbilityFromInput()
 			return Enum.ContextActionResult.Sink
 		end
 
@@ -1835,6 +1852,12 @@ end
 
 function DoubleJumpController:KnitStart()
 	CharacterController = Knit.GetController("CharacterController")
+
+	task.defer(function()
+		CharacterController:RegisterJumpInterceptor(function()
+			return cancelActiveAbilityFromInput()
+		end)
+	end)
 
 	local folder = ReplicatedStorage:WaitForChild(AnimRoot.FolderName, 30)
 	if folder and folder:IsA("Folder") then

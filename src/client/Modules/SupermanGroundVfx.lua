@@ -264,7 +264,7 @@ local function spawnBurstParticles(
 	e:Emit(tierCfg.ParticleBurst or 8)
 end
 
-local function spawnLandingParticles(anchor: Part, surfaceStyle: SurfaceStyle)
+local function spawnLandingParticles(anchor: Part, surfaceStyle: SurfaceStyle, burstOverride: number?)
 	local cfg = SupermanVfxConfigs.Break.LandingParticles
 	local colorSeq = if cfg.UseFloorTint == true
 		then colorSequenceFromSurface(surfaceStyle.color)
@@ -293,7 +293,38 @@ local function spawnLandingParticles(anchor: Part, surfaceStyle: SurfaceStyle)
 	e.Rate = 0
 	e.EmissionDirection = Enum.NormalId.Top
 	e.Parent = anchor
-	e:Emit(cfg.Burst)
+	e:Emit(burstOverride or cfg.Burst)
+end
+
+local function spawnLongJumpSmoke(anchor: Part, burstOverride: number?)
+	local cfg = SupermanVfxConfigs.Break.LongJumpSmoke
+	local scale = cfg.Scale or 1
+
+	local e = Instance.new("ParticleEmitter")
+	e.Name = "LongJumpSmoke"
+	e.Texture = cfg.Texture or "rbxassetid://243660364"
+	e.Color = cfg.DustColor
+	e.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.8 * scale),
+		NumberSequenceKeypoint.new(0.3, cfg.SizePeak * scale),
+		NumberSequenceKeypoint.new(1, 0.35 * scale),
+	})
+	e.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.02),
+		NumberSequenceKeypoint.new(0.35, 0.12),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	e.Speed = NumberRange.new(cfg.SpeedMin, cfg.SpeedMax)
+	e.Lifetime = NumberRange.new(cfg.LifetimeMin, cfg.LifetimeMax)
+	e.SpreadAngle = cfg.Spread
+	e.LightEmission = cfg.LightEmission or 0
+	e.LightInfluence = cfg.LightInfluence or 0
+	e.RotSpeed = NumberRange.new(-90, 90)
+	e.Rotation = NumberRange.new(0, 360)
+	e.Rate = 0
+	e.EmissionDirection = Enum.NormalId.Top
+	e.Parent = anchor
+	e:Emit(burstOverride or cfg.Burst)
 end
 
 local function spawnSurfaceRing(
@@ -494,14 +525,46 @@ end
 
 -- ── Raycast helpers ───────────────────────────────────────────────────────────
 
-function SupermanGroundVfx.raycastFloorFromHrp(hrp: BasePart): RaycastResult?
+local function buildFloorRayParams(character: Model?): RaycastParams
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	local character = hrp.Parent
 	if character then
 		params.FilterDescendantsInstances = { character }
 	end
+	return params
+end
+
+function SupermanGroundVfx.raycastFloorFromHrp(hrp: BasePart): RaycastResult?
+	local character = if hrp.Parent and hrp.Parent:IsA("Model") then hrp.Parent else nil
+	local params = buildFloorRayParams(character)
 	local result = Workspace:Raycast(hrp.Position, Vector3.new(0, -SupermanVfxConfigs.FloorRayLength, 0), params)
+	if result and math.abs(result.Normal.Y) >= SupermanVfxConfigs.FloorNormalMinY then
+		return result
+	end
+	return nil
+end
+
+function SupermanGroundVfx.getFootLaunchPosition(character: Model, hrp: BasePart): (Vector3, Vector3)
+	local lowestY = hrp.Position.Y
+	for _, name in { "LeftFoot", "RightFoot", "Left Leg", "Right Leg" } do
+		local part = character:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			lowestY = math.min(lowestY, part.Position.Y)
+		end
+	end
+	local floorPos = Vector3.new(hrp.Position.X, lowestY - 0.15, hrp.Position.Z)
+	return floorPos, Vector3.yAxis
+end
+
+function SupermanGroundVfx.raycastFloorFromCharacter(character: Model, hrp: BasePart): RaycastResult?
+	local params = buildFloorRayParams(character)
+	local floorPos, _ = SupermanGroundVfx.getFootLaunchPosition(character, hrp)
+	local origin = floorPos + Vector3.new(0, 4, 0)
+	local result = Workspace:Raycast(origin, Vector3.new(0, -12, 0), params)
+	if result and math.abs(result.Normal.Y) >= SupermanVfxConfigs.FloorNormalMinY then
+		return result
+	end
+	result = Workspace:Raycast(hrp.Position, Vector3.new(0, -SupermanVfxConfigs.FloorRayLength, 0), params)
 	if result and math.abs(result.Normal.Y) >= SupermanVfxConfigs.FloorNormalMinY then
 		return result
 	end
@@ -518,7 +581,13 @@ end
 
 -- ── Core API ──────────────────────────────────────────────────────────────────
 
-function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastResult, character: Model?): boolean
+local function spawnSurfaceBreakAt(
+	tier: BreakTier,
+	pos: Vector3,
+	normal: Vector3,
+	character: Model?,
+	rayResult: RaycastResult?
+): boolean
 	if not canSpawnTier(tier) then
 		debugLog("spawn blocked cooldown tier=", tier)
 		return false
@@ -530,15 +599,12 @@ function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastRes
 		return false
 	end
 
-	local pos = result.Position
-	local normal = result.Normal
-	local right, up = buildSurfaceBasis(normal)
-	local surfaceStyle = if tier == "Landing" then SupermanGroundVfx.resolveSurfaceStyle(result) else nil
+	local right, upBasis = buildSurfaceBasis(normal)
 
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
 	anchor.Anchored = true
-	anchor.CFrame = CFrame.fromMatrix(pos + up * 0.05, right, up)
+	anchor.CFrame = CFrame.fromMatrix(pos + upBasis * 0.05, right, upBasis)
 	anchor.Transparency = 1
 	anchor.CanCollide = false
 	anchor.CanQuery = false
@@ -546,10 +612,16 @@ function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastRes
 	anchor.Parent = Workspace
 	Debris:AddItem(anchor, SupermanVfxConfigs.Break.AnchorLifetime)
 
-	spawnScorchPatch(pos, normal, tierCfg.ScorchDiameter, tierCfg.ScorchAlpha)
+	local scorchDiameter = tierCfg.ScorchDiameter
+	if type(scorchDiameter) == "number" and scorchDiameter > 0 then
+		spawnScorchPatch(pos, normal, scorchDiameter, tierCfg.ScorchAlpha or 0.5)
+	end
 
-	if tier == "Landing" and tierCfg.UseLandingParticles == true and surfaceStyle then
-		spawnLandingParticles(anchor, surfaceStyle)
+	if tierCfg.UseLongJumpSmoke == true then
+		spawnLongJumpSmoke(anchor, tierCfg.LongJumpParticleBurst)
+	elseif tierCfg.UseLandingParticles == true and rayResult then
+		local surfaceStyle = SupermanGroundVfx.resolveSurfaceStyle(rayResult)
+		spawnLandingParticles(anchor, surfaceStyle, tierCfg.LandingParticleBurst)
 	elseif (tierCfg.ParticleBurst or 0) > 0 then
 		spawnBurstParticles(anchor, tierCfg, tierCfg.UseBlackDust == true)
 	end
@@ -564,11 +636,30 @@ function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastRes
 		)
 	end
 
-	if tier == "Landing" and character then
-		spawnLandingChunks(result, character)
+	if tier == "Landing" and character and rayResult then
+		spawnLandingChunks(rayResult, character)
 	end
 
 	return true
+end
+
+function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastResult, character: Model?): boolean
+	return spawnSurfaceBreakAt(tier, result.Position, result.Normal, character, result)
+end
+
+function SupermanGroundVfx.spawnSurfaceBreakForCharacter(tier: BreakTier, character: Model): boolean
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+
+	local result = SupermanGroundVfx.raycastFloorFromCharacter(character, hrp)
+	if result then
+		return SupermanGroundVfx.spawnSurfaceBreak(tier, result, character)
+	end
+
+	local floorPos, normal = SupermanGroundVfx.getFootLaunchPosition(character, hrp)
+	return spawnSurfaceBreakAt(tier, floorPos, normal, character, nil)
 end
 
 function SupermanGroundVfx.spawnTakeoff(hrp: BasePart)

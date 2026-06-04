@@ -10,16 +10,24 @@ export type PlayerData = {
 	ThrustMax: number,
 	ThrustUpgradeTier: number,
 	Rebirths: number,
+	Stage: number,
+	MaxStage: number,
 	OwnedTrails: { [string]: boolean },
 	EquippedTrail: string,
+	OwnedAuras: { [string]: boolean },
+	EquippedAura: string,
 	ClaimedRewards: { [string]: number }, -- rewardIndex (string) → os.time() of last claim
 	RewardsAnchorTime: number?, -- os.time() when reward timers started (first join / migration)
 	UnlockedAvatars: { [string]: boolean },
 	EquippedAvatar: string,
 	FriendInviteRewards: { [string]: boolean },
+	OwnedSpeedPeaks: { [string]: boolean },
+	OwnedTreadmills: { [string]: boolean },
+	OwnedDoubleWins: boolean,
 	StepSpeedBonus: number,
 	TotalPlayTime: number,
 	LeaderboardOdsVersion: string?, -- set after ODS reconcile; never put nil in the store template
+	BoostActive: boolean?, -- temporary boost flag (cleared when player wins)
 }
 
 -- Pure data only — passed to ProfileService (no functions, no nil values).
@@ -29,16 +37,23 @@ local Data: PlayerData = {
 	Speed = 0,
 	Wins = 0,
 	SpeedPoints = 0,
-	ThrustCurrent = 150,
-	ThrustMax = 150,
+	ThrustCurrent = 60,
+	ThrustMax = 60,
 	ThrustUpgradeTier = 0,
 	Rebirths = 0,
-	OwnedTrails = { SupermanClassic = true },
-	EquippedTrail = "SupermanClassic",
+	Stage = 1,
+	MaxStage = 0,
+	OwnedTrails = {},
+	EquippedTrail = "",
+	OwnedAuras = {},
+	EquippedAura = "",
 	ClaimedRewards = {},
 	UnlockedAvatars = {},
 	EquippedAvatar = "",
 	FriendInviteRewards = {},
+	OwnedSpeedPeaks = {},
+	OwnedTreadmills = {},
+	OwnedDoubleWins = false,
 	StepSpeedBonus = 0,
 	TotalPlayTime = 0,
 }
@@ -80,6 +95,10 @@ function ProfileTemplate.sanitizeForStore(root: any)
 			if n ~= n or n == math.huge or n == -math.huge then
 				root[key] = 0
 			end
+		elseif valueType == "boolean" then
+			-- Booleans are valid DataStore types — keep as-is.
+			-- (Without this branch, OwnedAuras / UnlockedAvatars / OwnedDoubleWins / etc.
+			-- which store true/false values would be silently wiped on every save.)
 		elseif valueType == "table" then
 			ProfileTemplate.sanitizeForStore(value)
 		else

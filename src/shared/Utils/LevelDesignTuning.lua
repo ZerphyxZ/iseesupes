@@ -379,6 +379,8 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 		ActionName = BaseDj.ActionName,
 		Key = BaseDj.Key,
 		Cooldown = readNumberForPlayer(player, ATTR.Cooldown, LEGACY.Cooldown, BaseDj.Cooldown),
+		CancelCooldownGrace = BaseDj.CancelCooldownGrace,
+		CancelMinActiveTime = BaseDj.CancelMinActiveTime,
 		MaxAbilityDuration = maxAbilityDuration,
 		Debug = BaseDj.Debug,
 		AnimFolder = BaseDj.AnimFolder,

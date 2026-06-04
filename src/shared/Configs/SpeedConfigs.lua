@@ -4,10 +4,10 @@
 
 local SpeedConfigs = {
 	StudsRequired = 8,
-	BaseXpCost = 10,
-	CostMultiplier = 1.5,
+	BaseXpCost = 300,
+	CostMultiplier = 1.3,
 	BaseWalkSpeed = 8,
-	SpeedPerLevel = 2,
+	SpeedPerLevel = 3,
 	RebirthPercentPerStep = 50,
 	SpeedGainPerStudBatch = 1,
 	AddSpeedMinInterval = 0.05,
@@ -70,12 +70,15 @@ function SpeedConfigs.SyncLevelFromSpeed(data: any): (number, number)
 end
 
 -- Thrust flight fuel (lives here so one synced module is enough; ThrustConfigs.lua re-exports this).
+-- BaseMaxFuel = 60 → ~374 studs per charge (new players reach Stage 2, not Stage 3 in one shot).
+-- PassiveRefillRate = 6 → 10s from empty to full; prevents chain-flying across stages.
+-- MinFuelToStartFlight = 15 → must wait ~2.5s on ground before flying again.
 local Thrust = {
-	BaseMaxFuel = 150,
+	BaseMaxFuel = 60,
 	DrainPerSecond = 10,
 	TreadmillRefillPerTick = 0,
-	PassiveRefillRate = 20,
-	MinFuelToStartFlight = 10,
+	PassiveRefillRate = 6,
+	MinFuelToStartFlight = 15,
 	EmptyDescentGrace = 0.6,
 	SpeedPointsToMaxFuelBonus = 1,
 	MaxFuelBonusFromProducts = 0,

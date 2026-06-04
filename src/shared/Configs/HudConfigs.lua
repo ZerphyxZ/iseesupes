@@ -28,7 +28,7 @@ local HudConfigs = {
 	} :: { HudFrameLink },
 
 	--- Right HUD: developer product keys (ProductConfigs.DeveloperProducts)
-	BoostProductKey = "SpeedPack1",
+	BoostProductKey = "PlusOneBoost",
 	SkipStageProductKey = "SkipStage",
 
 	--- Global GuiButton hover / click scale (UIButtonEffectsController)

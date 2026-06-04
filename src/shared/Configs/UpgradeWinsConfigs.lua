@@ -36,8 +36,11 @@ export type UpgradeWinsConfig = {
 
 local UpgradeWinsConfigs: UpgradeWinsConfig = {
 	MorphCopyPhysicsFromCurrentCharacter = true,
-	UseVisualOnlyShowcaseEquip = true,
-	UseVisualOnlyMorphWhenRigMatches = true,
+	-- Visual-only equip can only paint colors/textures — it CANNOT change MeshPart shape
+	-- (MeshId is read-only in Roblox). The Superman showcase models have custom meshes,
+	-- so we must do a full character replacement for the morph to actually transform.
+	UseVisualOnlyShowcaseEquip = false,
+	UseVisualOnlyMorphWhenRigMatches = false,
 	ShowcaseRigIdAttribute = "ShowcaseRigId",
 	DefaultShowcaseRigId = "Supes",
 	ApplyBodyColorsOnVisualMorph = false,

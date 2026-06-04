@@ -128,8 +128,11 @@ function RebirthController:KnitStart()
 		end
 	end
 
-	local function onRebirthSuccess()
-		NotificationManager.show("Rebirth Successful!", "Success")
+	local function onRebirthSuccess(preservedProgress: boolean?)
+		local message = if preservedProgress == true
+			then "Skip Rebirth — you kept your levels!"
+			else "Rebirth Successful!"
+		NotificationManager.show(message, "Success")
 
 		local character = player.Character
 		if character then

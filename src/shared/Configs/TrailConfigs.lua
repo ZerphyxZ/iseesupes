@@ -14,7 +14,7 @@ export type TrailInfo = {
 }
 
 local TrailConfigs = {
-	DefaultTrailId = "SupermanClassic",
+	DefaultTrailId = "",
 
 	--- Row template inside GUI.Frames.Trails.Scrolling (Studio layout).
 	ShopTemplateScrollingPath = { "Scrolling", "TrailTemplate" },
@@ -30,7 +30,7 @@ local TrailConfigs = {
 			ID = "SupermanClassic",
 			Name = "Superman",
 			WinCost = 0,
-			ProductId = 0,
+			ProductId = 3602184828, -- Developer Product: Superman Trail
 			SpeedBoost = 1.5,
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 30, 30)),
@@ -42,7 +42,7 @@ local TrailConfigs = {
 			ID = "Kryptonite",
 			Name = "Kryptonite",
 			WinCost = 500,
-			ProductId = 0,
+			ProductId = 3602184962, -- Developer Product: Kryptonite Trail
 			SpeedBoost = 1.5,
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 200, 80)),
@@ -53,7 +53,7 @@ local TrailConfigs = {
 			ID = "Solar",
 			Name = "Solar",
 			WinCost = 1200,
-			ProductId = 0,
+			ProductId = 3602185055, -- Developer Product: Solar Trail
 			SpeedBoost = 2,
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
@@ -64,7 +64,7 @@ local TrailConfigs = {
 			ID = "Ice",
 			Name = "Arctic",
 			WinCost = 800,
-			ProductId = 0,
+			ProductId = 3602185251, -- Developer Product: Arctic Trail
 			SpeedBoost = 1.5,
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 220, 255)),
@@ -99,6 +99,9 @@ function TrailConfigs.GetTrailByProductId(productId: number): TrailInfo?
 end
 
 function TrailConfigs.GetDefaultTrail(): TrailInfo?
+	if TrailConfigs.DefaultTrailId == "" then
+		return nil
+	end
 	return TrailConfigs.GetTrailById(TrailConfigs.DefaultTrailId)
 end
 
@@ -106,7 +109,7 @@ function TrailConfigs.IsTrailRowName(name: string): boolean
 	return byId[name] ~= nil
 end
 
---- Ensures the free default trail is owned and equipped for new / legacy saves.
+--- Ensures OwnedTrails table exists. Does NOT auto-grant any trail.
 function TrailConfigs.EnsureDefaultTrail(data: any)
 	if not data then
 		return
@@ -116,10 +119,11 @@ function TrailConfigs.EnsureDefaultTrail(data: any)
 	end
 
 	local defaultId = TrailConfigs.DefaultTrailId
-	data.OwnedTrails[defaultId] = true
-
-	if type(data.EquippedTrail) ~= "string" or data.EquippedTrail == "" then
-		data.EquippedTrail = defaultId
+	if defaultId ~= "" then
+		data.OwnedTrails[defaultId] = true
+		if type(data.EquippedTrail) ~= "string" or data.EquippedTrail == "" then
+			data.EquippedTrail = defaultId
+		end
 	end
 end
 

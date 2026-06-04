@@ -5,6 +5,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local AuraShopConfigs = require(ReplicatedStorage.Shared.Configs.AuraShopConfigs)
+local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
@@ -22,6 +24,11 @@ local gpCache: { [number]: { [number]: boolean } } = {}
 local DataService: any = nil
 local RebirthService: any = nil
 local ThrustUpgradeService: any = nil
+local AuraShopService: any = nil
+local GiveDoubleWinsService: any = nil
+local GodSpeedAuraService: any = nil
+local SkipStageService: any = nil
+local BoostService: any = nil
 
 local function getProductById(productId: number): any?
 	return ProductConfigs.GetProductById(productId)
@@ -33,11 +40,6 @@ local function getGamepassById(passId: number): any?
 			return pass
 		end
 	end
-	for _, tier in ProductConfigs.SpeedPeakTiers do
-		if tier.Id ~= 0 and tier.Id == passId then
-			return tier
-		end
-	end
 	return nil
 end
 
@@ -47,12 +49,22 @@ local function getGamepassByKey(key: string): any?
 			return pass
 		end
 	end
-	for _, tier in ProductConfigs.SpeedPeakTiers do
-		if tier.Key == key then
-			return tier
-		end
-	end
 	return nil
+end
+
+local function grantSpeedPeakTier(player: Player, profile: any, tier: ProductConfigs.SpeedPeakTier): boolean
+	local data = profile.Data
+	-- Developer product: grant every purchase (no permanent "owned" flag).
+	local levels = tier.Level
+	if levels > 0 then
+		local targetLevel = (data.Level or 1) + levels
+		data.Speed = math.max(data.Speed or 0, SpeedConfigs.GetExperienceForLevel(targetLevel))
+		SpeedConfigs.SyncLevelFromSpeed(data)
+	end
+
+	DataService:Replicate(player)
+	print("[iseesupes] SpeedPeak granted:", tier.Key, "levels=", levels, "to", player.Name)
+	return true
 end
 
 local function setGamepassOwned(player: Player, passId: number, owned: boolean)
@@ -93,11 +105,6 @@ local function checkGamepasses(player: Player)
 			checkPass(pass.Key, pass.Id)
 		end
 	end
-	for _, tier in ProductConfigs.SpeedPeakTiers do
-		if tier.Id ~= 0 then
-			checkPass(tier.Key, tier.Id)
-		end
-	end
 end
 
 function MonetizationService:PlayerOwnsGamepass(player: Player, key: string): boolean
@@ -109,13 +116,18 @@ function MonetizationService:PlayerOwnsGamepass(player: Player, key: string): bo
 	return cache ~= nil and cache[cfg.Id] == true
 end
 
+function MonetizationService:PlayerOwnsDoubleWins(player: Player): boolean
+	local profile = DataService and DataService:GetProfile(player)
+	if not profile then
+		return false
+	end
+	return profile.Data.OwnedDoubleWins == true
+end
+
 function MonetizationService.Client:GetGamepassSnapshot(player: Player): { [string]: boolean }
 	local snapshot: { [string]: boolean } = {}
 	for _, pass in ProductConfigs.Gamepasses do
 		snapshot[pass.Key] = MonetizationService:PlayerOwnsGamepass(player, pass.Key)
-	end
-	for _, tier in ProductConfigs.SpeedPeakTiers do
-		snapshot[tier.Key] = MonetizationService:PlayerOwnsGamepass(player, tier.Key)
 	end
 	return snapshot
 end
@@ -124,6 +136,11 @@ function MonetizationService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	RebirthService = Knit.GetService("RebirthService")
 	ThrustUpgradeService = Knit.GetService("ThrustUpgradeService")
+	AuraShopService = Knit.GetService("AuraShopService")
+	GiveDoubleWinsService = Knit.GetService("GiveDoubleWinsService")
+	GodSpeedAuraService = Knit.GetService("GodSpeedAuraService")
+	SkipStageService = Knit.GetService("SkipStageService")
+	BoostService = Knit.GetService("BoostService")
 
 	Players.PlayerAdded:Connect(function(player)
 		task.spawn(checkGamepasses, player)
@@ -143,6 +160,48 @@ function MonetizationService:KnitStart()
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
+		if info.ProductId == GodSpeedAuraConfigs.ProductId and GodSpeedAuraConfigs.ProductId ~= 0 then
+			if GodSpeedAuraService and GodSpeedAuraService:GrantRunBuff(player) then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			warn("[iseesupes][GodSpeedAura] grant failed for", player.Name)
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		local auraOffer = AuraShopConfigs.GetOfferByProductId(info.ProductId)
+		if auraOffer then
+			if AuraShopService and AuraShopService:GrantAura(player, auraOffer.Key) then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		local speedPeak = ProductConfigs.GetSpeedPeakTierById(info.ProductId)
+		if speedPeak then
+			print("[iseesupes][SpeedPeark] ProcessReceipt", player.Name, speedPeak.Key, "productId=", info.ProductId)
+			if grantSpeedPeakTier(player, profile, speedPeak) then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			warn("[iseesupes][SpeedPeark] grant failed for", player.Name, speedPeak.Key)
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		local treadmillProduct = ProductConfigs.GetTreadmillProductById(info.ProductId)
+		if treadmillProduct then
+			local data = profile.Data
+			if typeof(data.OwnedTreadmills) ~= "table" then
+				data.OwnedTreadmills = {}
+			end
+			if data.OwnedTreadmills[treadmillProduct.TierKey] then
+				print("[iseesupes] Treadmill already owned:", treadmillProduct.TierKey, player.Name)
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			data.OwnedTreadmills[treadmillProduct.TierKey] = true
+			DataService:Replicate(player)
+			print("[iseesupes] Granted treadmill tier", treadmillProduct.TierKey, "to", player.Name)
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+
 		local speedProduct = ProductConfigs.GetSpeedProductById(info.ProductId)
 		if speedProduct then
 			local grant = speedProduct.Amount
@@ -156,8 +215,42 @@ function MonetizationService:KnitStart()
 			return Enum.ProductPurchaseDecision.PurchaseGranted
 		end
 
+		local skipStageProduct = ProductConfigs.GetSkipStageProductById(info.ProductId)
+		if skipStageProduct then
+			if SkipStageService and SkipStageService:TeleportToStage(player, skipStageProduct.Stage) then
+				print("[iseesupes] SkipStage: teleported", player.Name, "to Stage", skipStageProduct.Stage)
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			warn("[iseesupes] SkipStage: teleport failed for", player.Name, skipStageProduct.Stage)
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
 		local product = getProductById(info.ProductId)
 		if product then
+			if product.GrantDoubleWins == true then
+				local data = profile.Data
+				if data.OwnedDoubleWins == true then
+					print("[iseesupes] DoubleWins already owned:", player.Name)
+					return Enum.ProductPurchaseDecision.PurchaseGranted
+				end
+				data.OwnedDoubleWins = true
+				DataService:Replicate(player)
+				if GiveDoubleWinsService then
+					GiveDoubleWinsService:FulfillPurchase(player)
+				end
+				print("[iseesupes] Granted 2x Wins to", player.Name)
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+
+			if product.GrantBoost == true then
+				if BoostService and BoostService:GrantBoost(player) then
+					print("[iseesupes] Granted +1 Boost to", player.Name)
+					return Enum.ProductPurchaseDecision.PurchaseGranted
+				end
+				warn("[iseesupes] Boost grant failed for", player.Name)
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+
 			if product.GrantLevels and product.GrantLevels > 0 then
 				local data = profile.Data
 				local targetLevel = (data.Level or 1) + product.GrantLevels
@@ -169,13 +262,14 @@ function MonetizationService:KnitStart()
 			end
 
 			if product.GrantRebirth == true then
-				local ok = RebirthService:PerformRebirth(player, true)
+				local preserve = product.PreserveProgressOnRebirth == true
+				local ok = RebirthService:PerformRebirth(player, true, preserve)
 				if ok then
-					print("[iseesupes] Skip rebirth granted to", player.Name)
-				else
-					warn("[iseesupes] Skip rebirth failed for", player.Name)
+					print("[iseesupes] Rebirth product granted to", player.Name, "preserveProgress=", preserve)
+					return Enum.ProductPurchaseDecision.PurchaseGranted
 				end
-				return Enum.ProductPurchaseDecision.PurchaseGranted
+				warn("[iseesupes] Rebirth product failed for", player.Name, product.Key)
+				return Enum.ProductPurchaseDecision.NotProcessedYet
 			end
 
 			if product.GrantCoins > 0 then

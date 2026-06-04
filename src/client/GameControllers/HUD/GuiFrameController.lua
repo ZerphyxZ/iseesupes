@@ -58,10 +58,7 @@ local function setupRightHudProducts(hud: Instance, player: Player)
 		bindProductButton(boost, player, HudConfigs.BoostProductKey)
 	end
 
-	local skipStage = right:FindFirstChild("Skipstage")
-	if skipStage and skipStage:IsA("GuiButton") then
-		bindProductButton(skipStage, player, HudConfigs.SkipStageProductKey)
-	end
+	-- Skip Stage is now handled by SkipStageController (per-stage product IDs)
 end
 
 function GuiFrameController:KnitStart()

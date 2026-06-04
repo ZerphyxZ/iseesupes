@@ -17,8 +17,10 @@ local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 
 local Knit          = require(ReplicatedStorage.Packages.Knit)
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DataLib       = require(ReplicatedStorage.Shared.Utils.DataLib)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
+local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
 local ThrustMobileBarController = Knit.CreateController({ Name = "ThrustMobileBarController" })
 
@@ -52,8 +54,36 @@ end
 -- ── Flight state ──────────────────────────────────────────────────────────────
 
 local flightActive = false
+local flightStartedAt: number? = nil
 local holdingLocal = false
+local lastCancelTooSoonToastAt = -math.huge
 local DoubleJumpService: any = nil
+
+local function getCancelMinActiveTime(): number
+	local minT = CharacterConfigs.DoubleJump.CancelMinActiveTime
+	if type(minT) == "number" and minT >= 0 then
+		return minT
+	end
+	return 1.25
+end
+
+local function notifyCancelTooSoon()
+	local now = os.clock()
+	if now - lastCancelTooSoonToastAt < 0.6 then
+		return
+	end
+	lastCancelTooSoonToastAt = now
+	local minActive = getCancelMinActiveTime()
+	local remaining = minActive
+	if flightStartedAt then
+		remaining = math.max(0.1, minActive - (now - flightStartedAt))
+	end
+	if remaining >= 10 then
+		NotificationManager.show(string.format("Hold thrust — cancel in %ds", math.ceil(remaining)), "Info")
+	else
+		NotificationManager.show(string.format("Hold thrust — cancel in %.1fs", remaining), "Info")
+	end
+end
 
 local function isPhaseAttrFlying(): boolean
 	local phase = player:GetAttribute(PHASE_ATTR)
@@ -66,7 +96,12 @@ end
 
 local function resetFlightInputState()
 	flightActive = false
+	flightStartedAt = nil
 	holdingLocal = false
+end
+
+local function markFlightStarted()
+	flightStartedAt = os.clock()
 end
 
 local function requestFlightStart()
@@ -77,6 +112,7 @@ local function requestFlightStart()
 	DoubleJumpService:RequestStart():andThen(function(ok: boolean)
 		if ok then
 			flightActive = true
+			markFlightStarted()
 			DoubleJumpService:SetHolding(true)
 			task.defer(syncFlightActiveFromAttribute)
 		else
@@ -98,6 +134,10 @@ local function onButtonTapped()
 	syncFlightActiveFromAttribute()
 
 	if flightActive then
+		if flightStartedAt and os.clock() - flightStartedAt < getCancelMinActiveTime() then
+			notifyCancelTooSoon()
+			return
+		end
 		holdingLocal = false
 		DoubleJumpService:SetHolding(false)
 		return
@@ -299,8 +339,12 @@ function ThrustMobileBarController:KnitStart()
 	end
 
 	player:GetAttributeChangedSignal(PHASE_ATTR):Connect(function()
+		local wasActive = flightActive
 		syncFlightActiveFromAttribute()
-		if not flightActive then
+		if flightActive and not wasActive then
+			markFlightStarted()
+		elseif not flightActive then
+			flightStartedAt = nil
 			holdingLocal = false
 		end
 	end)

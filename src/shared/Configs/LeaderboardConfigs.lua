@@ -78,6 +78,17 @@ LeaderboardConfigs.Boards = {
 			return TimeFormat.formatPlayTime(score)
 		end,
 	} :: LeaderboardConfig,
+	MaxStage = {
+		StoreName = "GlobalMaxStage_v1",
+		ModelName = "StageLeaderboard",
+		ProfileKey = "MaxStage",
+		GetScore = function(data)
+			return profileInt(data, "MaxStage")
+		end,
+		ScoreFormatter = function(score)
+			return "Stage " .. tostring(score)
+		end,
+	} :: LeaderboardConfig,
 }
 
 return LeaderboardConfigs

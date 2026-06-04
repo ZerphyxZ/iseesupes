@@ -14,6 +14,7 @@ local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLandi
 local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJumpFlightPhysics)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -107,13 +108,56 @@ local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local actionBound = false
 local abilityActive = false
+local abilityStartedAt: number? = nil
 local holdingLocally = false
+local lastCancelTooSoonToastAt = -math.huge
 local smoothedSteerDir: Vector3? = nil
 local smoothedSteerAxis = 0
 local smoothedSteerPitchAxis = 0
 local lastSteerSendAt = 0
 local pendingSteerHasDirection = false
 local pendingSteerDirection: Vector3? = nil
+
+local function getCancelMinActiveTime(): number
+	local minT = getTuning().CancelMinActiveTime
+	if type(minT) == "number" and minT >= 0 then
+		return minT
+	end
+	return 1.25
+end
+
+local function isAbilityActiveOnClient(): boolean
+	return abilityActive or player:GetAttribute(PHASE_ATTR) ~= nil
+end
+
+local function canCancelAbilityYet(): boolean
+	if not abilityStartedAt then
+		return not isAbilityActiveOnClient()
+	end
+	return os.clock() - abilityStartedAt >= getCancelMinActiveTime()
+end
+
+local function notifyCancelTooSoon()
+	local now = os.clock()
+	if now - lastCancelTooSoonToastAt < 0.6 then
+		return
+	end
+	lastCancelTooSoonToastAt = now
+	local minActive = getCancelMinActiveTime()
+	local remaining = minActive
+	if abilityStartedAt then
+		remaining = math.max(0.1, minActive - (now - abilityStartedAt))
+	end
+	if remaining >= 10 then
+		NotificationManager.show(string.format("Hold thrust — cancel in %ds", math.ceil(remaining)), "Info")
+	else
+		NotificationManager.show(string.format("Hold thrust — cancel in %.1fs", remaining), "Info")
+	end
+end
+
+local function markAbilityStarted()
+	abilityStartedAt = os.clock()
+end
 
 local function clientOwnsFlightPhysics(): boolean
 	local net = DjCfg.Network
@@ -1504,6 +1548,7 @@ onAbilityEnded = function()
 
 	applyAbilityJumpLock(false)
 	abilityActive = false
+	abilityStartedAt = nil
 	holdingLocally = false
 	smoothedSteerDir = nil
 	smoothedSteerAxis = 0
@@ -1539,6 +1584,11 @@ end
 local function cancelActiveAbilityFromInput()
 	if not abilityActive and not player:GetAttribute(PHASE_ATTR) then
 		return false
+	end
+
+	if not canCancelAbilityYet() then
+		notifyCancelTooSoon()
+		return true
 	end
 
 	holdingLocally = false
@@ -1781,9 +1831,11 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 		end
 
 		holdingLocally = true
+		markAbilityStarted()
 		service:RequestStart():andThen(function(ok: boolean, _reason: string?)
 			if ok then
 				abilityActive = true
+				markAbilityStarted()
 				resetCameraSteerTracking()
 				service:SetHolding(true)
 
@@ -1819,6 +1871,7 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 				end
 			else
 				holdingLocally = false
+				abilityStartedAt = nil
 			end
 		end):catch(warn)
 
@@ -1892,6 +1945,7 @@ function DoubleJumpController:KnitStart()
 		local character = player.Character
 		if not abilityActive and phase == PHASE.FlightTransit then
 			abilityActive = true
+			markAbilityStarted()
 			resetCameraSteerTracking()
 			if character then
 				ensureAbilityState(character)
@@ -1915,27 +1969,13 @@ function DoubleJumpController:KnitStart()
 
 	DoubleJumpService.AbilityEnded:Connect(onAbilityEnded)
 
-	DoubleJumpService.Rejected:Connect(function(reason: string)
-		if reason == "no_thrust" then
-			local label = Instance.new("TextLabel")
-			label.Name = "NoThrustHint"
-			label.BackgroundTransparency = 1
-			label.Size = UDim2.fromOffset(280, 36)
-			label.AnchorPoint = Vector2.new(0.5, 0.5)
-			label.Position = UDim2.new(0.5, 0, 0.5, 0)
-			label.Font = Enum.Font.GothamBold
-			label.TextSize = 20
-			label.TextColor3 = Color3.fromRGB(255, 140, 120)
-			label.Text = "No Thrust — wait a moment to recharge!"
-			label.TextStrokeTransparency = 0.5
-			label.ZIndex = 60
-			local gui = Players.LocalPlayer:FindFirstChild("PlayerGui")
-			local root = gui and (gui:FindFirstChild("GUI") or gui)
-			if root then
-				label.Parent = root
-				task.delay(2, function()
-					label:Destroy()
-				end)
+	-- Server sets ForceStandUp=true before teleporting player to lobby after a win claim.
+	-- Calling onAbilityEnded() here cancels flight, sets PlatformStand=false, and stops all
+	-- tracks so the character doesn't land in a prone Superman pose at the lobby spawn.
+	player:GetAttributeChangedSignal("ForceStandUp"):Connect(function()
+		if player:GetAttribute("ForceStandUp") == true then
+			if abilityActive or player:GetAttribute(PHASE_ATTR) then
+				onAbilityEnded()
 			end
 		end
 	end)

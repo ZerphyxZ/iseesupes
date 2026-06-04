@@ -28,12 +28,15 @@ local TreadmillService = Knit.CreateService({
 })
 
 local activeTreadmills: { [Player]: Model } = {}
+--- One purchase prompt per locked-treadmill contact; cleared when the player steps off.
+local lockedTreadmillSessions: { [Player]: { tierKey: string, model: Model, prompted: boolean } } = {}
 local modelNameToTier: { [string]: TreadmillTier } = {}
 local treadmillsFolder: Folder? = nil
 local kickSpawnPart: BasePart? = nil
 
-local MonetizationService: any = nil
 local DataService: any = nil
+local DoubleJumpService: any = nil
+local SuperJumpService: any = nil
 
 local KillPartConfigs = {
 	Tag = "KillPart",
@@ -130,26 +133,27 @@ local function getTreadmillFromPart(part: BasePart): (Model?, TreadmillTier?)
 	return nil, nil
 end
 
-local function getGamepassIdForTier(tier: TreadmillTier): number
-	if not tier.GamepassKey then
-		return 0
-	end
-	for _, pass in ProductConfigs.Gamepasses do
-		if pass.Key == tier.GamepassKey then
-			return pass.Id
-		end
+local function getProductIdForTier(tier: TreadmillTier): number
+	local product = ProductConfigs.GetTreadmillProductForTier(tier.Key)
+	if product then
+		return product.Id
 	end
 	return 0
 end
 
 local function playerHasTierAccess(player: Player, tier: TreadmillTier): boolean
-	if not tier.GamepassKey then
+	if not ProductConfigs.GetTreadmillProductForTier(tier.Key) then
 		return true
 	end
-	if not MonetizationService then
+	if not DataService then
 		return false
 	end
-	return MonetizationService:PlayerOwnsGamepass(player, tier.GamepassKey) == true
+	local profile = DataService:GetProfile(player)
+	if not profile then
+		return false
+	end
+	local owned = profile.Data.OwnedTreadmills
+	return typeof(owned) == "table" and owned[tier.Key] == true
 end
 
 local function applyHighlight(model: Model, color: Color3)
@@ -181,24 +185,28 @@ local function fireActiveTreadmill(player: Player, tier: TreadmillTier?)
 	end
 end
 
-local function kickFromTreadmill(player: Player, tier: TreadmillTier)
-	local character = player.Character
-	if not character then
+local function clearLockedTreadmillSession(player: Player)
+	lockedTreadmillSessions[player] = nil
+end
+
+--- Prompts at most once per stand-on; no spawn teleport (player stays on the belt).
+local function tryPromptLockedTreadmill(player: Player, treadmillModel: Model, tier: TreadmillTier)
+	local session = lockedTreadmillSessions[player]
+	if session and session.model == treadmillModel and session.tierKey == tier.Key and session.prompted then
 		return
 	end
 
-	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root or not kickSpawnPart then
-		return
-	end
+	lockedTreadmillSessions[player] = {
+		tierKey = tier.Key,
+		model = treadmillModel,
+		prompted = true,
+	}
 
-	root.CFrame = kickSpawnPart.CFrame + GameplayCfg.KickTeleportOffset
+	TreadmillService.Client.AccessDenied:Fire(player, tier.Key, tier.DisplayName)
 
-	TreadmillService.Client.AccessDenied:Fire(player, tier.Key, tier.DisplayName, tier.GamepassKey)
-
-	local passId = getGamepassIdForTier(tier)
-	if passId > 0 then
-		MarketplaceService:PromptGamePassPurchase(player, passId)
+	local productId = getProductIdForTier(tier)
+	if productId > 0 then
+		MarketplaceService:PromptProductPurchase(player, productId)
 	end
 end
 
@@ -233,6 +241,7 @@ local function clearPlayerTreadmill(player: Player)
 		activeTreadmills[player] = nil
 		fireActiveTreadmill(player, nil)
 	end
+	clearLockedTreadmillSession(player)
 end
 
 local function checkTreadmills(deltaTime: number)
@@ -282,12 +291,16 @@ local function checkTreadmills(deltaTime: number)
 
 		if treadmillModel and tier then
 			if not playerHasTierAccess(player, tier) then
-				kickFromTreadmill(player, tier)
-				if previousModel then
-					clearPlayerTreadmill(player)
+				if previousModel and previousModel ~= treadmillModel then
+					removeHighlight(previousModel)
+					activeTreadmills[player] = nil
+					fireActiveTreadmill(player, nil)
 				end
+				tryPromptLockedTreadmill(player, treadmillModel, tier)
 				continue
 			end
+
+			clearLockedTreadmillSession(player)
 
 			if previousModel ~= treadmillModel then
 				if previousModel then
@@ -302,6 +315,7 @@ local function checkTreadmills(deltaTime: number)
 				awardTreadmillTick(player, tier)
 			end
 		else
+			clearLockedTreadmillSession(player)
 			if previousModel then
 				clearPlayerTreadmill(player)
 			end
@@ -387,6 +401,23 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 	if not player.Parent then
 		return
 	end
+
+	-- End any active flight/jump session BEFORE LoadCharacter so the session is
+	-- properly cleaned up (PHASE_ATTR cleared, AbilityEnded fired). Without this,
+	-- the kill ragdoll never triggers Humanoid.Died (Health > 0) and the stale
+	-- DJ session leaks into the new respawned character → prone/crying pose.
+	if DoubleJumpService and DoubleJumpService._endAbility then
+		pcall(function() DoubleJumpService:_endAbility(player) end)
+	end
+	if SuperJumpService and SuperJumpService._endAbility then
+		pcall(function() SuperJumpService:_endAbility(player) end)
+	end
+	player:SetAttribute("ForceStandUp", true)
+	task.delay(0.2, function()
+		if player.Parent then
+			player:SetAttribute("ForceStandUp", nil)
+		end
+	end)
 
 	player:LoadCharacter()
 
@@ -517,8 +548,9 @@ local function initKillParts()
 end
 
 function TreadmillService:KnitStart()
-	MonetizationService = Knit.GetService("MonetizationService")
 	DataService = Knit.GetService("DataService")
+	pcall(function() DoubleJumpService = Knit.GetService("DoubleJumpService") end)
+	pcall(function() SuperJumpService = Knit.GetService("SuperJumpService") end)
 
 	buildTierLookups()
 	resolveWorldInstances()
@@ -529,6 +561,7 @@ function TreadmillService:KnitStart()
 
 	Players.PlayerRemoving:Connect(function(player)
 		clearPlayerTreadmill(player)
+		clearLockedTreadmillSession(player)
 		killCooldownUntil[player] = nil
 	end)
 

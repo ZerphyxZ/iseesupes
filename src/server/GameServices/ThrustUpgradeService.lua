@@ -36,21 +36,30 @@ local function grantTier(player: Player, tier: number): string
 		return "NoData"
 	end
 
-	local currentTier = getCurrentTier(data)
+	-- Allow repeated purchases: track counts per tier
+	data.ThrustUpgradePurchases = data.ThrustUpgradePurchases or {}
+	data.ThrustUpgradePurchases[tier] = (data.ThrustUpgradePurchases[tier] or 0) + 1
 
-	if currentTier >= tier then
-		return "AlreadyOwned"
+	-- Recompute total fuel bonus from all purchases
+	local totalBonus = 0
+	for i, cfg in pairs(ThrustUpgradeConfigs.Tiers) do
+		local count = data.ThrustUpgradePurchases[i] or 0
+		totalBonus = totalBonus + (cfg.FuelBonus or 0) * count
 	end
 
-	if tier ~= currentTier + 1 then
-		return "MustBuyPrevious"
-	end
-
-	data.ThrustUpgradeTier = tier
-	local newMax = ThrustConfigs.BaseMaxFuel + ThrustUpgradeConfigs.GetTotalBonusForTier(tier)
+	local newMax = ThrustConfigs.BaseMaxFuel + totalBonus
 	DataService:ApplyUpgradedMax(player, newMax)
 
-	print("[iseesupes] ThrustUpgradeService:", player.Name, "granted tier", tier, "→ ThrustMax =", newMax)
+	print(
+		"[iseesupes] ThrustUpgradeService:",
+		player.Name,
+		"granted tier",
+		tier,
+		"count =",
+		data.ThrustUpgradePurchases[tier],
+		"→ ThrustMax =",
+		newMax
+	)
 	return "Success"
 end
 
@@ -66,8 +75,8 @@ function ThrustUpgradeService:GrantTierFromProduct(player: Player, productId: nu
 		return true
 	end
 
+	-- Receipt retries: treat AlreadyOwned as granted (shouldn't occur now)
 	if result == "AlreadyOwned" then
-		-- Receipt may retry; tier already applied — treat as granted.
 		return true
 	end
 
@@ -92,18 +101,7 @@ function ThrustUpgradeService.Client:BuyUpgrade(player: Player, tier: number): (
 		return
 	end
 
-	local currentTier = getCurrentTier(data)
-
-	if currentTier >= tier then
-		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "AlreadyOwned", tier)
-		return
-	end
-
-	if tier ~= currentTier + 1 then
-		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "MustBuyPrevious", tier)
-		return
-	end
-
+	-- No "AlreadyOwned" check — allow repeat purchases
 	if not DataService:TrySpendWins(player, tierCfg.WinCost) then
 		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "NotEnoughWins", tier)
 		return

@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 local DataService: any = nil
@@ -45,6 +46,15 @@ function SpeedService:AddSpeed(player: Player): boolean
 	local stepBonus = if type(data.StepSpeedBonus) == "number" then data.StepSpeedBonus else 0
 	local gain = (SpeedConfigs.SpeedGainPerStudBatch + stepBonus)
 		* SpeedConfigs.GetRebirthGainMultiplier(getRebirths(data))
+
+	if player:GetAttribute(GodSpeedAuraConfigs.ActiveAttribute) == true then
+		local mult = player:GetAttribute(GodSpeedAuraConfigs.SpeedGainMultiplierAttribute)
+		if typeof(mult) == "number" and mult > 1 then
+			gain *= mult
+		else
+			gain *= GodSpeedAuraConfigs.SpeedGainMultiplier
+		end
+	end
 	local oldLevel = type(data.Level) == "number" and data.Level or 1
 
 	data.Speed += gain

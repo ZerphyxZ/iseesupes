@@ -70,6 +70,8 @@ type AbilitySession = {
 	thrustDepleted: boolean?,
 	thrustEmptyAt: number?,
 	flightFuelAtStart: number?,
+	--- Set when player cancels within CancelCooldownGrace (no thrust cooldown after landing).
+	earlyCancel: boolean?,
 	landingProbeAt: number?,
 	landingProbe: DoubleJumpLanding.LandingProbe?,
 	obstacleProbeAt: number?,
@@ -150,6 +152,30 @@ local DoubleJumpService = Knit.CreateService({
 
 local sessions: { [Player]: AbilitySession } = {}
 local cooldownEndsAt: { [Player]: number } = {}
+
+local function getCancelCooldownGrace(tuning: DjTuning): number
+	local grace = tuning.CancelCooldownGrace
+	if type(grace) == "number" and grace > 0 then
+		return grace
+	end
+	return 2.5
+end
+
+local function getCancelMinActiveTime(tuning: DjTuning): number
+	local minT = tuning.CancelMinActiveTime
+	if type(minT) == "number" and minT >= 0 then
+		return minT
+	end
+	return 1.25
+end
+
+local function applyThrustCooldownOnEnd(player: Player, session: AbilitySession)
+	if session.earlyCancel == true then
+		cooldownEndsAt[player] = nil
+		return
+	end
+	cooldownEndsAt[player] = os.clock() + session.tuning.Cooldown
+end
 local heartbeatConn: RBXScriptConnection? = nil
 local DataService: any = nil
 
@@ -736,6 +762,7 @@ function DoubleJumpService:_endAbility(player: Player)
 		return
 	end
 
+	applyThrustCooldownOnEnd(player, session)
 	sessions[player] = nil
 
 	if session.diedConn then
@@ -762,6 +789,15 @@ function DoubleJumpService:_endAbility(player: Player)
 
 	player:SetAttribute(PHASE_ATTR, nil)
 	self.Client.AbilityEnded:Fire(player)
+end
+
+--- Ends active thrust/flight before lobby teleport so the rig is upright, not prone.
+function DoubleJumpService:ForceEndForLobby(player: Player)
+	if sessions[player] then
+		self:_endAbility(player)
+	else
+		player:SetAttribute(PHASE_ATTR, nil)
+	end
 end
 
 function DoubleJumpService:_transitionToCancelFall(session: AbilitySession)
@@ -1337,8 +1373,6 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 	local tuning = LevelDesignTuning.getDoubleJump(player)
 	local poseCfg = tuning.SupermanPose
 
-	cooldownEndsAt[player] = os.clock() + tuning.Cooldown
-
 	if RunService:IsStudio() then
 		print("[iseesupes] E ability using server tuning:", LevelDesignTuning.formatActiveTuning(player))
 	end
@@ -1392,6 +1426,7 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		thrustDepleted = false,
 		thrustEmptyAt = nil,
 		flightFuelAtStart = fuelAtStart,
+		earlyCancel = false,
 	}
 
 	humanoid.AutoRotate = false
@@ -1422,12 +1457,20 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 	return true, nil
 end
 
-function DoubleJumpService.Client:RequestStart(player: Player): (boolean, string?)
+function DoubleJumpService.Client:RequestStart(player: Player): (boolean, string?, number?)
 	local ok, reason = DoubleJumpService:_tryStart(player)
 	if not ok then
-		DoubleJumpService.Client.Rejected:Fire(player, reason or "rejected")
+		local detail: number? = nil
+		if reason == "cooldown" then
+			local endsAt = cooldownEndsAt[player]
+			if endsAt then
+				detail = math.max(0, endsAt - os.clock())
+			end
+		end
+		DoubleJumpService.Client.Rejected:Fire(player, reason or "rejected", detail)
+		return false, reason, detail
 	end
-	return ok, reason
+	return true, nil, nil
 end
 
 function DoubleJumpService.Client:UpdateSteerState(
@@ -1514,6 +1557,13 @@ function DoubleJumpService.Client:SetHolding(player: Player, isHolding: boolean)
 	end
 
 	if not isHolding and canCancelOnRelease(session.phase) then
+		local elapsed = os.clock() - session.abilityStartedAt
+		if elapsed < getCancelMinActiveTime(session.tuning) then
+			return
+		end
+		if elapsed < getCancelCooldownGrace(session.tuning) then
+			session.earlyCancel = true
+		end
 		if session.cancelFallStartedAt and session.phase == PHASE.LeapDown then
 			return
 		end

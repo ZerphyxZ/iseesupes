@@ -40,20 +40,18 @@ local function getLabel(parent: Instance, name: string): TextLabel?
 	return if child and child:IsA("TextLabel") then child :: TextLabel else nil
 end
 
-local function getButton(parent: Instance, name: string): GuiButton?
-	local frame = parent:FindFirstChild(name)
-	if not frame then
+--- Studio paths (StarterGui.GUI.Frames.ThrustBoosts | JumpBoosts): StrengthN > Buy > Button, Buy > Layout, BuyRobux > Button, BuyRobux > Amount
+local function getPurchaseButton(row: Frame, containerName: string): GuiButton?
+	local container = row:FindFirstChild(containerName)
+	if not container then
 		return nil
 	end
-	local btn = frame:FindFirstChild("Button")
-	if btn and (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
-		return btn :: GuiButton
-	end
-	return nil
+	local btn = container:FindFirstChild("Button")
+	return if btn and btn:IsA("GuiButton") then btn :: GuiButton else nil
 end
 
-local function getBuyPriceLabel(parent: Instance): TextLabel?
-	local buyBtn = getButton(parent, "Buy")
+local function getBuyPriceLabel(row: Frame): TextLabel?
+	local buyBtn = getPurchaseButton(row, "Buy")
 	if not buyBtn then
 		return nil
 	end
@@ -61,20 +59,123 @@ local function getBuyPriceLabel(parent: Instance): TextLabel?
 	return if textChild and textChild:IsA("TextLabel") then textChild :: TextLabel else nil
 end
 
-local function getRobuxPriceLabel(parent: Instance): TextLabel?
-	local robuxBtn = getButton(parent, "BuyRobux")
-	if not robuxBtn then
+local function getRobuxPriceLabel(row: Frame): TextLabel?
+	local buyRobux = row:FindFirstChild("BuyRobux")
+	if not buyRobux then
 		return nil
 	end
-	local amount = robuxBtn:FindFirstChild("Amount")
-	if amount and amount:IsA("TextLabel") then
-		return amount :: TextLabel
-	end
-	local textChild = robuxBtn:FindFirstChild("Text")
-	return if textChild and textChild:IsA("TextLabel") then textChild :: TextLabel else nil
+	local amount = buyRobux:FindFirstChild("Amount")
+	return if amount and amount:IsA("TextLabel") then amount :: TextLabel else nil
 end
 
-local function setRobuxPriceLabel(label: TextLabel, productId: number)
+local function setRobuxButtonLabel(btn: GuiButton?, productId: number)
+	if not btn then
+		return
+	end
+
+	local function applyText(txt: string)
+		-- If the button itself is a TextButton, write directly.
+		if btn:IsA("TextButton") then
+			btn.Text = txt
+			return
+		end
+
+		-- Otherwise try common child names used for text inside the button.
+		local child = btn:FindFirstChild("Text")
+			or btn:FindFirstChild("Label")
+			or btn:FindFirstChild("Amount")
+			or btn:FindFirstChild("Price")
+		if child and child:IsA("TextLabel") then
+			child.Text = txt
+		end
+	end
+
+	if productId == 0 then
+		applyText("—")
+		return
+	end
+
+	if priceCache[productId] then
+		applyText(ROBUX_PREFIX .. tostring(priceCache[productId]))
+		return
+	end
+
+	applyText("...")
+	task.spawn(function()
+		local success, productInfo = pcall(function()
+			return MarketplaceService:GetProductInfo(productId, Enum.InfoType.Product)
+		end)
+		if success and productInfo and btn.Parent then
+			priceCache[productId] = productInfo.PriceInRobux
+			applyText(ROBUX_PREFIX .. tostring(productInfo.PriceInRobux))
+		elseif btn.Parent then
+			applyText("Error")
+		end
+	end)
+end
+
+local function getFrame(parent: Instance, name: string): Frame?
+	local child = parent:FindFirstChild(name)
+	return if child and child:IsA("Frame") then child :: Frame else nil
+end
+
+local function setGuiVisible(parent: Instance, name: string, visible: boolean)
+	local child = parent:FindFirstChild(name)
+	if child and child:IsA("GuiObject") then
+		(child :: GuiObject).Visible = visible
+	end
+end
+
+local function formatStrength(value: number): string
+	return NumberFormatter.Format(math.floor(value))
+end
+
+local FRAME_CLICK_BLOCKERS = { "Layout", "Title", "Icon" }
+local ROW_CLICK_BLOCKERS = { "Layout" }
+local BUY_CLICK_BLOCKERS = { "Layout" }
+local BUY_ROBUX_CLICK_BLOCKERS = { "Amount" }
+
+local function setGuiInputEnabled(inst: Instance?, enabled: boolean)
+	if inst and inst:IsA("GuiObject") then
+		(inst :: GuiObject).Active = enabled
+	end
+end
+
+local function unblockStrengthClicks(frame: Frame)
+	for _, name in FRAME_CLICK_BLOCKERS do
+		setGuiInputEnabled(frame:FindFirstChild(name), false)
+	end
+end
+
+local function unblockPurchaseButtons(row: Frame)
+	for _, name in ROW_CLICK_BLOCKERS do
+		setGuiInputEnabled(row:FindFirstChild(name), false)
+	end
+
+	local buy = row:FindFirstChild("Buy")
+	if buy then
+		setGuiInputEnabled(buy, true)
+		for _, name in BUY_CLICK_BLOCKERS do
+			setGuiInputEnabled(buy:FindFirstChild(name), false)
+		end
+	end
+
+	local buyRobux = row:FindFirstChild("BuyRobux")
+	if buyRobux then
+		setGuiInputEnabled(buyRobux, true)
+		for _, name in BUY_ROBUX_CLICK_BLOCKERS do
+			setGuiInputEnabled(buyRobux:FindFirstChild(name), false)
+		end
+	end
+end
+
+-- ...existing code...
+
+local function setRobuxPriceLabel(label: TextLabel?, productId: number)
+	if not label then
+		return
+	end
+
 	if productId == 0 then
 		label.Text = "—"
 		return
@@ -99,20 +200,36 @@ local function setRobuxPriceLabel(label: TextLabel, productId: number)
 	end)
 end
 
-local function getFrame(parent: Instance, name: string): Frame?
-	local child = parent:FindFirstChild(name)
-	return if child and child:IsA("Frame") then child :: Frame else nil
-end
+local function bindPurchaseClick(row: Frame, containerName: string, onPurchase: () -> ())
+	unblockPurchaseButtons(row)
 
-local function setGuiVisible(parent: Instance, name: string, visible: boolean)
-	local child = parent:FindFirstChild(name)
-	if child and child:IsA("GuiObject") then
-		(child :: GuiObject).Visible = visible
+	local lastClickAt = 0
+	local function tryPurchase()
+		local now = os.clock()
+		if now - lastClickAt < 0.35 then
+			return
+		end
+		lastClickAt = now
+		onPurchase()
 	end
-end
 
-local function formatStrength(value: number): string
-	return NumberFormatter.Format(math.floor(value))
+	local btn = getPurchaseButton(row, containerName)
+	if btn then
+		btn.MouseButton1Click:Connect(tryPurchase)
+	end
+
+	local container = row:FindFirstChild(containerName)
+	if container and container:IsA("GuiObject") then
+		(container :: GuiObject).InputBegan:Connect(function(input: InputObject)
+			if
+				input.UserInputType ~= Enum.UserInputType.MouseButton1
+				and input.UserInputType ~= Enum.UserInputType.Touch
+			then
+				return
+			end
+			tryPurchase()
+		end)
+	end
 end
 
 local function resolveCloseButton(frame: Instance): GuiButton?
@@ -131,16 +248,7 @@ local function resolveCloseButton(frame: Instance): GuiButton?
 	for _, name in HudConfigs.CloseButtonNames do
 		local direct = frame:FindFirstChild(name)
 		if direct and direct:IsA("GuiButton") then
-			return direct
-		end
-	end
-	for _, desc in frame:GetDescendants() do
-		if desc:IsA("GuiButton") then
-			for _, name in HudConfigs.CloseButtonNames do
-				if desc.Name == name then
-					return desc
-				end
-			end
+			return direct :: GuiButton
 		end
 	end
 	return nil
@@ -150,50 +258,56 @@ end
 -- UI POPULATION
 -- ──────────────────────────────────────────────────────────────────────────────
 
+-- ...existing code...
+-- ...existing code...
+
 local function refreshShopUI(data: any)
-	if not thrustBoostsFrame then return end
+	if not thrustBoostsFrame then
+		return
+	end
 
 	local currentTier = if type(data.ThrustUpgradeTier) == "number" then data.ThrustUpgradeTier else 0
 
 	for tier = 1, 3 do
 		local sf = strengthFrames[tier]
-		if not sf then continue end
+		if not sf then
+			continue
+		end
 
 		local cfg = ThrustUpgradeConfigs.Tiers[tier]
-		local owned = currentTier >= tier
-		local canBuy = (currentTier == tier - 1)
 
 		local fuelBefore = ThrustConfigs.BaseMaxFuel + ThrustUpgradeConfigs.GetTotalBonusForTier(tier - 1)
-		local fuelAfter  = ThrustConfigs.BaseMaxFuel + ThrustUpgradeConfigs.GetTotalBonusForTier(tier)
+		local fuelAfter = ThrustConfigs.BaseMaxFuel + ThrustUpgradeConfigs.GetTotalBonusForTier(tier)
 
 		local currentLabel = getLabel(sf, "CurrentStrength")
-		local nextLabel    = getLabel(sf, "NextStrength")
-		local infoLabel    = getLabel(sf, "Info")
-		local ownedFrame    = getFrame(sf, "Owned")
-		local buyFrame      = getFrame(sf, "Buy")
-		local buyBtn          = getButton(sf, "Buy")
-		local buyRobuxBtn     = getButton(sf, "BuyRobux")
-		local buyPriceLabel   = getBuyPriceLabel(sf)
+		local nextLabel = getLabel(sf, "NextStrength")
+		local infoLabel = getLabel(sf, "Info")
+		local buyFrame = getFrame(sf, "Buy")
+		local buyBtn = getPurchaseButton(sf, "Buy")
+		local buyRobuxBtn = getPurchaseButton(sf, "BuyRobux")
+		local buyPriceLabel = getBuyPriceLabel(sf)
 		local robuxPriceLabel = getRobuxPriceLabel(sf)
-		local showRobuxRow = not owned
-			and (cfg.ProductId ~= 0 or ThrustUpgradeConfigs.ShowRobuxWhenUnconfigured == true)
-		local canPurchaseRobux = canBuy and cfg.ProductId ~= 0
 
-		if currentLabel then currentLabel.Text = formatStrength(fuelBefore) end
-		if nextLabel    then nextLabel.Text    = formatStrength(fuelAfter)  end
-		if infoLabel    then
+		if currentLabel then
+			currentLabel.Text = formatStrength(fuelBefore)
+		end
+		if nextLabel then
+			nextLabel.Text = formatStrength(fuelAfter)
+		end
+		if infoLabel then
 			infoLabel.Text = string.format("+%d Thrust Boost", cfg.FuelBonus)
 		end
 
-		if ownedFrame then ownedFrame.Visible = owned end
-		if buyFrame   then buyFrame.Visible   = not owned end
-		setGuiVisible(sf, "BuyRobux", showRobuxRow)
+		setGuiVisible(sf, "Owned", false)
+		if buyFrame then
+			buyFrame.Visible = true
+		end
+		setGuiVisible(sf, "BuyRobux", true)
 
 		if buyPriceLabel then
 			buyPriceLabel.Text = NumberFormatter.Format(cfg.WinCost)
 		end
-
-		if robuxPriceLabel and showRobuxRow then
+		if robuxPriceLabel then
 			setRobuxPriceLabel(robuxPriceLabel, cfg.ProductId)
 		end
 
@@ -201,20 +315,22 @@ local function refreshShopUI(data: any)
 			if buyBtn:IsA("TextButton") then
 				buyBtn.Text = ""
 			end
-			buyBtn.Active = canBuy
-			buyBtn.AutoButtonColor = canBuy
+			buyBtn.Active = true
+			buyBtn.AutoButtonColor = true
 		end
 
 		if buyRobuxBtn then
 			if buyRobuxBtn:IsA("TextButton") then
 				buyRobuxBtn.Text = ""
 			end
-			buyRobuxBtn.Active = canPurchaseRobux
-			buyRobuxBtn.AutoButtonColor = canPurchaseRobux
+			setRobuxButtonLabel(buyRobuxBtn, cfg.ProductId)
+			buyRobuxBtn.Active = (cfg.ProductId ~= 0)
+			buyRobuxBtn.AutoButtonColor = (cfg.ProductId ~= 0)
 		end
+
+		unblockPurchaseButtons(sf)
 	end
 end
-
 -- ──────────────────────────────────────────────────────────────────────────────
 -- FRAME OPEN / CLOSE
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -224,6 +340,7 @@ local function openShop()
 		return
 	end
 
+	unblockStrengthClicks(thrustBoostsFrame)
 	if cachedData then
 		refreshShopUI(cachedData)
 	end
@@ -263,11 +380,18 @@ local CLOSE_DISTANCE = 20
 
 local function startProximityWatcher(touchPart: BasePart)
 	RunService.Heartbeat:Connect(function()
-		if not isFrameOpen then return end
+		if not isFrameOpen then
+			return
+		end
 		local character = player.Character
-		if not character then closeShop() return end
+		if not character then
+			closeShop()
+			return
+		end
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not root then return end
+		if not root then
+			return
+		end
 		if (root.Position - touchPart.Position).Magnitude > CLOSE_DISTANCE then
 			closeShop()
 		end
@@ -295,7 +419,11 @@ function ThrustController:KnitStart()
 		return
 	end
 
-	thrustBoostsFrame = (frames:FindFirstChild("ThrustBoosts") or frames:FindFirstChild("UPGRADES")) :: Frame?
+	thrustBoostsFrame = (
+		frames:FindFirstChild("ThrustBoosts")
+		or frames:FindFirstChild("JumpBoosts")
+		or frames:FindFirstChild("UPGRADES")
+	) :: Frame?
 	if not thrustBoostsFrame then
 		warn("[iseesupes] ThrustController: ThrustBoosts / UPGRADES frame not found under GUI.Frames")
 		return
@@ -303,6 +431,7 @@ function ThrustController:KnitStart()
 
 	HudAnimations.rememberBaseSize(thrustBoostsFrame)
 	thrustBoostsFrame.Visible = false
+	unblockStrengthClicks(thrustBoostsFrame)
 
 	bindCloseButton(thrustBoostsFrame)
 
@@ -310,33 +439,29 @@ function ThrustController:KnitStart()
 		local sf = thrustBoostsFrame:FindFirstChild("Strength" .. i) :: Frame?
 		if sf then
 			strengthFrames[i] = sf
+			unblockPurchaseButtons(sf)
 		end
 	end
 
 	-- Wire Buy (wins) and BuyRobux buttons for each tier
+	-- ...existing code...
+	-- Wire Buy (wins) and BuyRobux buttons for each tier
 	for tier = 1, 3 do
 		local sf = strengthFrames[tier]
-		if not sf then continue end
+		if not sf then
+			continue
+		end
 
 		local tierCfg = ThrustUpgradeConfigs.Tiers[tier]
 		local t = tier
 
-		local buyBtn = getButton(sf, "Buy")
-		if buyBtn then
-			buyBtn.MouseButton1Click:Connect(function()
-				local ownedTier = if cachedData and type(cachedData.ThrustUpgradeTier) == "number"
-					then cachedData.ThrustUpgradeTier else 0
-				if ownedTier ~= t - 1 then return end
-				ThrustUpgradeService:BuyUpgrade(t)
-			end)
-		end
+		-- removed client-side "Already owned" guard so purchases can be repeated
+		bindPurchaseClick(sf, "Buy", function()
+			ThrustUpgradeService:BuyUpgrade(t)
+		end)
 
-		local buyRobuxBtn = getButton(sf, "BuyRobux")
-		if buyRobuxBtn and tierCfg then
-			buyRobuxBtn.MouseButton1Click:Connect(function()
-				local ownedTier = if cachedData and type(cachedData.ThrustUpgradeTier) == "number"
-					then cachedData.ThrustUpgradeTier else 0
-				if ownedTier ~= t - 1 then return end
+		if tierCfg then
+			bindPurchaseClick(sf, "BuyRobux", function()
 				if tierCfg.ProductId == 0 then
 					NotificationManager.show(
 						"Robux upgrade not configured yet — add ProductId in ThrustUpgradeConfigs.",
@@ -348,18 +473,22 @@ function ThrustController:KnitStart()
 			end)
 		end
 	end
-
+	-- ...existing code...
 	-- Refresh UI on every data replicate
 	DataService.DataReplicated:Connect(function(data: any)
 		cachedData = data
-		if isFrameOpen then refreshShopUI(data) end
+		if isFrameOpen then
+			refreshShopUI(data)
+		end
 	end)
 
 	-- Handle purchase results
 	ThrustUpgradeService.UpgradeResult:Connect(function(result: string, tier: number)
 		if result == "Success" then
 			NotificationManager.show("Thrust upgraded to Tier " .. tier .. "!", "Success")
-			if cachedData then refreshShopUI(cachedData) end
+			if cachedData then
+				refreshShopUI(cachedData)
+			end
 		elseif result == "NotEnoughWins" then
 			NotificationManager.show("Not enough Wins!", "Error")
 		elseif result == "AlreadyOwned" then
@@ -390,11 +519,17 @@ function ThrustController:KnitStart()
 
 	touchPart.Touched:Connect(function(hit: BasePart)
 		local character = hit:FindFirstAncestorOfClass("Model")
-		if not character then return end
-		if Players:GetPlayerFromCharacter(character) ~= player then return end
+		if not character then
+			return
+		end
+		if Players:GetPlayerFromCharacter(character) ~= player then
+			return
+		end
 
 		local now = os.clock()
-		if now - lastTouchTime < ThrustUpgradeConfigs.TouchDebounce then return end
+		if now - lastTouchTime < ThrustUpgradeConfigs.TouchDebounce then
+			return
+		end
 		lastTouchTime = now
 
 		if cachedData == nil then

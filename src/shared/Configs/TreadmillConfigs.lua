@@ -9,8 +9,6 @@ export type TreadmillTier = {
 	ModelName: string,
 	Multiplier: number,
 	HighlightColor: Color3,
-	--- ProductConfigs.Gamepasses key; nil = free for everyone.
-	GamepassKey: string?,
 }
 
 export type TreadmillWorldConfig = {
@@ -46,42 +44,49 @@ local TreadmillConfigs = {
 
 	--- Keys are tier ids; ModelName must match the Model in Studio.
 	Tiers = {
-		Basic = {
-			Key = "Basic",
-			DisplayName = "Basic Treadmill",
-			ModelName = "BasicTreadmill",
-			Multiplier = 1,
-			HighlightColor = Color3.fromRGB(255, 255, 255),
-			GamepassKey = nil,
-		},
 		Silver = {
 			Key = "Silver",
 			DisplayName = "Silver Treadmill",
 			ModelName = "SilverTreadmill",
-			Multiplier = 2,
+			Multiplier = 1,
 			HighlightColor = Color3.fromRGB(192, 192, 192),
-			GamepassKey = nil,
 		},
 		Gold = {
 			Key = "Gold",
 			DisplayName = "Gold Treadmill",
-			ModelName = "GoldTreadmill",
+			ModelName = "Gold",
 			Multiplier = 3,
 			HighlightColor = Color3.fromRGB(255, 215, 0),
-			GamepassKey = "GoldTreadmill",
 		},
 		Diamond = {
 			Key = "Diamond",
 			DisplayName = "Diamond Treadmill",
-			ModelName = "DiamondTreadmill",
+			ModelName = "Diamond",
 			Multiplier = 9,
 			HighlightColor = Color3.fromRGB(85, 255, 255),
-			GamepassKey = "DiamondTreadmill",
+		},
+		Void = {
+			Key = "Void",
+			DisplayName = "Void Treadmill",
+			ModelName = "Void",
+			Multiplier = 25,
+			HighlightColor = Color3.fromRGB(120, 0, 180),
+		},
+		Admin = {
+			Key = "Admin",
+			DisplayName = "Admin Treadmill",
+			ModelName = "AdminTred",
+			Multiplier = 100,
+			HighlightColor = Color3.fromRGB(255, 60, 60),
 		},
 	} :: { [string]: TreadmillTier },
 
 	--- Display / progression order in UI.
-	TierOrder = { "Basic", "Silver", "Gold", "Diamond" },
+	TierOrder = { "Silver", "Gold", "Diamond", "Void", "Admin" },
 }
+
+function TreadmillConfigs.GetTierByKey(tierKey: string): TreadmillTier?
+	return TreadmillConfigs.Tiers[tierKey]
+end
 
 return TreadmillConfigs

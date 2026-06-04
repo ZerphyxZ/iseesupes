@@ -5,12 +5,80 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
+local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local UpgradeWinsConfigs = require(ReplicatedStorage.Shared.Configs.UpgradeWinsConfigs)
 local CapeVfx = require(script.Parent.Parent.Parent.Modules.CapeVfx)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
-local DJ_PHASE_ATTR = "DjAbilityPhase"
-
 local UpgradeWinsController = Knit.CreateController({ Name = "UpgradeWinsController" })
+
+-- Cache the original "X Wins Required" text per WinCost label so we can restore it
+-- if the player loses the avatar (e.g. /devresetdata in Studio).
+local originalCostText: { [TextLabel]: string } = {}
+
+--- Walk the UpgradeWins folder, find the WinCost label on each button, and update
+--- its text based on whether the local player owns that avatar. Client-side text
+--- writes don't replicate, so each player sees only their own ownership state.
+local function refreshOwnedLabels()
+	local folder = MapWorld.findChildInMap(UpgradeWinsConfigs.FolderName)
+	if not folder then
+		return
+	end
+
+	local data = DataLib.GetData()
+	local owned: { [string]: boolean } = {}
+	if data and type(data.UnlockedAvatars) == "table" then
+		for id, isOwned in data.UnlockedAvatars do
+			if isOwned then
+				owned[tostring(id)] = true
+			end
+		end
+	end
+
+	local prefix = UpgradeWinsConfigs.ButtonNamePrefix
+	local labelName = UpgradeWinsConfigs.WinCostLabelName
+
+	for _, button in folder:GetChildren() do
+		if not button:IsA("Model") then continue end
+
+		-- Determine avatar id: either explicit attribute or button index (Button5 → "5")
+		local avatarId: string? = nil
+		local attr = button:GetAttribute(UpgradeWinsConfigs.AvatarIdAttribute)
+		if typeof(attr) == "number" and attr > 0 then
+			avatarId = tostring(math.floor(attr))
+		else
+			local indexStr = string.match(button.Name, "^" .. prefix .. "(%d+)$")
+			if indexStr then
+				avatarId = indexStr
+			end
+		end
+		if not avatarId then continue end
+
+		-- Find the WinCost TextLabel inside Touch
+		local touch = button:FindFirstChild(UpgradeWinsConfigs.TouchPartName)
+		local searchRoot = if touch then touch else button
+		local winLabel: TextLabel? = nil
+		for _, desc in searchRoot:GetDescendants() do
+			if desc:IsA("TextLabel") and desc.Name == labelName then
+				winLabel = desc :: TextLabel
+				break
+			end
+		end
+		if not winLabel then continue end
+
+		-- Cache the original text so we can restore it if the player later loses ownership
+		if not originalCostText[winLabel] then
+			originalCostText[winLabel] = winLabel.Text
+		end
+
+		if owned[avatarId] then
+			winLabel.Text = "OWNED"
+		else
+			winLabel.Text = originalCostText[winLabel] or winLabel.Text
+		end
+	end
+end
 
 local function resetSteerAfterMorph()
 	local ok, doubleJump = pcall(function()
@@ -22,32 +90,61 @@ local function resetSteerAfterMorph()
 end
 
 local function snapCameraAfterMorph()
-	local player = Players.LocalPlayer
-	if player and player:GetAttribute(DJ_PHASE_ATTR) then
-		return
-	end
+	-- Triple snap covers every timing edge case (DjAbilityPhase clearing, humanoid not
+	-- yet ready, character physics settling). Each call is cheap.
 	task.spawn(AvatarReplace.waitAndSnapLocalCamera, 4)
+	task.delay(0.3, function()
+		task.spawn(AvatarReplace.waitAndSnapLocalCamera, 4)
+	end)
+	task.delay(1.0, function()
+		task.spawn(AvatarReplace.waitAndSnapLocalCamera, 2)
+	end)
 end
 
 function UpgradeWinsController:KnitStart()
 	local UpgradeWinsService = Knit.GetService("UpgradeWinsService")
 	local player = Players.LocalPlayer
 
-	player.CharacterAdded:Connect(function(_character)
+	-- Full character swap fires CharacterAdded; refresh camera + cape rig here.
+	player.CharacterAdded:Connect(function(character)
 		resetSteerAfterMorph()
 		snapCameraAfterMorph()
+		task.defer(function()
+			CapeVfx.refreshAfterShowcaseEquip(character)
+		end)
+	end)
+
+	-- Refresh "OWNED" labels whenever data replicates (catches initial join, every
+	-- unlock, rebirth/reset, and rejoins). First call is deferred so the map and
+	-- profile data have time to load.
+	DataLib.OnChanged(function()
+		refreshOwnedLabels()
+	end)
+	task.delay(2, refreshOwnedLabels)
+	-- Also retry a few times in case the UpgradeWins folder isn't loaded yet on first join.
+	task.spawn(function()
+		for _ = 1, 10 do
+			task.wait(1)
+			refreshOwnedLabels()
+		end
 	end)
 
 	UpgradeWinsService.UpgradeResult:Connect(function(kind: string, avatarId: string)
 		if kind == "Unlocked" or kind == "Equipped" then
 			resetSteerAfterMorph()
-			-- Full character swap snaps via CharacterAdded; palette-only equip keeps the same instance.
+			-- Full character swap also fires CharacterAdded (handled above).
+			-- This block is redundant safety for any edge case where the swap doesn't fire it.
 			local character = player.Character
 			if character then
 				task.defer(function()
 					CapeVfx.refreshAfterShowcaseEquip(character)
 				end)
 			end
+		end
+
+		if kind == "Unlocked" or kind == "Equipped" then
+			-- Flip the label to "OWNED" instantly (won't wait for next data replicate)
+			task.defer(refreshOwnedLabels)
 		end
 
 		if kind == "Unlocked" then

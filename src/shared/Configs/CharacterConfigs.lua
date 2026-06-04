@@ -46,6 +46,10 @@ local CharacterConfigs = {
 		ActionName = "SupesDoubleJump",
 		Key = "E",
 		Cooldown = 5,
+		--- Must fly at least this long before E / UI / Space can cancel thrust.
+		CancelMinActiveTime = 1.25,
+		--- Cancel within this many seconds after start → no cooldown on landing (after MinActiveTime).
+		CancelCooldownGrace = 2.5,
 		MaxAbilityDuration = 7,
 		Debug = false,
 
@@ -236,6 +240,19 @@ local CharacterConfigs = {
 			SettleDuration = 0.15,
 			MaxDuration = 2,
 		},
+	},
+
+	--- Lift slightly, fall, Superman landing VFX.
+	--- OnFirstJoin only — win claim returns are a plain teleport (no drop/prone landing).
+	SpawnIntro = {
+		Enabled = true,
+		OnFirstJoin = true,
+		OnWinClaimReturn = false,
+		LiftHeight = 8,
+		PrepareDelay = 0.12,
+		LobbySettleDelay = 0.25,
+		MaxLandingWatchSeconds = 8,
+		MinLandingSpeed = 4,
 	},
 }
 

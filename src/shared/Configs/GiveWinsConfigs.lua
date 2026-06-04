@@ -8,7 +8,6 @@ export type GiveWinsConfig = {
 	WinAmountLabelName: string,
 	WinAmountAttribute: string,
 	TouchDebounce: number,
-	DoubleWinsGamepassKey: string,
 }
 
 local GiveWinsConfigs: GiveWinsConfig = {
@@ -17,7 +16,6 @@ local GiveWinsConfigs: GiveWinsConfig = {
 	WinAmountLabelName = "WinAmount",
 	WinAmountAttribute = "WinAmount",
 	TouchDebounce = 1.5,
-	DoubleWinsGamepassKey = "DoubleWins",
 }
 
 return GiveWinsConfigs

@@ -56,6 +56,7 @@ local function prepareCloneForPlay(clone: Model, humanoid: Humanoid)
 	humanoid.Sit = false
 
 	humanoid.AutoRotate = true
+	humanoid.CameraOffset = Vector3.zero
 
 	humanoid.BreakJointsOnDeath = false
 
@@ -86,6 +87,7 @@ local function copyHumanoidMovementPhysics(dst: Humanoid, src: Humanoid)
 	dst.JumpPower = src.JumpPower
 	dst.UseJumpPower = src.UseJumpPower
 	dst.AutoRotate = src.AutoRotate
+	dst.CameraOffset = src.CameraOffset
 end
 
 -- Humanoid only: do not copy HRP density/size from another rig (breaks avatar 2+ assemblies).
@@ -371,15 +373,26 @@ function AvatarReplace.equipShowcaseVisualOnly(player: Player, template: Model, 
 end
 
 local function suppressDeathOnSwap(humanoid: Humanoid)
-
 	humanoid.BreakJointsOnDeath = false
+	humanoid.RequiresNeck = false
+	-- Disable EVERY humanoid state that can fire Died (falling into void, network loss,
+	-- joint break, ragdoll). Without this, the orphaned old character eventually dies
+	-- and the player sees the red death overlay on their NEW character.
+	pcall(function() humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+	pcall(function() humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false) end)
+	pcall(function() humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false) end)
+	pcall(function() humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+	-- Health to max so any HP-based death checks pass.
+	humanoid.MaxHealth = math.huge
+	humanoid.Health = math.huge
+end
 
-	pcall(function()
-
-		humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-
-	end)
-
+--- Cleanly destroy the old character. Standard Roblox pattern — what player:LoadCharacter()
+--- does internally. The Died state is already disabled by suppressDeathOnSwap so no death
+--- VFX fires. Two parts in the same world position cause z-fighting / visual blink, so we
+--- must remove the old character ASAP.
+local function disposeOldCharacterQuietly(oldCharacter: Model)
+	oldCharacter:Destroy()
 end
 
 
@@ -538,7 +551,11 @@ function AvatarReplace.replacePlayerCharacter(player: Player, template: Model, a
 
 	player.Character = clone
 
-	-- Let Roblox remove the old character; do not Destroy() it (avoids client death VFX).
+	-- Silently dispose of the old character (anchored + invisible + parent=nil + destroy).
+	-- Without this the orphaned humanoid eventually fires Died → red death overlay on screen.
+	if character then
+		disposeOldCharacterQuietly(character)
+	end
 
 
 
@@ -616,8 +633,6 @@ function AvatarReplace.snapLocalCamera(character: Model?)
 
 
 
-	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-
 	local camera = workspace.CurrentCamera
 
 	if not camera then
@@ -628,21 +643,12 @@ function AvatarReplace.snapLocalCamera(character: Model?)
 
 
 
+	humanoid.PlatformStand = false
+	humanoid.AutoRotate = true
+
+	-- Re-bind only; never set CFrame manually (tilted HRP → top-down cam; fights PlayerModule → jitter).
 	camera.CameraType = Enum.CameraType.Custom
-
 	camera.CameraSubject = humanoid
-
-
-
-	if root then
-
-		local offset = Vector3.new(0, 2, 10)
-
-		camera.CFrame = CFrame.lookAt(root.Position + offset, root.Position + Vector3.new(0, 1.5, 0))
-
-		camera.Focus = CFrame.new(root.Position)
-
-	end
 
 end
 
@@ -687,16 +693,6 @@ function AvatarReplace.waitAndSnapLocalCamera(maxWait: number?)
 	task.wait()
 
 	AvatarReplace.snapLocalCamera(character)
-
-	task.delay(0.1, function()
-
-		if localPlayer.Character then
-
-			AvatarReplace.snapLocalCamera(localPlayer.Character)
-
-		end
-
-	end)
 
 end
 

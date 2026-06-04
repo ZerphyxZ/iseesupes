@@ -3,8 +3,7 @@
 -- 3-tier Thrust tank upgrades from the UpgradeShop (Wins and/or Developer Products).
 -- Each tier permanently increases the player's ThrustMax by FuelBonus (cumulative).
 -- Tiers must be bought in sequence: own tier N-1 before buying tier N.
--- ProductId = 0: Robux button still shows in UI (placeholder price) but purchase is disabled
--- until you paste Developer Product IDs from Creator Dashboard.
+-- ProductId = Creator Hub developer product (Thrust Pack 1–3). 0 = Robux buy disabled in UI.
 
 export type ThrustUpgradeTier = {
 	WinCost: number,
@@ -14,9 +13,9 @@ export type ThrustUpgradeTier = {
 
 local ThrustUpgradeConfigs = {
 	Tiers = {
-		[1] = { WinCost = 50,  FuelBonus = 50,  ProductId = 0 },
-		[2] = { WinCost = 200, FuelBonus = 100, ProductId = 0 },
-		[3] = { WinCost = 750, FuelBonus = 150, ProductId = 0 },
+		[1] = { WinCost = 30,  FuelBonus = 50,  ProductId = 3602350603 }, -- Thrust Pack 1 (19 R$)
+		[2] = { WinCost = 80,  FuelBonus = 100, ProductId = 3602350672 }, -- Thrust Pack 2 (39 R$)
+		[3] = { WinCost = 300, FuelBonus = 150, ProductId = 3602350745 }, -- Thrust Pack 3 (109 R$)
 	} :: { [number]: ThrustUpgradeTier },
 
 	-- Workspace paths

@@ -34,7 +34,7 @@ function RebirthService:SyncLeaderstats(player: Player, data: any)
 	LeaderstatsSync.Apply(player, data)
 end
 
-function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean): boolean
+function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean?, preserveProgress: boolean?): boolean
 	local profile = DataService:GetProfile(player)
 	if not profile then
 		return false
@@ -44,12 +44,12 @@ function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean):
 	local rebirths = getRebirths(data)
 	local reqLevel = RebirthConfigs.GetRequiredLevel(rebirths)
 
-	if not skipLevelCheck and getLevel(data) < reqLevel then
+	if skipLevelCheck ~= true and getLevel(data) < reqLevel then
 		return false
 	end
 
 	data.Rebirths = rebirths + 1
-	if RebirthConfigs.ResetLevelOnRebirth then
+	if RebirthConfigs.ResetLevelOnRebirth and preserveProgress ~= true then
 		data.Level = 1
 		data.Speed = 0
 	end
@@ -57,12 +57,12 @@ function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean):
 	DataService:Replicate(player)
 	DataService:NotifyLeaderboards(player, { "Rebirths", "Speed" })
 	self:SyncLeaderstats(player, data)
-	RebirthService.Client.RebirthSuccess:Fire(player)
+	RebirthService.Client.RebirthSuccess:Fire(player, preserveProgress == true)
 	return true
 end
 
 function RebirthService.Client:RequestRebirth(player: Player): boolean
-	return RebirthService:PerformRebirth(player, false)
+	return RebirthService:PerformRebirth(player, false, false)
 end
 
 local function waitForProfile(player: Player, timeout: number): any?

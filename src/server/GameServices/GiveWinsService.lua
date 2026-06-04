@@ -5,9 +5,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
+local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
+
+local FIRST_WIN_AVATAR_ID = "1" -- AvatarsShowcase model name "1" = first Superman skin (costs 1 win)
 
 local GiveWinsService = Knit.CreateService({
 	Name = "GiveWinsService",
@@ -15,7 +19,11 @@ local GiveWinsService = Knit.CreateService({
 })
 
 local DataService: any = nil
+local SpawnIntroService: any = nil
 local MonetizationService: any = nil
+local DoubleJumpService: any = nil
+local SuperJumpService: any = nil
+local BoostService: any = nil
 
 local touchConns: { [Instance]: RBXScriptConnection } = {}
 local buttonWinAmounts: { [Model]: number } = {}
@@ -57,7 +65,7 @@ local function resolveWinAmount(button: Model): number?
 end
 
 local function getGrantAmount(player: Player, baseAmount: number): number
-	if MonetizationService and MonetizationService:PlayerOwnsGamepass(player, GiveWinsConfigs.DoubleWinsGamepassKey) then
+	if MonetizationService and MonetizationService:PlayerOwnsDoubleWins(player) then
 		return baseAmount * 2
 	end
 	return baseAmount
@@ -99,6 +107,10 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 		return
 	end
 
+	-- Check if this is the player's very first win (new player transition)
+	local data = DataService:GetData(player)
+	local isFirstWin = data and (data.Wins or 0) == 0
+
 	local grant = getGrantAmount(player, winAmount)
 	if DataService:AddWins(player, grant) then
 		if grant ~= winAmount then
@@ -106,7 +118,84 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 		else
 			print("[iseesupes] GiveWins:", player.Name, "+", grant, "wins from", button.Name)
 		end
-		DataService:TeleportToLobby(player)
+
+		-- Clear any active boost (used for 1 run only)
+		if BoostService and BoostService:IsBoostActive(player) then
+			BoostService:ClearBoost(player)
+		end
+
+		-- First-win reward: unlock and auto-equip the first Superman avatar.
+		-- Delayed 3s so PlayLobbyReturnIntro (teleport + lift + landing) fully
+		-- completes before we swap the character; avoids race with replacePlayerCharacter.
+		if isFirstWin then
+			task.delay(3, function()
+				local latestData = DataService:GetData(player)
+				-- Skip if the player already equipped an aura (e.g. they bought Dark Superman
+				-- before the 3s timer fired) — never overwrite their purchase.
+				local hasAura = latestData
+					and type(latestData.EquippedAura) == "string"
+					and latestData.EquippedAura ~= ""
+				if
+					not hasAura
+					and latestData
+					and (latestData.EquippedAvatar == "" or latestData.EquippedAvatar == nil)
+				then
+					-- Unlock avatar "1" for free (first-win gift)
+					if type(latestData.UnlockedAvatars) ~= "table" then
+						latestData.UnlockedAvatars = {}
+					end
+					latestData.UnlockedAvatars[FIRST_WIN_AVATAR_ID] = true
+					latestData.EquippedAvatar = FIRST_WIN_AVATAR_ID
+
+					-- Apply the Superman character
+					local showcase = MapWorld.findChildInMap("AvatarsShowcase")
+					if showcase then
+						local template = showcase:FindFirstChild(FIRST_WIN_AVATAR_ID)
+						if template and template:IsA("Model") then
+							local clone = template:Clone()
+							-- Remove showcase decorations
+							for _, child in clone:GetChildren() do
+								if child.Name == "Decor" or child.Name == "Part" then
+									child:Destroy()
+								end
+							end
+							-- Models pre-scaled to GetScale=1 in Studio — no runtime scaling needed
+							AvatarReplace.equipShowcaseAvatar(player, clone, FIRST_WIN_AVATAR_ID)
+							clone:Destroy()
+						end
+					end
+					DataService:Replicate(player)
+					print("[iseesupes] GiveWins: first-win Superman unlocked for", player.Name)
+				end
+			end)
+		end
+
+		-- End flight on the server and signal the client.
+		-- _endAbility fires AbilityEnded to the client via remote event — we MUST
+		-- wait at least one network round-trip before teleporting, otherwise the
+		-- client's BodyVelocity/BodyGyro (client-owned flight physics) are still
+		-- active when TeleportToLobby moves the HRP → character explodes.
+		if DoubleJumpService and DoubleJumpService._endAbility then
+			DoubleJumpService:_endAbility(player)
+		end
+		if SuperJumpService and SuperJumpService._endAbility then
+			SuperJumpService:_endAbility(player)
+		end
+		player:SetAttribute("ForceStandUp", true)
+
+		task.delay(0.25, function()
+			if not player.Parent then
+				return
+			end
+			player:SetAttribute("ForceStandUp", nil)
+
+			local introCfg = CharacterConfigs.SpawnIntro
+			if SpawnIntroService and introCfg and introCfg.Enabled == true and introCfg.OnWinClaimReturn == true then
+				SpawnIntroService:PlayLobbyReturnIntro(player)
+			else
+				DataService:TeleportToLobby(player)
+			end
+		end)
 	end
 end
 
@@ -193,7 +282,17 @@ end
 
 function GiveWinsService:KnitStart()
 	DataService = Knit.GetService("DataService")
+	SpawnIntroService = Knit.GetService("SpawnIntroService")
 	MonetizationService = Knit.GetService("MonetizationService")
+	pcall(function()
+		DoubleJumpService = Knit.GetService("DoubleJumpService")
+	end)
+	pcall(function()
+		SuperJumpService = Knit.GetService("SuperJumpService")
+	end)
+	pcall(function()
+		BoostService = Knit.GetService("BoostService")
+	end)
 	initGiveWins()
 
 	Players.PlayerRemoving:Connect(function(player)

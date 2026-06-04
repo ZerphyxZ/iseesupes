@@ -19,9 +19,13 @@ local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfi
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
-assert(ThrustConfigs, "[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again.")
+assert(
+	ThrustConfigs,
+	"[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again."
+)
 
 local LeaderboardConfigs = require(ReplicatedStorage.Shared.Configs.LeaderboardConfigs)
+local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
 
 -- Bump when you need a fresh ProfileStore namespace (e.g. testing saves from scratch).
 local DATA_VERSION = "iseesupes_v6"
@@ -336,6 +340,10 @@ function DataService:TryConsumeThrust(player: Player, amount: number): boolean
 		return true
 	end
 
+	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
+
 	local data = self:GetData(player)
 	if not data then
 		return false
@@ -359,6 +367,9 @@ function DataService:TryConsumeThrust(player: Player, amount: number): boolean
 end
 
 function DataService:CanStartFlight(player: Player): boolean
+	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
 	local current, _max = self:GetFuel(player)
 	return current >= ThrustConfigs.MinFuelToStartFlight
 end
@@ -452,9 +463,35 @@ function DataService:TeleportToLobby(player: Player)
 		return
 	end
 
-	root.CFrame = spawn.CFrame + TreadmillConfigs.Gameplay.KickTeleportOffset
+	-- Teleport with upright CFrame (reset any laying rotation)
+	local spawnPos = spawn.CFrame + TreadmillConfigs.Gameplay.KickTeleportOffset
+	root.CFrame = CFrame.new(spawnPos.Position)
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
+
+	local ok, godSpeed = pcall(function()
+		return Knit.GetService("GodSpeedAuraService")
+	end)
+	if ok and godSpeed and godSpeed.ClearRunBuff then
+		godSpeed:ClearRunBuff(player)
+	end
+
+	-- Reset character stance after a small delay to ensure proper state
+	task.delay(0.1, function()
+		if not player.Parent then
+			return
+		end
+		local char = player.Character
+		if not char then
+			return
+		end
+		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.PlatformStand = false
+			humanoid.Sit = false
+			humanoid:ChangeState(Enum.HumanoidStateType.Running)
+		end
+	end)
 end
 
 local function refillThrustOnRespawn(player: Player)
@@ -521,10 +558,12 @@ local function onPlayerAdded(player: Player)
 		end)
 	end)
 
-	for _, attrName in {
-		LevelDesignConfigs.Speed.MultiplierAttribute,
-		LevelDesignConfigs.Speed.OverrideAttribute,
-	} do
+	for _, attrName in
+		{
+			LevelDesignConfigs.Speed.MultiplierAttribute,
+			LevelDesignConfigs.Speed.OverrideAttribute,
+		}
+	do
 		player:GetAttributeChangedSignal(attrName):Connect(function()
 			applyMovementSpeed(player, profile)
 		end)
@@ -563,6 +602,20 @@ function DataService:Replicate(player: Player)
 		replicateData(player, profile)
 		scheduleLeaderboardSave(player, profile)
 	end
+end
+
+--- Force-save the player's profile to live DataStore immediately.
+--- Use after critical purchases (avatar unlock, aura buy) so the data is durable
+--- even if the session ends abruptly (Studio Play Solo stop, crash, etc.).
+function DataService:ForceSave(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	ProfileTemplate.sanitizeForStore(profile.Data)
+	pcall(function()
+		profile:Save()
+	end)
 end
 
 function DataService:NotifyLeaderboards(player: Player, refreshBoardKeys: { string }?)

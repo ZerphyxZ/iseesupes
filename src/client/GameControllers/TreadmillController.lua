@@ -5,6 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local NotificationManager = require(script.Parent.Parent.Modules.NotificationManager)
 
 local TreadmillController = Knit.CreateController({ Name = "TreadmillController" })
 
@@ -31,8 +32,8 @@ function TreadmillController:KnitStart()
 		activeMultiplier = multiplier
 	end)
 
-	TreadmillService.AccessDenied:Connect(function(tierKey: string, displayName: string, _gamepassKey: string?)
-		warn("[iseesupes] Treadmill locked:", tierKey, displayName)
+	TreadmillService.AccessDenied:Connect(function(tierKey: string, displayName: string)
+		NotificationManager.show(displayName .. " is locked — purchase to unlock!", "Info")
 	end)
 end
 

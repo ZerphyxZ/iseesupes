@@ -208,6 +208,9 @@ local function applyEquippedAvatar(player: Player, data: any, avatarId: string, 
 
 	data.EquippedAvatar = avatarId
 	data.StepSpeedBonus = stepBonus
+	-- Player explicitly chose an avatar from the Upgrade buttons → clear any equipped aura
+	-- so AuraShopService doesn't immediately morph them back (which would blink).
+	data.EquippedAura = ""
 
 	local template = getShowcaseTemplate(avatarId)
 	if not template then
@@ -235,6 +238,13 @@ function UpgradeWinsService:TryEquipFromProfile(player: Player): boolean
 
 	local data = DataService and DataService:GetData(player)
 	if not data then
+		return false
+	end
+
+	-- Auras take precedence over avatars (Robux purchase > win-bought).
+	-- Without this guard, AuraShopService and this service would morph alternately
+	-- on every CharacterAdded → infinite blinking loop.
+	if type(data.EquippedAura) == "string" and data.EquippedAura ~= "" then
 		return false
 	end
 
@@ -344,6 +354,11 @@ local function onUpgradeButtonTouched(button: Model, hit: BasePart)
 
 	local replaced = applyEquippedAvatar(player, data, avatarId, meta.stepBonus)
 	DataService:Replicate(player)
+	-- Force-save immediately so the unlock is durable even if Studio Play Solo
+	-- stops before ProfileService autosave (5 min) or normal player-leave fires.
+	if DataService.ForceSave then
+		DataService:ForceSave(player)
+	end
 
 	if replaced then
 		fireResult(player, "Unlocked", avatarId)
@@ -484,9 +499,20 @@ function UpgradeWinsService:KnitStart()
 	initUpgradeWins()
 
 	local function onCharacterAdded(player: Player, _character: Model)
-		-- Spawn only: defer avoids re-entrancy when replacePlayerCharacter fires CharacterAdded again.
+		-- Retry up to 5 seconds so the morph still happens if the profile loads AFTER
+		-- CharacterAdded (race on first rejoin). Exits early once data is loaded — no
+		-- avatar to equip (EquippedAvatar empty / aura active) is a valid done state.
 		task.spawn(function()
-			UpgradeWinsService:TryEquipFromProfile(player)
+			for _ = 1, 10 do
+				if not player.Parent then return end
+				local data = DataService:GetData(player)
+				if data then
+					-- Data is loaded — do the morph (or no-op) and exit the loop.
+					UpgradeWinsService:TryEquipFromProfile(player)
+					return
+				end
+				task.wait(0.5)
+			end
 		end)
 	end
 

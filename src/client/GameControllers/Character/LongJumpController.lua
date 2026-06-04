@@ -1,11 +1,14 @@
 --!strict
 
--- Long jump: double-tap jump (Space or mobile CharacterJump) within DoubleTapWindow.
--- First press = normal jump (interceptor returns false). Second press in window = velocity burst + LeanUp anim.
+-- Long jump: double-tap jump OR hold jump button for HoldThreshold (mobile-friendly).
+-- - Double-tap (desktop preferred): tap Space twice within DoubleTapWindow → long jump.
+-- - Hold (mobile preferred): press and HOLD Space / mobile jump button. Normal jump fires
+--   immediately on press; if still held after HoldThreshold seconds, long jump fires too.
 
 local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local HumanoidLocomotion = require(ReplicatedStorage.Shared.Utils.HumanoidLocomotion)
@@ -26,6 +29,24 @@ local animFolder: Folder? = nil
 
 local lastJumpPressAt = -math.huge
 local cooldownEndsAt = 0
+local holdLongJumpToken = 0 -- increments each press so older hold-checks bail out
+
+-- How long the jump button must be held (after the initial press) to trigger long jump.
+-- Short enough to feel responsive on mobile, long enough that quick taps stay normal jumps.
+local HOLD_LONG_JUMP_THRESHOLD = 0.18
+
+--- True if the player is still holding ANY jump input (keyboard Space or mobile jump button).
+--- Roblox sets humanoid.Jump = true while the mobile jump button is pressed, and
+--- UserInputService:IsKeyDown(Space) is true while Space is held on desktop.
+local function isJumpInputStillHeld(humanoid: Humanoid?): boolean
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		return true
+	end
+	if humanoid and humanoid.Jump then
+		return true
+	end
+	return false
+end
 
 type CharacterLongJumpState = {
 	character: Model,
@@ -186,6 +207,19 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 		lastJumpPressAt = -math.huge
 
 		if now < cooldownEndsAt then
+			local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
+			local remaining = cooldownEndsAt - now
+			if remaining >= 10 then
+				NotificationManager.show(
+					string.format("Long jump on cooldown — %ds left", math.ceil(remaining)),
+					"Error"
+				)
+			else
+				NotificationManager.show(
+					string.format("Long jump on cooldown — %.1fs left", math.max(0.1, remaining)),
+					"Error"
+				)
+			end
 			return true
 		end
 
@@ -196,6 +230,26 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 	end
 
 	lastJumpPressAt = now
+
+	-- HOLD path (mobile-friendly alternative to double-tap): schedule a long-jump
+	-- check after the threshold. If the player is still holding jump AND not on
+	-- cooldown, fire long jump. The first press already went through as a normal jump.
+	holdLongJumpToken += 1
+	local myToken = holdLongJumpToken
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	task.delay(HOLD_LONG_JUMP_THRESHOLD, function()
+		if myToken ~= holdLongJumpToken then return end -- a newer press happened, ignore us
+		if not player.Character or player.Character ~= character then return end
+		if isBlocked() then return end
+		if not isJumpInputStillHeld(humanoid) then return end
+		local nowDelayed = os.clock()
+		if nowDelayed < cooldownEndsAt then return end -- silently skip during cooldown on hold path
+		if applyLongJump(character) then
+			cooldownEndsAt = nowDelayed + (LjCfg.Cooldown or 2.5)
+			lastJumpPressAt = -math.huge -- consume so the next tap isn't treated as second-tap
+		end
+	end)
+
 	return false
 end
 

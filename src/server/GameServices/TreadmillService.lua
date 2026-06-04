@@ -52,6 +52,9 @@ local killCooldownUntil: { [Player]: number } = {}
 local killTouchConns: { [Instance]: RBXScriptConnection } = {}
 
 local timeAccumulator = 0
+local debugMissLastAt: { [Player]: number } = {}
+
+local RAY_ORIGIN_PART_NAMES = { "HumanoidRootPart", "LeftFoot", "RightFoot", "Left Leg", "Right Leg" }
 
 -- [ INIT ] -------------------------------------------------------------------
 
@@ -178,6 +181,141 @@ local function removeHighlight(model: Model)
 	end
 end
 
+local function getRaycastDepth(humanoid: Humanoid): number
+	local base = if type(GameplayCfg.RaycastBaseDistance) == "number"
+		then GameplayCfg.RaycastBaseDistance
+		else GameplayCfg.RaycastDistance
+	local scale = if type(GameplayCfg.RaycastHipHeightScale) == "number" then GameplayCfg.RaycastHipHeightScale else 1
+	local maxDist = if type(GameplayCfg.RaycastMaxDistance) == "number" then GameplayCfg.RaycastMaxDistance else 12
+	return math.min(maxDist, base + humanoid.HipHeight * scale)
+end
+
+local function raycastToTreadmill(
+	origin: Vector3,
+	depth: number,
+	rayParams: RaycastParams
+): (Model?, TreadmillTier?, number?)
+	local result = Workspace:Raycast(origin, Vector3.new(0, -depth, 0), rayParams)
+	if not result or not result.Instance:IsA("BasePart") then
+		return nil, nil, nil
+	end
+	local model, tier = getTreadmillFromPart(result.Instance)
+	if not model or not tier then
+		return nil, nil, nil
+	end
+	return model, tier, result.Distance
+end
+
+local function detectViaBounds(rootPart: BasePart): (Model?, TreadmillTier?)
+	if treadmillsFolder == nil or GameplayCfg.UseBoundsFallback == false then
+		return nil, nil
+	end
+
+	local hrpPos = rootPart.Position
+	local horiz = if type(GameplayCfg.BoundsFallbackHorizontalStuds) == "number"
+		then GameplayCfg.BoundsFallbackHorizontalStuds
+		else 6
+	local vert = if type(GameplayCfg.BoundsFallbackVerticalStuds) == "number"
+		then GameplayCfg.BoundsFallbackVerticalStuds
+		else 4
+
+	for _, child in treadmillsFolder:GetChildren() do
+		if not child:IsA("Model") then
+			continue
+		end
+		local tier = getTierForModel(child)
+		if not tier then
+			continue
+		end
+
+		local cf, size = child:GetBoundingBox()
+		local localPos = cf:PointToObjectSpace(hrpPos)
+		local half = size * 0.5
+		if
+			math.abs(localPos.X) <= half.X + horiz
+			and math.abs(localPos.Z) <= half.Z + horiz
+			and localPos.Y >= -half.Y - vert
+			and localPos.Y <= half.Y + vert
+		then
+			return child, tier
+		end
+	end
+
+	return nil, nil
+end
+
+local function isNearAnyTreadmill(rootPart: BasePart, maxStuds: number): boolean
+	if not treadmillsFolder then
+		return false
+	end
+	local hrpPos = rootPart.Position
+	for _, child in treadmillsFolder:GetChildren() do
+		if child:IsA("Model") then
+			local cf = child:GetBoundingBox()
+			local delta = hrpPos - cf.Position
+			if Vector3.new(delta.X, 0, delta.Z).Magnitude <= maxStuds then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function maybeDebugDetectionMiss(player: Player, rootPart: BasePart, detected: boolean)
+	if detected or not RunService:IsStudio() or TreadmillConfigs.Debug ~= true then
+		return
+	end
+	if not isNearAnyTreadmill(rootPart, 14) then
+		return
+	end
+
+	local now = os.clock()
+	local last = debugMissLastAt[player] or 0
+	if now - last < 1 then
+		return
+	end
+	debugMissLastAt[player] = now
+
+	warn(
+		"[iseesupes][Treadmill] Detection miss for",
+		player.Name,
+		"near belt — check avatar HipHeight / belt collision"
+	)
+end
+
+local function detectTreadmillUnderCharacter(
+	character: Model,
+	humanoid: Humanoid,
+	rootPart: BasePart
+): (Model?, TreadmillTier?)
+	local depth = getRaycastDepth(humanoid)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterDescendantsInstances = { character }
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local bestDist = math.huge
+	local bestModel: Model? = nil
+	local bestTier: TreadmillTier? = nil
+
+	for _, partName in RAY_ORIGIN_PART_NAMES do
+		local part = character:FindFirstChild(partName)
+		if part and part:IsA("BasePart") then
+			local model, tier, hitDist = raycastToTreadmill(part.Position, depth, rayParams)
+			if model and tier and hitDist and hitDist < bestDist then
+				bestDist = hitDist
+				bestModel = model
+				bestTier = tier
+			end
+		end
+	end
+
+	if bestModel and bestTier then
+		return bestModel, bestTier
+	end
+
+	return detectViaBounds(rootPart)
+end
+
 local function fireActiveTreadmill(player: Player, tier: TreadmillTier?)
 	if tier then
 		TreadmillService.Client.ActiveTreadmillChanged:Fire(player, tier.Key, tier.Multiplier)
@@ -271,22 +409,8 @@ local function checkTreadmills(deltaTime: number)
 			continue
 		end
 
-		local rayParams = RaycastParams.new()
-		rayParams.FilterDescendantsInstances = { character }
-		rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-		local rayResult = Workspace:Raycast(
-			rootPart.Position,
-			Vector3.new(0, -GameplayCfg.RaycastDistance, 0),
-			rayParams
-		)
-		local floorPart = if rayResult then rayResult.Instance else nil
-
-		local treadmillModel: Model? = nil
-		local tier: TreadmillTier? = nil
-		if floorPart and floorPart:IsA("BasePart") then
-			treadmillModel, tier = getTreadmillFromPart(floorPart)
-		end
+		local treadmillModel, tier = detectTreadmillUnderCharacter(character, humanoid, rootPart)
+		maybeDebugDetectionMiss(player, rootPart, treadmillModel ~= nil)
 
 		local previousModel = activeTreadmills[player]
 
@@ -563,6 +687,7 @@ function TreadmillService:KnitStart()
 		clearPlayerTreadmill(player)
 		clearLockedTreadmillSession(player)
 		killCooldownUntil[player] = nil
+		debugMissLastAt[player] = nil
 	end)
 
 	print("[iseesupes] TreadmillService ready. KillPart tag:", KillPartConfigs.Tag)

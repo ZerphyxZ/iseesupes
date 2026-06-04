@@ -20,7 +20,14 @@ export type TreadmillWorldConfig = {
 
 export type TreadmillGameplayConfig = {
 	TickRate: number,
+	--- Legacy alias; prefer RaycastBaseDistance.
 	RaycastDistance: number,
+	RaycastBaseDistance: number,
+	RaycastHipHeightScale: number,
+	RaycastMaxDistance: number,
+	UseBoundsFallback: boolean,
+	BoundsFallbackHorizontalStuds: number,
+	BoundsFallbackVerticalStuds: number,
 	KickTeleportOffset: Vector3,
 	PointsPerTick: number,
 	--- Optional Speed XP per treadmill tick (0 = off; thrust refill is primary).
@@ -37,10 +44,19 @@ local TreadmillConfigs = {
 	Gameplay = {
 		TickRate = 0.5,
 		RaycastDistance = 3.5,
+		RaycastBaseDistance = 3.5,
+		RaycastHipHeightScale = 1,
+		RaycastMaxDistance = 12,
+		UseBoundsFallback = true,
+		BoundsFallbackHorizontalStuds = 6,
+		BoundsFallbackVerticalStuds = 4,
 		KickTeleportOffset = Vector3.new(0, 3, 0),
 		PointsPerTick = 1,
 		SpeedXpPerTick = 5,
 	} :: TreadmillGameplayConfig,
+
+	--- Studio: log when player is near treadmills but detection misses (server Output).
+	Debug = false,
 
 	--- Keys are tier ids; ModelName must match the Model in Studio.
 	Tiers = {

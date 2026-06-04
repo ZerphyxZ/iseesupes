@@ -225,6 +225,18 @@ local function playLocomotion(state: CharacterState, locomotion: "idle" | "run")
 	notifyLocomotion(state.character, locomotion)
 end
 
+local function refreshLocomotionForTreadmill()
+	local character = player.Character
+	if not character then
+		return
+	end
+	local state = characterStates[character]
+	if not state or state.mode ~= "locomotion" or state.engineLocomotionActive then
+		return
+	end
+	playLocomotion(state, if wantsRunLocomotion(state.humanoid) then "run" else "idle")
+end
+
 local setEngineLocomotionActive: (state: CharacterState, active: boolean) -> ()
 
 setEngineLocomotionActive = function(state: CharacterState, active: boolean)
@@ -795,6 +807,11 @@ function CharacterController:KnitStart()
 	task.defer(bindJumpAction)
 
 	treadmillController = Knit.GetController("TreadmillController")
+
+	local TreadmillService = Knit.GetService("TreadmillService")
+	TreadmillService.ActiveTreadmillChanged:Connect(function(_tierKey: string?, _multiplier: number)
+		refreshLocomotionForTreadmill()
+	end)
 
 	player.CharacterAdded:Connect(setupCharacter)
 	if player.Character then

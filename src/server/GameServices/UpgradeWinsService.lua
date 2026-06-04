@@ -231,6 +231,14 @@ local function fireResult(player: Player, kind: UpgradeResultKind, avatarId: str
 	UpgradeWinsService.Client.UpgradeResult:Fire(player, kind, avatarId)
 end
 
+local function shouldReapplySavedAvatar(data: any): boolean
+	if type(data.EquippedAura) == "string" and data.EquippedAura ~= "" then
+		return false
+	end
+	local avatarId = data.EquippedAvatar
+	return typeof(avatarId) == "string" and avatarId ~= ""
+end
+
 function UpgradeWinsService:TryEquipFromProfile(player: Player): boolean
 	if equipMutex[player] then
 		return false
@@ -250,6 +258,10 @@ function UpgradeWinsService:TryEquipFromProfile(player: Player): boolean
 
 	local avatarId = data.EquippedAvatar
 	if typeof(avatarId) ~= "string" or avatarId == "" then
+		return false
+	end
+
+	if not isAvatarUnlocked(data, avatarId) then
 		return false
 	end
 
@@ -274,6 +286,52 @@ function UpgradeWinsService:TryEquipFromProfile(player: Player): boolean
 	local result = AvatarReplace.equipShowcaseAvatar(player, template, avatarId)
 	equipMutex[player] = nil
 	return result.ok
+end
+
+--- Retries until saved EquippedAvatar is applied or data has no avatar to restore (profile/Map load races on rejoin).
+function UpgradeWinsService:ScheduleEquipFromProfile(player: Player)
+	task.spawn(function()
+		for attempt = 1, 24 do
+			if not player.Parent then
+				return
+			end
+
+			local data = DataService and DataService:GetData(player)
+			if not data then
+				task.wait(0.5)
+				continue
+			end
+
+			if not shouldReapplySavedAvatar(data) then
+				return
+			end
+
+			if not player.Character then
+				task.wait(0.5)
+				continue
+			end
+
+			if attempt > 1 then
+				showcaseFolder = nil
+			end
+
+			if UpgradeWinsService:TryEquipFromProfile(player) then
+				return
+			end
+
+			task.wait(0.5)
+		end
+
+		local data = DataService and DataService:GetData(player)
+		if data and shouldReapplySavedAvatar(data) then
+			warn(
+				"[iseesupes] UpgradeWins: could not re-equip saved avatar for",
+				player.Name,
+				"→",
+				data.EquippedAvatar
+			)
+		end
+	end)
 end
 
 local function onUpgradeButtonTouched(button: Model, hit: BasePart)
@@ -322,6 +380,9 @@ local function onUpgradeButtonTouched(button: Model, hit: BasePart)
 	local unlocked = isAvatarUnlocked(data, avatarId)
 
 	if unlocked then
+		if button.Name == "Button1" then
+			DataService:AdvanceTutorialFromUpgradeWinsTouch(player)
+		end
 		local replaced = applyEquippedAvatar(player, data, avatarId, meta.stepBonus)
 		DataService:Replicate(player)
 		if replaced then
@@ -351,6 +412,10 @@ local function onUpgradeButtonTouched(button: Model, hit: BasePart)
 	end
 
 	getUnlockedAvatars(data)[avatarId] = true
+
+	if button.Name == "Button1" then
+		DataService:AdvanceTutorialFromUpgradeWinsTouch(player)
+	end
 
 	local replaced = applyEquippedAvatar(player, data, avatarId, meta.stepBonus)
 	DataService:Replicate(player)
@@ -499,21 +564,7 @@ function UpgradeWinsService:KnitStart()
 	initUpgradeWins()
 
 	local function onCharacterAdded(player: Player, _character: Model)
-		-- Retry up to 5 seconds so the morph still happens if the profile loads AFTER
-		-- CharacterAdded (race on first rejoin). Exits early once data is loaded — no
-		-- avatar to equip (EquippedAvatar empty / aura active) is a valid done state.
-		task.spawn(function()
-			for _ = 1, 10 do
-				if not player.Parent then return end
-				local data = DataService:GetData(player)
-				if data then
-					-- Data is loaded — do the morph (or no-op) and exit the loop.
-					UpgradeWinsService:TryEquipFromProfile(player)
-					return
-				end
-				task.wait(0.5)
-			end
-		end)
+		UpgradeWinsService:ScheduleEquipFromProfile(player)
 	end
 
 	Players.PlayerAdded:Connect(function(player)
@@ -527,9 +578,7 @@ function UpgradeWinsService:KnitStart()
 
 	for _, player in Players:GetPlayers() do
 		if player.Character then
-			task.spawn(function()
-				UpgradeWinsService:TryEquipFromProfile(player)
-			end)
+			UpgradeWinsService:ScheduleEquipFromProfile(player)
 		end
 		player.CharacterAdded:Connect(function(character)
 			onCharacterAdded(player, character)

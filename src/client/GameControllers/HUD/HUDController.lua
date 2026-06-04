@@ -13,6 +13,7 @@ local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
@@ -156,7 +157,7 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 	local displayedSpeed = 0
 
 	local function getMaxSpeed(): number
-		return SpeedConfigs.GetMaxSpeed(getLevelFromData(DataLib.GetData()))
+		return CharacterMovementSpeed.getSpeedForData(player, DataLib.GetData())
 	end
 
 	local function applySwimSpeed(speed: number)

@@ -25,7 +25,14 @@ local LANDING_CLEARANCE = 3
 local FALLBACK_Y_OFFSET = 5
 
 local DataService: any = nil
+local FunnelAnalyticsService: any = nil
 local touchTimes: { [number]: number } = {}
+
+local function notifyMaxStageReached(player: Player, newMaxStage: number)
+	if FunnelAnalyticsService and FunnelAnalyticsService.recordStageReached then
+		FunnelAnalyticsService:recordStageReached(player, newMaxStage)
+	end
+end
 
 local function getCheckpointPart(stage: number): BasePart?
 	local folder = MapWorld.findChildInMap(CHECKPOINTS_FOLDER)
@@ -102,6 +109,7 @@ function SkipStageService:TeleportToStage(player: Player, stage: number): boolea
 		local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
 		if stage > maxStage then
 			profile.Data.MaxStage = stage
+			notifyMaxStageReached(player, stage)
 		end
 		DataService:Replicate(player)
 	end
@@ -191,6 +199,7 @@ local function connectCheckpointTouches()
 			local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
 			if stageNum > maxStage then
 				profile.Data.MaxStage = stageNum
+				notifyMaxStageReached(player, stageNum)
 			end
 			DataService:Replicate(player)
 			SkipStageService.Client.StageChanged:Fire(player, stageNum)
@@ -224,6 +233,7 @@ end
 
 function SkipStageService:KnitStart()
 	DataService = Knit.GetService("DataService")
+	FunnelAnalyticsService = Knit.GetService("FunnelAnalyticsService")
 
 	task.defer(connectCheckpointTouches)
 

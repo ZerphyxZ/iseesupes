@@ -157,28 +157,28 @@ function FriendStandDisplay.getDisplayParent(standModel: Model): Instance
 	return standModel
 end
 
-function FriendStandDisplay.computeShowcaseCFrame(spawnCFrame: CFrame, lookAtWorld: Vector3?): CFrame
-	local height = FriendStandConfigs.DisplayHeightOffset
-	local pos = spawnCFrame.Position + Vector3.new(0, height, 0)
-
-	local cf: CFrame
+function FriendStandDisplay.computeFacingCFrame(worldPos: Vector3, lookAtWorld: Vector3?, fallbackRotation: CFrame): CFrame
 	if lookAtWorld then
-		local flatTarget = Vector3.new(lookAtWorld.X, pos.Y, lookAtWorld.Z)
-		if (flatTarget - pos).Magnitude > 0.05 then
-			cf = CFrame.lookAt(pos, flatTarget)
-		else
-			cf = CFrame.new(pos) * spawnCFrame.Rotation
+		local flatTarget = Vector3.new(lookAtWorld.X, worldPos.Y, lookAtWorld.Z)
+		if (flatTarget - worldPos).Magnitude > 0.05 then
+			local yaw = math.rad(FriendStandConfigs.DisplayYawOffsetDegrees)
+			return CFrame.lookAt(worldPos, flatTarget) * CFrame.Angles(0, yaw, 0)
 		end
-	else
-		cf = CFrame.new(pos) * spawnCFrame.Rotation
 	end
-
 	local yaw = math.rad(FriendStandConfigs.DisplayYawOffsetDegrees)
-	return cf * CFrame.Angles(0, yaw, 0)
+	return CFrame.new(worldPos) * fallbackRotation * CFrame.Angles(0, yaw, 0)
 end
 
-function FriendStandDisplay.alignModelFacing(model: Model, spawn: BasePart, lookAtWorld: Vector3?)
-	FriendStandDisplay.placeModelOnSpawn(model, spawn, lookAtWorld)
+function FriendStandDisplay.computeShowcaseCFrame(spawnCFrame: CFrame, lookAtWorld: Vector3?): CFrame
+	local pos = spawnCFrame.Position
+	return FriendStandDisplay.computeFacingCFrame(pos, lookAtWorld, spawnCFrame.Rotation)
+end
+
+function FriendStandDisplay.getSpawnFootAnchorY(spawn: BasePart): number
+	if FriendStandConfigs.AlignFeetToSpawnBottom then
+		return spawn.Position.Y - spawn.Size.Y * 0.5
+	end
+	return spawn.Position.Y + spawn.Size.Y * 0.5
 end
 
 function FriendStandDisplay.placeModelOnSpawn(model: Model, spawn: BasePart, lookAtWorld: Vector3?)
@@ -191,11 +191,26 @@ function FriendStandDisplay.placeModelOnSpawn(model: Model, spawn: BasePart, loo
 
 	local bboxCF, bboxSize = model:GetBoundingBox()
 	local bottomY = bboxCF.Position.Y - bboxSize.Y * 0.5
-	local spawnTopY = spawn.Position.Y + spawn.Size.Y * 0.5
-	local lift = (spawnTopY - bottomY) + FriendStandConfigs.DisplayHeightOffset
+	local anchorY = FriendStandDisplay.getSpawnFootAnchorY(spawn)
+	local lift = (anchorY - bottomY) + FriendStandConfigs.DisplayHeightOffset
 	if math.abs(lift) > 0.01 then
 		model:PivotTo(model:GetPivot() + Vector3.new(0, lift, 0))
 	end
+end
+
+function FriendStandDisplay.updateModelFacing(model: Model, lookAtWorld: Vector3, dt: number)
+	local pivot = model:GetPivot()
+	local smoothness = FriendStandConfigs.FaceTurnSmoothness
+	if type(smoothness) ~= "number" or smoothness <= 0 then
+		smoothness = 10
+	end
+	local alpha = 1 - math.exp(-smoothness * dt)
+	local target = FriendStandDisplay.computeFacingCFrame(pivot.Position, lookAtWorld, pivot.Rotation)
+	model:PivotTo(pivot:Lerp(target, alpha))
+end
+
+function FriendStandDisplay.alignModelFacing(model: Model, spawn: BasePart, lookAtWorld: Vector3?)
+	FriendStandDisplay.placeModelOnSpawn(model, spawn, lookAtWorld)
 end
 
 function FriendStandDisplay.getLocalPlayerLookTarget(): Vector3?

@@ -64,8 +64,7 @@ local function updateButtons(frame: Frame, info: TrailConfigs.TrailInfo, isOwned
 			end
 		end
 	else
-		local isFreeDefault = info.ID == TrailConfigs.DefaultTrailId and info.WinCost <= 0
-		if winBtn and winBtn:IsA("GuiButton") and not isFreeDefault then
+		if winBtn and winBtn:IsA("GuiButton") and info.WinCost > 0 then
 			winBtn.Visible = true
 			local t = winBtn:FindFirstChild("Text") :: TextLabel?
 			if t then

@@ -25,7 +25,6 @@ local FriendStandService = Knit.CreateService({
 
 local touchConns: { RBXScriptConnection } = {}
 local touchCooldownUntil: { [Player]: number } = {}
-local boundStand: Model? = nil
 
 local function getFriendIdFromEntry(item: any): number?
 	if typeof(item) ~= "table" then
@@ -188,7 +187,9 @@ local function processReferralJoin(joinedPlayer: Player)
 	FriendStandService:TryRewardReferrer(referrer, joinedPlayer)
 end
 
-local function onStandTouched(hit: BasePart)
+local boundStands: { [Model]: boolean } = {}
+
+local function onStandTouched(hit: BasePart, standModel: Model)
 	if not hit or not hit.Parent then
 		return
 	end
@@ -214,24 +215,13 @@ local function onStandTouched(hit: BasePart)
 	end
 	touchCooldownUntil[player] = now + FriendStandConfigs.TouchDebounce
 
-	FriendStandService.Client.OpenInvitePrompt:Fire(player)
-end
-
-local function unbindStandTouches()
-	for _, conn in touchConns do
-		conn:Disconnect()
-	end
-	table.clear(touchConns)
-	boundStand = nil
+	FriendStandService.Client.OpenInvitePrompt:Fire(player, standModel)
 end
 
 local function bindStandTouches(model: Model)
-	if boundStand == model then
+	if boundStands[model] then
 		return
 	end
-
-	unbindStandTouches()
-	boundStand = model
 
 	local touchParts = FriendStandWorld.collectTouchParts(model)
 	if #touchParts == 0 then
@@ -239,21 +229,24 @@ local function bindStandTouches(model: Model)
 		return
 	end
 
+	boundStands[model] = true
+
 	for _, part in touchParts do
 		part.CanTouch = true
-		table.insert(touchConns, part.Touched:Connect(onStandTouched))
+		table.insert(touchConns, part.Touched:Connect(function(hit: BasePart)
+			onStandTouched(hit, model)
+		end))
 	end
 
 	FriendStandDebug.log("bound", #touchParts, "touch part(s) on", model:GetFullName())
 end
 
-local function tryBindStand()
-	local model = FriendStandWorld.resolveStandModel()
-	if model then
+local function tryBindAllStands(): boolean
+	local models = FriendStandWorld.collectAllStandModels()
+	for _, model in models do
 		bindStandTouches(model)
-		return true
 	end
-	return false
+	return #models > 0
 end
 
 function FriendStandService.Client:GetFriendUserIds(player: Player): { number }
@@ -278,29 +271,33 @@ function FriendStandService:KnitStart()
 		task.defer(processReferralJoin, player)
 	end
 
-	if not tryBindStand() then
+	if not tryBindAllStands() then
 		task.spawn(function()
 			local deadline = os.clock() + FriendStandConfigs.StandResolveTimeout
 			while os.clock() < deadline do
-				if tryBindStand() then
+				if tryBindAllStands() then
 					break
 				end
 				task.wait(1)
 			end
-			if not boundStand then
+			if next(boundStands) == nil then
 				warn(
-					"[iseesupes] FriendStandService: could not find FriendStand under Workspace (checked Map.FriendStand)"
+					"[iseesupes] FriendStandService: no FriendStand models under Workspace.Map (name: FriendStand)"
 				)
 			end
 		end)
 	end
 
+	local standName = FriendStandConfigs.StandModelName
 	Workspace.DescendantAdded:Connect(function(desc)
-		if boundStand then
+		if not desc:IsA("Model") or desc.Name ~= standName then
 			return
 		end
-		if desc:IsA("Model") and desc.Name == FriendStandConfigs.RootPath[#FriendStandConfigs.RootPath] then
-			task.defer(tryBindStand)
+		local mapFolder = FriendStandWorld.getMapFolder()
+		if mapFolder and desc:IsDescendantOf(mapFolder) then
+			task.defer(function()
+				bindStandTouches(desc)
+			end)
 		end
 	end)
 

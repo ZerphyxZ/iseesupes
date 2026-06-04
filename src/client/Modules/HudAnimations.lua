@@ -13,6 +13,7 @@ local SIZE_KEY = "_HudBaseSize"
 local baseSizes: { [GuiObject]: UDim2 } = {}
 local activeFrameTweens: { [GuiObject]: Tween } = {}
 local activeScaleTweens: { [GuiObject]: Tween } = {}
+local heartbeatGeneration: { [GuiObject]: number } = {}
 local activeCountUpConns: { [TextLabel]: RBXScriptConnection } = {}
 local buttonHovered: { [GuiButton]: boolean } = {}
 local buttonPressed: { [GuiButton]: boolean } = {}
@@ -39,6 +40,14 @@ function HudAnimations.rememberBaseScale(gui: GuiObject)
 	end
 end
 
+local function cancelScaleTween(gui: GuiObject)
+	local tween = activeScaleTweens[gui]
+	if tween then
+		tween:Cancel()
+		activeScaleTweens[gui] = nil
+	end
+end
+
 function HudAnimations.pulse(gui: GuiObject, peakScale: number?, duration: number?)
 	HudAnimations.rememberBaseScale(gui)
 	local uiScale = getOrCreateUIScale(gui)
@@ -60,12 +69,56 @@ function HudAnimations.pulse(gui: GuiObject, peakScale: number?, duration: numbe
 	end)
 end
 
-local function cancelScaleTween(gui: GuiObject)
-	local tween = activeScaleTweens[gui]
-	if tween then
-		tween:Cancel()
-		activeScaleTweens[gui] = nil
+function HudAnimations.stopHeartbeat(gui: GuiObject)
+	heartbeatGeneration[gui] = (heartbeatGeneration[gui] or 0) + 1
+	cancelScaleTween(gui)
+	HudAnimations.rememberBaseScale(gui)
+	local uiScale = gui:FindFirstChildOfClass("UIScale")
+	local base = gui:GetAttribute(SCALE_KEY) :: number? or 1
+	if uiScale then
+		uiScale.Scale = base
 	end
+end
+
+function HudAnimations.startHeartbeat(gui: GuiObject, peakScale: number?, periodSeconds: number?)
+	HudAnimations.stopHeartbeat(gui)
+	HudAnimations.rememberBaseScale(gui)
+	local uiScale = getOrCreateUIScale(gui)
+	local base = gui:GetAttribute(SCALE_KEY) :: number? or 1
+	local peak = peakScale or (base * 1.14)
+	local period = periodSeconds or 0.9
+	local beatDur = period * 0.22
+
+	local gen = (heartbeatGeneration[gui] or 0) + 1
+	heartbeatGeneration[gui] = gen
+	task.spawn(function()
+		while gui.Parent and heartbeatGeneration[gui] == gen do
+			for _ = 1, 2 do
+				if not gui.Parent then
+					return
+				end
+				local up = TweenService:Create(
+					uiScale,
+					TweenInfo.new(beatDur * 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+					{ Scale = peak }
+				)
+				local down = TweenService:Create(
+					uiScale,
+					TweenInfo.new(beatDur * 0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Scale = base }
+				)
+				up:Play()
+				up.Completed:Wait()
+				if not gui.Parent then
+					return
+				end
+				down:Play()
+				down.Completed:Wait()
+				task.wait(beatDur * 0.35)
+			end
+			task.wait(period * 0.35)
+		end
+	end)
 end
 
 function HudAnimations.setButtonScale(button: GuiButton, targetScale: number, duration: number?, easingStyle: Enum.EasingStyle?)

@@ -11,6 +11,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 
 local SpawnIntroService = Knit.CreateService({
 	Name = "SpawnIntroService",
@@ -46,24 +47,14 @@ local function doLift(player: Player)
 	SpawnIntroService.Client.SpawnIntroLifted:Fire(player)
 	player:SetAttribute("SpawnIntroPending", true)
 
-	-- Lift the character.
-	hrp.CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
+	local upright = CharacterStance.buildUprightCFrame(hrp, hrp.CFrame)
+	hrp.CFrame = upright + Vector3.new(0, liftHeight, 0)
 end
 
 local function resetCharacterStance(character: Model)
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-
-	if humanoid then
-		humanoid.PlatformStand = false
-		humanoid.Sit = false
-		humanoid:ChangeState(Enum.HumanoidStateType.Running)
-	end
-
-	if hrp then
-		hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-	end
+	local upright = if hrp then CharacterStance.buildUprightCFrame(hrp, hrp.CFrame) else nil
+	CharacterStance.resetToStanding(character, upright)
 end
 
 function SpawnIntroService:PlayLobbyReturnIntro(player: Player)
@@ -116,11 +107,10 @@ function SpawnIntroService:PlayLobbyReturnIntro(player: Player)
 				humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 			end
 
-			-- Lift up
 			local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if hrp then
-				hrp.CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
-				hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				local upright = CharacterStance.buildUprightCFrame(hrp, hrp.CFrame)
+				hrp.CFrame = upright + Vector3.new(0, liftHeight, 0)
 			end
 
 			-- Signal client

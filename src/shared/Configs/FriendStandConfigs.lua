@@ -19,7 +19,11 @@ export type FriendStandConfig = {
 	DisplayRefreshSeconds: number,
 	DisplayYawOffsetDegrees: number,
 	DisplayHeightOffset: number,
+	AlignFeetToSpawnBottom: boolean,
+	StandModelName: string,
+	MapFolderPath: { string },
 	FaceLocalPlayer: boolean,
+	FaceTurnSmoothness: number,
 	FaceUpdateInterval: number,
 	RunAnimFolderName: string,
 	RunAnimName: string,
@@ -48,8 +52,15 @@ local FriendStandConfigs: FriendStandConfig = {
 	DisplayCycleSeconds = 6,
 	DisplayRefreshSeconds = 300,
 	DisplayYawOffsetDegrees = 0,
-	DisplayHeightOffset = 0,
+	--- Extra vertical tweak after foot placement (negative = lower).
+	DisplayHeightOffset = -1.25,
+	--- Use bottom of CharacterSpawn for foot placement (avoids floating when spawn part is tall).
+	AlignFeetToSpawnBottom = true,
+	StandModelName = "FriendStand",
+	MapFolderPath = { "Map" },
 	FaceLocalPlayer = true,
+	--- Higher = faster turn toward local player (Heartbeat lerp).
+	FaceTurnSmoothness = 10,
 	FaceUpdateInterval = 0.2,
 	RunAnimFolderName = "SupesAnimations",
 	RunAnimName = "RunAnimation",
@@ -57,7 +68,7 @@ local FriendStandConfigs: FriendStandConfig = {
 	StandResolveTimeout = 120,
 	ParentDisplayToWorkspace = false,
 	FriendFetchTimeout = 12,
-	DebugPrint = true,
+	DebugPrint = false,
 }
 
 return FriendStandConfigs

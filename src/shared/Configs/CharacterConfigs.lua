@@ -189,6 +189,8 @@ local CharacterConfigs = {
 
 	LongJump = {
 		DoubleTapWindow = 0.35,
+		--- Hold jump (Space or TouchGui JumpButton) this long to long jump (release also counts on mobile).
+		HoldThreshold = 0.18,
 		ForwardPower = 110,
 		UpPower = 95,
 		Cooldown = 1.0,

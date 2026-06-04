@@ -11,6 +11,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 
 type TreadmillTier = TreadmillConfigs.TreadmillTier
 
@@ -428,10 +429,9 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local spawnCf = getKillSpawnCFrame()
-	if root and spawnCf then
-		root.CFrame = spawnCf
-		root.AssemblyLinearVelocity = Vector3.zero
-		root.AssemblyAngularVelocity = Vector3.zero
+	if spawnCf then
+		local upright = CharacterStance.buildUprightCFrame(root, spawnCf)
+		CharacterStance.resetToStanding(character, upright)
 	end
 
 	if DataService then

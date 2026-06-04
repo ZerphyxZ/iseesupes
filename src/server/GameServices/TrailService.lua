@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
+local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
 local TrailVisuals = require(script.Parent.Parent.Modules.TrailVisuals)
 
 local DataService: any = nil
@@ -71,6 +72,10 @@ function TrailService.Client:BuyWithWins(player: Player, trailId: string)
 		return { success = false, message = "Invalid trail" }
 	end
 
+	if info.WinCost <= 0 then
+		return { success = false, message = "Not for wins" }
+	end
+
 	local data = profile.Data
 	if ownsTrail(data, trailId) then
 		return { success = false, message = "Already owned" }
@@ -107,6 +112,7 @@ function TrailService.Client:Equip(player: Player, trailId: string)
 
 	data.EquippedTrail = trailId
 	DataService:Replicate(player)
+	CharacterMovementSpeed.applyToPlayer(player, data)
 	syncVisuals(player)
 	return { success = true, message = nil }
 end
@@ -119,6 +125,7 @@ function TrailService.Client:Unequip(player: Player)
 
 	profile.Data.EquippedTrail = ""
 	DataService:Replicate(player)
+	CharacterMovementSpeed.applyToPlayer(player, profile.Data)
 	syncVisuals(player)
 	return { success = true, message = nil }
 end

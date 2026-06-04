@@ -56,7 +56,7 @@ local UpgradeWinsConfigs: UpgradeWinsConfig = {
 	TouchDebounce = 1.5,
 	ButtonNamePrefix = "Button",
 	DefaultButtons = {
-		[1] = { WinCost = 1, StepBonus = 1 },
+		[1] = { WinCost = 3, StepBonus = 1 },
 		[2] = { WinCost = 5, StepBonus = 2 },
 		[3] = { WinCost = 15, StepBonus = 5 },
 		[4] = { WinCost = 50, StepBonus = 10 },

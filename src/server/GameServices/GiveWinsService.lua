@@ -9,9 +9,6 @@ local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfi
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
-local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
-
-local FIRST_WIN_AVATAR_ID = "1" -- AvatarsShowcase model name "1" = first Superman skin (costs 1 win)
 
 local GiveWinsService = Knit.CreateService({
 	Name = "GiveWinsService",
@@ -107,10 +104,6 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 		return
 	end
 
-	-- Check if this is the player's very first win (new player transition)
-	local data = DataService:GetData(player)
-	local isFirstWin = data and (data.Wins or 0) == 0
-
 	local grant = getGrantAmount(player, winAmount)
 	if DataService:AddWins(player, grant) then
 		if grant ~= winAmount then
@@ -122,52 +115,6 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 		-- Clear any active boost (used for 1 run only)
 		if BoostService and BoostService:IsBoostActive(player) then
 			BoostService:ClearBoost(player)
-		end
-
-		-- First-win reward: unlock and auto-equip the first Superman avatar.
-		-- Delayed 3s so PlayLobbyReturnIntro (teleport + lift + landing) fully
-		-- completes before we swap the character; avoids race with replacePlayerCharacter.
-		if isFirstWin then
-			task.delay(3, function()
-				local latestData = DataService:GetData(player)
-				-- Skip if the player already equipped an aura (e.g. they bought Dark Superman
-				-- before the 3s timer fired) — never overwrite their purchase.
-				local hasAura = latestData
-					and type(latestData.EquippedAura) == "string"
-					and latestData.EquippedAura ~= ""
-				if
-					not hasAura
-					and latestData
-					and (latestData.EquippedAvatar == "" or latestData.EquippedAvatar == nil)
-				then
-					-- Unlock avatar "1" for free (first-win gift)
-					if type(latestData.UnlockedAvatars) ~= "table" then
-						latestData.UnlockedAvatars = {}
-					end
-					latestData.UnlockedAvatars[FIRST_WIN_AVATAR_ID] = true
-					latestData.EquippedAvatar = FIRST_WIN_AVATAR_ID
-
-					-- Apply the Superman character
-					local showcase = MapWorld.findChildInMap("AvatarsShowcase")
-					if showcase then
-						local template = showcase:FindFirstChild(FIRST_WIN_AVATAR_ID)
-						if template and template:IsA("Model") then
-							local clone = template:Clone()
-							-- Remove showcase decorations
-							for _, child in clone:GetChildren() do
-								if child.Name == "Decor" or child.Name == "Part" then
-									child:Destroy()
-								end
-							end
-							-- Models pre-scaled to GetScale=1 in Studio — no runtime scaling needed
-							AvatarReplace.equipShowcaseAvatar(player, clone, FIRST_WIN_AVATAR_ID)
-							clone:Destroy()
-						end
-					end
-					DataService:Replicate(player)
-					print("[iseesupes] GiveWins: first-win Superman unlocked for", player.Name)
-				end
-			end)
 		end
 
 		-- End flight on the server and signal the client.

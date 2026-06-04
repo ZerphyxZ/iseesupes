@@ -1,9 +1,6 @@
 --!strict
 
--- Long jump: double-tap jump OR hold jump button for HoldThreshold (mobile-friendly).
--- - Double-tap (desktop preferred): tap Space twice within DoubleTapWindow → long jump.
--- - Hold (mobile preferred): press and HOLD Space / mobile jump button. Normal jump fires
---   immediately on press; if still held after HoldThreshold seconds, long jump fires too.
+-- Long jump: double-tap jump OR hold jump then release / keep holding (Space + TouchGui JumpButton).
 
 local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
@@ -18,7 +15,6 @@ local AnimRoot = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
 local Features = CharacterConfigs.Features
 local LjCfg = CharacterConfigs.LongJump
-local DJ_PHASE_ATTR = "DjAbilityPhase"
 
 local LongJumpController = Knit.CreateController({ Name = "LongJumpController" })
 
@@ -29,20 +25,28 @@ local animFolder: Folder? = nil
 
 local lastJumpPressAt = -math.huge
 local cooldownEndsAt = 0
-local holdLongJumpToken = 0 -- increments each press so older hold-checks bail out
+local holdLongJumpToken = 0
+local jumpPressBeganAt = 0
+local holdLongJumpFiredForPress = false
+local touchJumpButtonHeld = false
+local touchJumpButtonBound: GuiButton? = nil
 
--- How long the jump button must be held (after the initial press) to trigger long jump.
--- Short enough to feel responsive on mobile, long enough that quick taps stay normal jumps.
-local HOLD_LONG_JUMP_THRESHOLD = 0.18
+local function getHoldThreshold(): number
+	local t = LjCfg.HoldThreshold
+	if typeof(t) == "number" and t > 0 then
+		return t
+	end
+	return 0.18
+end
 
---- True if the player is still holding ANY jump input (keyboard Space or mobile jump button).
---- Roblox sets humanoid.Jump = true while the mobile jump button is pressed, and
---- UserInputService:IsKeyDown(Space) is true while Space is held on desktop.
-local function isJumpInputStillHeld(humanoid: Humanoid?): boolean
+local function isJumpInputStillHeld(): boolean
+	if touchJumpButtonHeld then
+		return true
+	end
 	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
 		return true
 	end
-	if humanoid and humanoid.Jump then
+	if UserInputService:IsKeyDown(Enum.KeyCode.ButtonA) then
 		return true
 	end
 	return false
@@ -175,9 +179,47 @@ local function isBlocked(): boolean
 	if CharacterController and CharacterController.IsAbilityBlocking and CharacterController:IsAbilityBlocking() then
 		return true
 	end
-	if player:GetAttribute(DJ_PHASE_ATTR) then
+	if player:GetAttribute("DjAbilityPhase") then
 		return true
 	end
+	return false
+end
+
+local function tryApplyLongJumpFromHold(): boolean
+	if holdLongJumpFiredForPress then
+		return false
+	end
+
+	if not Features.UseLongJump then
+		return false
+	end
+
+	local character = player.Character
+	if not character then
+		return false
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid and HumanoidLocomotion.usesEngineLocomotion(humanoid) then
+		return false
+	end
+
+	if isBlocked() then
+		return false
+	end
+
+	local now = os.clock()
+	if now < cooldownEndsAt then
+		return false
+	end
+
+	if applyLongJump(character) then
+		holdLongJumpFiredForPress = true
+		cooldownEndsAt = now + (LjCfg.Cooldown or 2.5)
+		lastJumpPressAt = -math.huge
+		return true
+	end
+
 	return false
 end
 
@@ -203,6 +245,9 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 	local now = os.clock()
 	local window = LjCfg.DoubleTapWindow or 0.35
 
+	jumpPressBeganAt = now
+	holdLongJumpFiredForPress = false
+
 	if now - lastJumpPressAt <= window then
 		lastJumpPressAt = -math.huge
 
@@ -224,6 +269,7 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 		end
 
 		if applyLongJump(character) then
+			holdLongJumpFiredForPress = true
 			cooldownEndsAt = now + (LjCfg.Cooldown or 2.5)
 		end
 		return true
@@ -231,26 +277,118 @@ function LongJumpController:TryLongJumpOnJump(): boolean
 
 	lastJumpPressAt = now
 
-	-- HOLD path (mobile-friendly alternative to double-tap): schedule a long-jump
-	-- check after the threshold. If the player is still holding jump AND not on
-	-- cooldown, fire long jump. The first press already went through as a normal jump.
 	holdLongJumpToken += 1
 	local myToken = holdLongJumpToken
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	task.delay(HOLD_LONG_JUMP_THRESHOLD, function()
-		if myToken ~= holdLongJumpToken then return end -- a newer press happened, ignore us
-		if not player.Character or player.Character ~= character then return end
-		if isBlocked() then return end
-		if not isJumpInputStillHeld(humanoid) then return end
-		local nowDelayed = os.clock()
-		if nowDelayed < cooldownEndsAt then return end -- silently skip during cooldown on hold path
-		if applyLongJump(character) then
-			cooldownEndsAt = nowDelayed + (LjCfg.Cooldown or 2.5)
-			lastJumpPressAt = -math.huge -- consume so the next tap isn't treated as second-tap
+	task.delay(getHoldThreshold(), function()
+		if myToken ~= holdLongJumpToken then
+			return
 		end
+		if holdLongJumpFiredForPress then
+			return
+		end
+		if not player.Character or player.Character ~= character then
+			return
+		end
+		if isBlocked() then
+			return
+		end
+		if not isJumpInputStillHeld() then
+			return
+		end
+		tryApplyLongJumpFromHold()
 	end)
 
 	return false
+end
+
+function LongJumpController:TryLongJumpOnRelease()
+	if holdLongJumpFiredForPress then
+		return
+	end
+	if os.clock() - jumpPressBeganAt < getHoldThreshold() then
+		return
+	end
+	tryApplyLongJumpFromHold()
+end
+
+local function isTouchPressInput(input: InputObject): boolean
+	return input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1
+end
+
+local function bindTouchGuiJumpButton(button: GuiButton)
+	if touchJumpButtonBound == button then
+		return
+	end
+	touchJumpButtonBound = button
+
+	button.InputBegan:Connect(function(input: InputObject, _gameProcessed: boolean)
+		if not isTouchPressInput(input) then
+			return
+		end
+		touchJumpButtonHeld = true
+		if CharacterController and CharacterController.PressJump then
+			CharacterController:PressJump()
+		end
+	end)
+
+	button.InputEnded:Connect(function(input: InputObject, _gameProcessed: boolean)
+		if not isTouchPressInput(input) then
+			return
+		end
+		touchJumpButtonHeld = false
+		if CharacterController and CharacterController.ReleaseJump then
+			CharacterController:ReleaseJump()
+		else
+			LongJumpController:TryLongJumpOnRelease()
+		end
+	end)
+
+	print("[iseesupes][LongJump] bound TouchGui JumpButton")
+end
+
+local function tryBindTouchGuiJumpButton()
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then
+		return false
+	end
+
+	local touchGui = playerGui:FindFirstChild("TouchGui")
+	if not touchGui then
+		return false
+	end
+
+	local jumpButton = touchGui:FindFirstChild("JumpButton", true)
+	if jumpButton and jumpButton:IsA("GuiButton") then
+		bindTouchGuiJumpButton(jumpButton)
+		return true
+	end
+
+	return false
+end
+
+local function watchForTouchGuiJumpButton()
+	local playerGui = player:WaitForChild("PlayerGui")
+
+	if tryBindTouchGuiJumpButton() then
+		return
+	end
+
+	playerGui.ChildAdded:Connect(function(child)
+		if child.Name == "TouchGui" then
+			task.defer(tryBindTouchGuiJumpButton)
+		end
+	end)
+
+	playerGui.DescendantAdded:Connect(function(desc)
+		if desc.Name == "JumpButton" and desc:IsA("GuiButton") then
+			local touchGui = playerGui:FindFirstChild("TouchGui")
+			if touchGui and desc:IsDescendantOf(touchGui) then
+				task.defer(function()
+					bindTouchGuiJumpButton(desc)
+				end)
+			end
+		end
+	end)
 end
 
 local function cleanupCharacter(character: Model)
@@ -319,11 +457,20 @@ function LongJumpController:KnitInit()
 			return LongJumpController:TryLongJumpOnJump()
 		end)
 	end
+	if CharacterController and CharacterController.RegisterJumpReleaseListener then
+		CharacterController:RegisterJumpReleaseListener(function()
+			LongJumpController:TryLongJumpOnRelease()
+		end)
+	end
 end
 
 function LongJumpController:KnitStart()
+	task.defer(watchForTouchGuiJumpButton)
+
 	player.CharacterAdded:Connect(function(character)
 		lastJumpPressAt = -math.huge
+		holdLongJumpFiredForPress = false
+		touchJumpButtonHeld = false
 		setupCharacter(character)
 	end)
 

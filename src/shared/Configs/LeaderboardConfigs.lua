@@ -15,6 +15,9 @@ export type LeaderboardConfig = {
 
 local LeaderboardConfigs = {}
 
+--- When false, first join per DATA_VERSION does not import OrderedDataStore scores into the profile (test wipes).
+LeaderboardConfigs.RestoreFromOdsOnJoin = false
+
 LeaderboardConfigs.RefreshInterval = 60
 LeaderboardConfigs.SaveInterval = 60
 LeaderboardConfigs.TopN = 50
@@ -35,7 +38,7 @@ end
 
 LeaderboardConfigs.Boards = {
 	Speed = {
-		StoreName = "GlobalSpeed_v1",
+		StoreName = "GlobalSpeed_v2",
 		ModelName = "SpeedLeaderboard",
 		ProfileKey = "Speed",
 		GetScore = function(data)
@@ -46,7 +49,7 @@ LeaderboardConfigs.Boards = {
 		end,
 	} :: LeaderboardConfig,
 	Wins = {
-		StoreName = "GlobalWins_v1",
+		StoreName = "GlobalWins_v2",
 		ModelName = "WinsLeaderboard",
 		ProfileKey = "Wins",
 		GetScore = function(data)
@@ -57,7 +60,7 @@ LeaderboardConfigs.Boards = {
 		end,
 	} :: LeaderboardConfig,
 	Rebirths = {
-		StoreName = "GlobalRebirths_v1",
+		StoreName = "GlobalRebirths_v2",
 		ModelName = "RebirthLeaderboard",
 		ProfileKey = "Rebirths",
 		GetScore = function(data)
@@ -68,7 +71,7 @@ LeaderboardConfigs.Boards = {
 		end,
 	} :: LeaderboardConfig,
 	Time = {
-		StoreName = "GlobalPlayTime_v1",
+		StoreName = "GlobalPlayTime_v2",
 		ModelName = "TimeLeaderboard",
 		ProfileKey = "TotalPlayTime",
 		GetScore = function(data)
@@ -79,7 +82,7 @@ LeaderboardConfigs.Boards = {
 		end,
 	} :: LeaderboardConfig,
 	MaxStage = {
-		StoreName = "GlobalMaxStage_v1",
+		StoreName = "GlobalMaxStage_v2",
 		ModelName = "StageLeaderboard",
 		ProfileKey = "MaxStage",
 		GetScore = function(data)

@@ -24,7 +24,13 @@ In Studio: **Plugins → Rojo → Connect**, or use the Rojo plugin connect butt
 
 ## Testing profiles & leaderboards (Studio)
 
-**Fresh profile store for everyone:** bump `DATA_VERSION` in [`DataService.lua`](src/server/GlobalServices/DataService.lua) (currently `iseesupes_v6`). That uses a new ProfileStore namespace; old saves stay under the previous version string.
+**Fresh profile store for everyone:** bump `DATA_VERSION` in [`DataService.lua`](src/server/GlobalServices/DataService.lua) (currently `iseesupes_v99`). That uses a new ProfileStore namespace; old saves stay under the previous version string.
+
+**Full reset for published testers** (not just a version bump): also bump `Global*_v*` store names in [`LeaderboardConfigs.lua`](src/shared/Configs/LeaderboardConfigs.lua) and set `LeaderboardConfigs.RestoreFromOdsOnJoin = false` so old OrderedDataStore wins/speed are not copied back into new profiles on first join. Deploy the place after both changes. `/devreset` is **Studio only**; published players need this deploy-based reset.
+
+**Studio tutorial test:** type `/devreset` or `/devresetdata` in chat (wipes save + sets `TutorialStep = 1`).
+
+**Thrust shop intro (after tutorial):** requires `Workspace.Map.UpgradeShop` with touch model `UTouch` / part `Touch` (see `ThrustUpgradeConfigs`). When `TutorialStep` reaches 4, clients play a one-time look-back intro (toast, highlight, camera, beam) if `TutorialThrustShopIntroShown` is false.
 
 **Reset your player in-session** (profile + global leaderboard scores for your user id → 0, HUD refresh):
 
@@ -43,6 +49,18 @@ DataService:ResetProfileForStudioTest(player, true) -- true = wipe saved DataSto
 4. Earn speed / wins / rebirth, then confirm **HUD**, **leaderstats**, and **Map leaderboards** match (boards update within ~20s while playing, or immediately after wins/rebirth).
 
 `ResetProfileForStudioTest` does **not** run in published live servers.
+
+## Analytics funnels (Creator Dashboard)
+
+**Stage progression (Stages 1–9):** [`FunnelAnalyticsService`](src/server/GlobalServices/FunnelAnalyticsService.lua) logs `AnalyticsService:LogFunnelStepEvent` when a player’s `MaxStage` increases (checkpoint touch in [`SkipStageService`](src/server/GameServices/SkipStageService.lua) or skip-stage teleport). Config: [`FunnelAnalyticsConfigs.lua`](src/shared/Configs/FunnelAnalyticsConfigs.lua) — funnel name **`StageProgress`**, steps **1–9**.
+
+1. **Publish** the experience (events are **not** ingested from normal Studio Play).
+2. In Studio, enable `FunnelAnalyticsConfigs.DebugPrint` to see `[iseesupes][Funnel]` lines in Output when stages are reached.
+3. After publish, wait up to **24 hours** for charts to populate.
+4. **Creator Hub → Analytics → Funnels → Add tab** — funnel **`StageProgress`**, steps **1 → 2 → … → 9** (step numbers match stage index).
+5. Studio chat **`/devfunnel`** still prints a live server snapshot from `SkipStageService` (not global analytics).
+
+Profile field `AnalyticsMaxStageLogged` dedupes events; on join, missing steps up to `MaxStage` are backfilled once.
 
 ## Project layout
 
@@ -150,7 +168,7 @@ Edit `src/shared/Configs/ProductConfigs.lua`:
 ## Leaderboards
 
 - **Config:** [`LeaderboardConfigs.lua`](src/shared/Configs/LeaderboardConfigs.lua) — Speed, Wins, Rebirths, Time (total play time); Top 50 global per board.
-- **Server:** [`LeaderboardService`](src/server/GameServices/LeaderboardService.lua) — global boards read **OrderedDataStores**; **HUD / `DataLib` / `leaderstats` read the profile**. On first join per `DATA_VERSION`, [`DataService`](src/server/GlobalServices/DataService.lua) restores any higher global score into the profile (one-time). Profile scores are pushed to ODS on join, after wins/rebirth changes, on a debounced timer while stats change, and every 60s / on leave. Displays refresh every 60s plus after those pushes.
+- **Server:** [`LeaderboardService`](src/server/GameServices/LeaderboardService.lua) — global boards read **OrderedDataStores** (`Global*_v2` in config); **HUD / `DataLib` / `leaderstats` read the profile**. On first join per `DATA_VERSION`, [`DataService`](src/server/GlobalServices/DataService.lua) can restore higher global scores into the profile when `LeaderboardConfigs.RestoreFromOdsOnJoin` is `true` (currently `false` for test wipes). Profile scores are pushed to ODS on join, after wins/rebirth changes, on a debounced timer while stats change, and every 60s / on leave. Displays refresh every 60s plus after those pushes.
 - **Studio:** `Workspace → Map → Leaderboards → SpeedLeaderboard | WinsLeaderboard | RebirthLeaderboard | TimeLeaderboard`, each with `Leaderboard → Board → SurfaceGui → ScrollingFrame` and row frames (`Entry_1` … or hidden `Template`). Row labels: `RankLabel`, `NameLabel`, `ScoreLabel`. Optional fallback: `ReplicatedStorage → Templates → LeaderboardEntry`.
 - **Profile:** `TotalPlayTime` (seconds) in [`ProfileTemplate.lua`](src/shared/Utils/ProfileTemplate.lua); displayed via [`TimeFormat.formatPlayTime`](src/shared/Utils/TimeFormat.lua).
 - **Enable Studio API access** for DataStores (Game Settings → Security).

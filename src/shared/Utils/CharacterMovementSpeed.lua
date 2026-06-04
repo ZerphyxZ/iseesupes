@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 
 local CharacterMovementSpeed = {}
 
@@ -16,13 +17,21 @@ function CharacterMovementSpeed.getLevel(data: any): number
 	return 1
 end
 
-function CharacterMovementSpeed.getSpeedForLevel(player: Player, level: number): number
-	local base = SpeedConfigs.GetSpeedFromLevel(level)
+function CharacterMovementSpeed.getBaseSpeedForLevel(level: number): number
+	return SpeedConfigs.GetSpeedFromLevel(level)
+end
+
+function CharacterMovementSpeed.getSpeedForLevel(player: Player, level: number, data: any?): number
+	local base = CharacterMovementSpeed.getBaseSpeedForLevel(level)
+	if data then
+		base *= TrailConfigs.GetEquippedSpeedMultiplier(data)
+	end
 	return LevelDesignTuning.resolveSwimSpeed(player, base)
 end
 
 function CharacterMovementSpeed.getSpeedForData(player: Player, data: any): number
-	return CharacterMovementSpeed.getSpeedForLevel(player, CharacterMovementSpeed.getLevel(data))
+	local level = CharacterMovementSpeed.getLevel(data)
+	return CharacterMovementSpeed.getSpeedForLevel(player, level, data)
 end
 
 function CharacterMovementSpeed.applyToCharacter(player: Player, character: Model, data: any?): boolean

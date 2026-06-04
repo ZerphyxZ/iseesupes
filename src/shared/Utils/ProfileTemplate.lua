@@ -12,6 +12,8 @@ export type PlayerData = {
 	Rebirths: number,
 	Stage: number,
 	MaxStage: number,
+	--- Highest stage index sent to Analytics funnel (LogFunnelStepEvent dedupe).
+	AnalyticsMaxStageLogged: number,
 	OwnedTrails: { [string]: boolean },
 	EquippedTrail: string,
 	OwnedAuras: { [string]: boolean },
@@ -28,6 +30,12 @@ export type PlayerData = {
 	TotalPlayTime: number,
 	LeaderboardOdsVersion: string?, -- set after ODS reconcile; never put nil in the store template
 	BoostActive: boolean?, -- temporary boost flag (cleared when player wins)
+	--- 1=treadmill, 2=give wins, 3=upgrade avatar, 4=core done, 5=go stage 1, 6=complete
+	TutorialStep: number,
+	TutorialThrustHintShown: boolean,
+	TutorialThrustShopIntroShown: boolean,
+	TutorialFlyIntroShown: boolean,
+	TutorialLowThrustFlyHintShown: boolean,
 }
 
 -- Pure data only — passed to ProfileService (no functions, no nil values).
@@ -43,6 +51,7 @@ local Data: PlayerData = {
 	Rebirths = 0,
 	Stage = 1,
 	MaxStage = 0,
+	AnalyticsMaxStageLogged = 0,
 	OwnedTrails = {},
 	EquippedTrail = "",
 	OwnedAuras = {},
@@ -56,6 +65,11 @@ local Data: PlayerData = {
 	OwnedDoubleWins = false,
 	StepSpeedBonus = 0,
 	TotalPlayTime = 0,
+	TutorialStep = 1,
+	TutorialThrustHintShown = false,
+	TutorialThrustShopIntroShown = false,
+	TutorialFlyIntroShown = false,
+	TutorialLowThrustFlyHintShown = false,
 }
 
 local ProfileTemplate = {}

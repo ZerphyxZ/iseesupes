@@ -1,6 +1,6 @@
 --!strict
 
--- Local friend showcase on FriendStand (run anim carousel) + invite prompt on server touch.
+-- Friend showcase on every Map/FriendStand model (random friend per stand, smooth look-at).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,19 +19,23 @@ local FriendStandController = Knit.CreateController({ Name = "FriendStandControl
 
 local localPlayer = Players.LocalPlayer
 
-local standModel: Model? = nil
-local characterSpawn: BasePart? = nil
-local carouselThread: thread? = nil
+type StandBinding = {
+	model: Model,
+	spawn: BasePart,
+	displayModel: Model?,
+	currentFriendId: number?,
+	carouselGeneration: number,
+	carouselThread: thread?,
+}
+
+local standBindings: { [Model]: StandBinding } = {}
+local inviteStandModel: Model? = nil
+local globalFaceConn: RBXScriptConnection? = nil
 local friendListRefreshThread: thread? = nil
 local standResolveThread: thread? = nil
-local standPartsConn: RBXScriptConnection? = nil
-local faceUpdateThread: thread? = nil
-local displayModel: Model? = nil
-local bindInProgress = false
+local bindInProgress: { [Model]: boolean } = {}
 
 local cachedFriendIds: { number } = {}
-local currentDisplayFriendId: number? = nil
-local carouselGeneration = 0
 local friendListGeneration = 0
 
 local function idsSummary(ids: { number }): string
@@ -63,64 +67,74 @@ local function ensureFallbackFriendIds()
 	FriendStandDebug.log("ensureFallbackFriendIds:", idsSummary(cachedFriendIds))
 end
 
-local function pickNextFriendId(ids: { number }): number?
-	if #ids == 0 then
+local function pickRandomFriendId(excludeId: number?): number?
+	if #cachedFriendIds == 0 then
+		ensureFallbackFriendIds()
+	end
+	if #cachedFriendIds == 0 then
 		return nil
 	end
-	if #ids == 1 then
-		return ids[1]
+	if #cachedFriendIds == 1 then
+		return cachedFriendIds[1]
 	end
 
-	local current = currentDisplayFriendId
-	local candidate = ids[math.random(1, #ids)]
+	local candidate = cachedFriendIds[math.random(1, #cachedFriendIds)]
 	local attempts = 0
-	while candidate == current and attempts < 8 do
-		candidate = ids[math.random(1, #ids)]
+	while candidate == excludeId and attempts < 8 do
+		candidate = cachedFriendIds[math.random(1, #cachedFriendIds)]
 		attempts += 1
 	end
 	return candidate
 end
 
-local function stopFaceUpdateLoop()
-	if faceUpdateThread then
-		task.cancel(faceUpdateThread)
-		faceUpdateThread = nil
+local function stopGlobalFaceLoop()
+	if globalFaceConn then
+		globalFaceConn:Disconnect()
+		globalFaceConn = nil
 	end
-	displayModel = nil
 end
 
-local function startFaceUpdateLoop(model: Model, spawn: BasePart)
-	stopFaceUpdateLoop()
-	if not FriendStandConfigs.FaceLocalPlayer then
+local function ensureGlobalFaceLoop()
+	if globalFaceConn or not FriendStandConfigs.FaceLocalPlayer then
 		return
 	end
 
-	displayModel = model
-	local generation = carouselGeneration
-
-	faceUpdateThread = task.spawn(function()
-		local interval = FriendStandConfigs.FaceUpdateInterval
-		while displayModel == model and model.Parent and generation == carouselGeneration do
-			local lookAt = FriendStandDisplay.getLocalPlayerLookTarget()
-			if lookAt then
-				FriendStandDisplay.alignModelFacing(model, spawn, lookAt)
+	globalFaceConn = RunService.Heartbeat:Connect(function(dt: number)
+		local lookAt = FriendStandDisplay.getLocalPlayerLookTarget()
+		if not lookAt then
+			return
+		end
+		for _, binding in pairs(standBindings) do
+			local model = binding.displayModel
+			if model and model.Parent then
+				FriendStandDisplay.updateModelFacing(model, lookAt, dt)
 			end
-			task.wait(interval)
 		end
 	end)
 end
 
-function FriendStandController:ClearDisplay()
-	stopFaceUpdateLoop()
-	if standModel then
-		local parent = FriendStandDisplay.getDisplayParent(standModel)
-		FriendStandDisplay.destroyDisplayIn(parent)
+local function clearStandDisplay(binding: StandBinding)
+	if binding.displayModel then
+		FriendStandDisplay.stopRunOnModel(binding.displayModel)
+		binding.displayModel = nil
 	end
-	if standModel then
-		FriendStandDisplay.destroyDisplayIn(standModel)
+	local parent = FriendStandDisplay.getDisplayParent(binding.model)
+	FriendStandDisplay.destroyDisplayIn(parent)
+	FriendStandDisplay.destroyDisplayIn(binding.model)
+	binding.currentFriendId = nil
+end
+
+function FriendStandController:ClearDisplay(stand: Model?)
+	if stand then
+		local binding = standBindings[stand]
+		if binding then
+			clearStandDisplay(binding)
+		end
+		return
 	end
-	currentDisplayFriendId = nil
-	FriendStandDebug.log("ClearDisplay")
+	for _, binding in pairs(standBindings) do
+		clearStandDisplay(binding)
+	end
 end
 
 function FriendStandController:RefreshFriendList(): boolean
@@ -164,21 +178,20 @@ function FriendStandController:RefreshFriendList(): boolean
 	return success
 end
 
-function FriendStandController:ShowFriendById(friendId: number): boolean
-	local spawn = characterSpawn
-	local stand = standModel
-	if not spawn or not stand then
-		FriendStandDebug.warn("ShowFriendById: no spawn/stand")
+function FriendStandController:ShowFriendById(stand: Model, friendId: number): boolean
+	local binding = standBindings[stand]
+	if not binding then
+		FriendStandDebug.warn("ShowFriendById: stand not bound", stand:GetFullName())
 		return false
 	end
 
-	local generation = carouselGeneration
+	local spawn = binding.spawn
+	local generation = binding.carouselGeneration
 	local displayParent = FriendStandDisplay.getDisplayParent(stand)
 
-	FriendStandDisplay.destroyDisplayIn(displayParent)
-	FriendStandDisplay.destroyDisplayIn(stand)
+	clearStandDisplay(binding)
 
-	FriendStandDebug.log("ShowFriendById: loading userId", friendId)
+	FriendStandDebug.log("ShowFriendById:", stand.Name, "userId", friendId)
 
 	local model = FriendStandDisplay.createFriendModel(friendId)
 	if not model then
@@ -186,68 +199,82 @@ function FriendStandController:ShowFriendById(friendId: number): boolean
 		return false
 	end
 
-	if generation ~= carouselGeneration then
+	if generation ~= binding.carouselGeneration then
 		model:Destroy()
-		FriendStandDebug.log("ShowFriendById: cancelled (generation)")
 		return false
 	end
 
 	model.Parent = displayParent
-	FriendStandDebug.log("ShowFriendById: parented to", displayParent:GetFullName())
 
 	if not FriendStandDisplay.waitForRigReady(model) then
-		FriendStandDebug.warn("ShowFriendById: rig not ready for", friendId)
 		model:Destroy()
 		return false
 	end
 
-	if generation ~= carouselGeneration then
+	if generation ~= binding.carouselGeneration then
 		model:Destroy()
 		return false
 	end
 
 	local lookAt = FriendStandDisplay.getLocalPlayerLookTarget()
 	if not FriendStandDisplay.prepareShowcaseModel(model, spawn, lookAt) then
-		FriendStandDebug.warn("ShowFriendById: prepareShowcaseModel failed")
 		model:Destroy()
 		return false
 	end
 
-	startFaceUpdateLoop(model, spawn)
+	binding.displayModel = model
+	binding.currentFriendId = friendId
+	ensureGlobalFaceLoop()
 
-	currentDisplayFriendId = friendId
-	FriendStandDebug.log("ShowFriendById: success userId", friendId, "facing player, run anim on")
+	FriendStandDebug.log("ShowFriendById: success", stand.Name, friendId)
 	return true
 end
 
-function FriendStandController:ShowNextFriend()
-	if #cachedFriendIds == 0 then
-		ensureFallbackFriendIds()
-	end
-	if #cachedFriendIds == 0 then
-		FriendStandDebug.warn("ShowNextFriend: still no friend ids")
+function FriendStandController:ShowNextFriend(stand: Model)
+	local binding = standBindings[stand]
+	if not binding then
 		return
 	end
 
-	local friendId = pickNextFriendId(cachedFriendIds)
+	local friendId = pickRandomFriendId(binding.currentFriendId)
 	if not friendId then
-		FriendStandDebug.warn("ShowNextFriend: pickNextFriendId returned nil")
+		FriendStandDebug.warn("ShowNextFriend: no friend id for", stand.Name)
 		return
 	end
 
-	FriendStandDebug.log("ShowNextFriend: picked", friendId)
-	local ok = FriendStandController:ShowFriendById(friendId)
-	if not ok then
-		FriendStandDebug.warn("ShowNextFriend: ShowFriendById failed for", friendId)
+	FriendStandController:ShowFriendById(stand, friendId)
+end
+
+local function stopCarouselForStand(binding: StandBinding)
+	binding.carouselGeneration += 1
+	if binding.carouselThread then
+		task.cancel(binding.carouselThread)
+		binding.carouselThread = nil
 	end
 end
 
-local function stopCarouselLoop()
-	carouselGeneration += 1
-	if carouselThread then
-		task.cancel(carouselThread)
-		carouselThread = nil
-	end
+local function startCarouselForStand(binding: StandBinding)
+	stopCarouselForStand(binding)
+	local generation = binding.carouselGeneration
+	local stand = binding.model
+
+	FriendStandDebug.log("startCarousel:", stand:GetFullName(), "gen", generation)
+
+	binding.carouselThread = task.spawn(function()
+		while standBindings[stand] == binding and stand.Parent and generation == binding.carouselGeneration do
+			if #cachedFriendIds == 0 then
+				FriendStandController:RefreshFriendList()
+			end
+
+			FriendStandController:ShowNextFriend(stand)
+
+			local cycle = FriendStandConfigs.DisplayCycleSeconds
+			if cycle <= 0 then
+				break
+			end
+			task.wait(cycle)
+		end
+	end)
 end
 
 local function stopFriendListRefreshLoop()
@@ -266,42 +293,33 @@ local function startFriendListRefreshLoop()
 	end
 
 	friendListRefreshThread = task.spawn(function()
-		while standModel and standModel.Parent do
+		while next(standBindings) ~= nil do
 			task.wait(interval)
-			if standModel and standModel.Parent then
+			if next(standBindings) ~= nil then
 				FriendStandController:RefreshFriendList()
 			end
 		end
-	end)
-end
-
-local function startCarouselLoop()
-	stopCarouselLoop()
-	local generation = carouselGeneration
-
-	FriendStandDebug.log("startCarouselLoop: generation", generation)
-
-	carouselThread = task.spawn(function()
-		while standModel and standModel.Parent and generation == carouselGeneration do
-			if #cachedFriendIds == 0 then
-				FriendStandController:RefreshFriendList()
-			end
-
-			FriendStandController:ShowNextFriend()
-
-			local cycle = FriendStandConfigs.DisplayCycleSeconds
-			if cycle <= 0 then
-				break
-			end
-			task.wait(cycle)
-		end
-		FriendStandDebug.log("startCarouselLoop: ended generation", generation)
 	end)
 end
 
 function FriendStandController:PromptInvite()
-	local friendId = currentDisplayFriendId
-	FriendStandDebug.log("PromptInvite: currentDisplayFriendId=", friendId)
+	local friendId: number? = nil
+	if inviteStandModel then
+		local binding = standBindings[inviteStandModel]
+		if binding then
+			friendId = binding.currentFriendId
+		end
+	end
+	if not friendId then
+		for _, binding in pairs(standBindings) do
+			if binding.currentFriendId then
+				friendId = binding.currentFriendId
+				break
+			end
+		end
+	end
+
+	FriendStandDebug.log("PromptInvite: friendId=", friendId)
 	if not friendId then
 		NotificationManager.show("Add friends on Roblox to invite them!", "Info")
 	end
@@ -317,128 +335,100 @@ function FriendStandController:PromptInvite()
 	end
 end
 
-local function disconnectStandPartsWatcher()
-	if standPartsConn then
-		standPartsConn:Disconnect()
-		standPartsConn = nil
-	end
-end
-
 function FriendStandController:BindStand(model: Model): boolean
-	if standModel == model and characterSpawn then
-		FriendStandDebug.log("BindStand: already bound")
+	if standBindings[model] then
 		return true
 	end
-
-	if bindInProgress then
+	if bindInProgress[model] then
 		return false
 	end
-	bindInProgress = true
+	bindInProgress[model] = true
 
 	local spawn = FriendStandWorld.waitForSpawnPart(model)
-	bindInProgress = false
+	bindInProgress[model] = nil
 
 	if not spawn then
-		FriendStandDebug.warn("BindStand: CharacterSpawn never appeared on", model:GetFullName())
+		FriendStandDebug.warn("BindStand: CharacterSpawn missing on", model:GetFullName())
 		return false
 	end
 
-	disconnectStandPartsWatcher()
+	local binding: StandBinding = {
+		model = model,
+		spawn = spawn,
+		displayModel = nil,
+		currentFriendId = nil,
+		carouselGeneration = 0,
+		carouselThread = nil,
+	}
+	standBindings[model] = binding
 
-	if standModel == model and characterSpawn == spawn then
-		return true
-	end
-
-	FriendStandController:UnbindStand()
-
-	standModel = model
-	characterSpawn = spawn
-
-	FriendStandDebug.log(
-		"BindStand:",
-		model:GetFullName(),
-		"spawn=",
-		spawn:GetFullName(),
-		"spawnPos=",
-		tostring(spawn.Position)
-	)
+	FriendStandDebug.log("BindStand:", model:GetFullName(), "spawn=", spawn:GetFullName())
 
 	task.spawn(function()
-		local listOk = FriendStandController:RefreshFriendList()
-		FriendStandDebug.log("BindStand: RefreshFriendList ok=", listOk, "count=", #cachedFriendIds)
-		startFriendListRefreshLoop()
-		startCarouselLoop()
+		if #cachedFriendIds == 0 then
+			FriendStandController:RefreshFriendList()
+		else
+			ensureFallbackFriendIds()
+		end
+
+		if next(standBindings) ~= nil and not friendListRefreshThread then
+			startFriendListRefreshLoop()
+		end
+
+		local friendId = pickRandomFriendId(nil)
+		if friendId then
+			FriendStandController:ShowFriendById(model, friendId)
+		end
+		startCarouselForStand(binding)
 	end)
 
 	return true
 end
 
-local function watchStandPartsUntilBound(model: Model)
-	disconnectStandPartsWatcher()
-	standPartsConn = model.DescendantAdded:Connect(function(desc)
-		if standModel and characterSpawn then
-			return
-		end
-		if desc:IsA("BasePart") then
-			for _, alias in FriendStandConfigs.CharacterSpawnPartAliases do
-				if desc.Name == alias then
-					FriendStandDebug.log("watchStandParts: spawn part added →", desc:GetFullName())
-					task.defer(function()
-						FriendStandController:BindStand(model)
-					end)
-					return
-				end
-			end
-		end
-	end)
-end
-
-function FriendStandController:UnbindStand()
-	FriendStandDebug.log("UnbindStand")
-	disconnectStandPartsWatcher()
-	stopCarouselLoop()
-	stopFriendListRefreshLoop()
-	FriendStandController:ClearDisplay()
-	table.clear(cachedFriendIds)
-	standModel = nil
-	characterSpawn = nil
-end
-
-local function tryBindStand(): boolean
-	local model = FriendStandWorld.resolveStandModel()
-	if not model then
-		if standModel then
-			FriendStandController:UnbindStand()
-		end
-		return false
+function FriendStandController:UnbindStand(model: Model)
+	local binding = standBindings[model]
+	if not binding then
+		return
 	end
 
-	watchStandPartsUntilBound(model)
+	FriendStandDebug.log("UnbindStand:", model:GetFullName())
+	stopCarouselForStand(binding)
+	clearStandDisplay(binding)
+	standBindings[model] = nil
 
-	if FriendStandController:BindStand(model) then
-		return true
+	if next(standBindings) == nil then
+		stopFriendListRefreshLoop()
+		stopGlobalFaceLoop()
 	end
+end
 
-	-- Model exists but parts still streaming; DescendantAdded + resolve loop will retry.
-	return false
+local function tryBindAllStands(): number
+	local models = FriendStandWorld.collectAllStandModels()
+	local bound = 0
+	for _, model in models do
+		if FriendStandController:BindStand(model) then
+			bound += 1
+		end
+	end
+	return bound
 end
 
 local function startStandResolveLoop()
 	if standResolveThread then
 		return
 	end
-	FriendStandDebug.log("startStandResolveLoop: polling for FriendStand...")
+	FriendStandDebug.log("startStandResolveLoop: polling for FriendStand models...")
 	standResolveThread = task.spawn(function()
 		local deadline = os.clock() + FriendStandConfigs.StandResolveTimeout
 		while os.clock() < deadline do
-			if tryBindStand() then
+			if tryBindAllStands() > 0 then
 				break
 			end
 			task.wait(1)
 		end
 		standResolveThread = nil
-		if not standModel then
-			FriendStandDebug.warn("could not find FriendStand after", FriendStandConfigs.StandResolveTimeout, "s")
+		if next(standBindings) == nil then
+			FriendStandDebug.warn("no FriendStand models bound after", FriendStandConfigs.StandResolveTimeout, "s")
 		end
 	end)
 end
@@ -448,8 +438,10 @@ function FriendStandController:KnitStart()
 
 	local FriendStandService = Knit.GetService("FriendStandService")
 
-	FriendStandService.OpenInvitePrompt:Connect(function()
-		FriendStandDebug.log("OpenInvitePrompt signal")
+	FriendStandService.OpenInvitePrompt:Connect(function(touchedStand: Instance?)
+		if touchedStand and touchedStand:IsA("Model") then
+			inviteStandModel = touchedStand
+		end
 		FriendStandController:PromptInvite()
 	end)
 
@@ -463,22 +455,27 @@ function FriendStandController:KnitStart()
 			NotificationManager.show("You invited the maximum number of friends!", "Info")
 		end
 		FriendStandController:RefreshFriendList()
-		FriendStandController:ShowNextFriend()
+		for stand, _binding in pairs(standBindings) do
+			FriendStandController:ShowNextFriend(stand)
+		end
 	end)
 
 	task.defer(function()
-		if not tryBindStand() then
+		if tryBindAllStands() == 0 then
 			startStandResolveLoop()
 		end
 	end)
 
+	local standName = FriendStandConfigs.StandModelName
 	Workspace.DescendantAdded:Connect(function(desc)
-		if standModel then
-			return
-		end
-		if desc:IsA("Model") and desc.Name == FriendStandConfigs.RootPath[#FriendStandConfigs.RootPath] then
-			FriendStandDebug.log("DescendantAdded: FriendStand model appeared")
-			task.defer(tryBindStand)
+		if desc:IsA("Model") and desc.Name == standName then
+			local mapFolder = FriendStandWorld.getMapFolder()
+			if mapFolder and desc:IsDescendantOf(mapFolder) then
+				FriendStandDebug.log("DescendantAdded: FriendStand →", desc:GetFullName())
+				task.defer(function()
+					FriendStandController:BindStand(desc)
+				end)
+			end
 		end
 	end)
 end

@@ -20,6 +20,7 @@ local Knit          = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DataLib       = require(ReplicatedStorage.Shared.Utils.DataLib)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
+local SupesMobileUI = require(ReplicatedStorage.Shared.Utils.SupesMobileUI)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
 local ThrustMobileBarController = Knit.CreateController({ Name = "ThrustMobileBarController" })
@@ -152,17 +153,6 @@ local function onButtonTapped()
 end
 
 -- ── Locator ───────────────────────────────────────────────────────────────────
-
-local function findSupesMobile(playerGui: PlayerGui): Frame?
-	for _, gui in playerGui:GetChildren() do
-		if gui:IsA("ScreenGui") then
-			local f = gui:FindFirstChild("SupesMobile")
-			if f and f:IsA("Frame") then return f :: Frame end
-		end
-	end
-	local f = playerGui:FindFirstChild("SupesMobile", true)
-	return if f and f:IsA("Frame") then f :: Frame else nil
-end
 
 -- ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -298,7 +288,7 @@ local function bindSupesButton(refs: Refs)
 end
 
 local function tryAttachSupesMobile(playerGui: PlayerGui): boolean
-	local supesFrame = findSupesMobile(playerGui)
+	local supesFrame = SupesMobileUI.findSupesMobile(playerGui)
 	if not supesFrame then
 		return false
 	end

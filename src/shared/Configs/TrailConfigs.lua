@@ -2,6 +2,11 @@
 
 -- Trail shop definitions. Set ProductId from Creator Dashboard (Developer Products).
 -- ProductId = 0 disables Robux purchase until configured.
+--
+-- Balancing (tune WinCost here after playtest):
+--   Superman 50 wins — target: a few stage clears after onboarding.
+--   SpeedBoost applies to walk/swim cap when equipped (see CharacterMovementSpeed).
+--   Compare wins/stage on Map GiveWins buttons vs these costs.
 
 export type TrailInfo = {
 	ID: string,
@@ -25,11 +30,12 @@ local TrailConfigs = {
 
 	ShopTemplateName = "TrailTemplate",
 
+	-- Cheapest → most expensive (shop list order).
 	Trails = {
 		{
 			ID = "SupermanClassic",
 			Name = "Superman",
-			WinCost = 0,
+			WinCost = 50,
 			ProductId = 3602184828, -- Developer Product: Superman Trail
 			SpeedBoost = 1.5,
 			Color = ColorSequence.new({
@@ -50,17 +56,6 @@ local TrailConfigs = {
 			}),
 		},
 		{
-			ID = "Solar",
-			Name = "Solar",
-			WinCost = 1200,
-			ProductId = 3602185055, -- Developer Product: Solar Trail
-			SpeedBoost = 2,
-			Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
-				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 240, 100)),
-			}),
-		},
-		{
 			ID = "Ice",
 			Name = "Arctic",
 			WinCost = 800,
@@ -69,6 +64,17 @@ local TrailConfigs = {
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 220, 255)),
 				ColorSequenceKeypoint.new(1, Color3.fromRGB(240, 250, 255)),
+			}),
+		},
+		{
+			ID = "Solar",
+			Name = "Solar",
+			WinCost = 1200,
+			ProductId = 3602185055, -- Developer Product: Solar Trail
+			SpeedBoost = 2,
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 240, 100)),
 			}),
 		},
 	} :: { TrailInfo },
@@ -107,6 +113,29 @@ end
 
 function TrailConfigs.IsTrailRowName(name: string): boolean
 	return byId[name] ~= nil
+end
+
+--- Walk/swim speed multiplier when this trail is equipped and owned (1 = no boost).
+function TrailConfigs.GetEquippedSpeedMultiplier(data: any): number
+	if not data then
+		return 1
+	end
+	local equipped = data.EquippedTrail
+	if type(equipped) ~= "string" or equipped == "" then
+		return 1
+	end
+	if typeof(data.OwnedTrails) ~= "table" or data.OwnedTrails[equipped] ~= true then
+		return 1
+	end
+	local info = TrailConfigs.GetTrailById(equipped)
+	if not info then
+		return 1
+	end
+	local boost = info.SpeedBoost
+	if typeof(boost) ~= "number" or boost <= 0 then
+		return 1
+	end
+	return boost
 end
 
 --- Ensures OwnedTrails table exists. Does NOT auto-grant any trail.

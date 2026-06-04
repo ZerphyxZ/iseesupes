@@ -2,10 +2,7 @@
 
 -- Lightweight onboarding hints for brand-new players only.
 --
--- Hint 1 — "Press E to Fly!"
---   Appears ~3s after the spawn-intro landing. Dismisses on E press or after 8s.
---
--- Hint 2 — Win Button Glow
+-- Hint 1 — Win Button Glow
 --   Gold Highlight + "Claim Win!" BillboardGui on the first GiveWins button.
 --   Dismisses when player earns their first win.
 --
@@ -14,10 +11,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
+local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
 
@@ -30,6 +27,15 @@ local hintsShown = false -- once per session; reset when data is detected as fre
 -- Guard
 -- ─────────────────────────────────────────────────────────────────────────────
 
+local function isTutorialComplete(): boolean
+	local data = DataLib.GetData()
+	if not data then
+		return false
+	end
+	local step = type(data.TutorialStep) == "number" and math.floor(data.TutorialStep) or 1
+	return step >= TutorialConfigs.Step.Complete
+end
+
 local function isNewPlayer(): boolean
 	local data = DataLib.GetData()
 	if not data then
@@ -40,10 +46,6 @@ local function isNewPlayer(): boolean
 	local playTime = type(data.TotalPlayTime) == "number" and data.TotalPlayTime or 0
 	return level <= 1 and wins == 0 and playTime < 120
 end
-
--- ─────────────────────────────────────────────────────────────────────────────
--- Hint 1: Press E to Fly
--- ─────────────────────────────────────────────────────────────────────────────
 
 local function fadeAndDestroy(frame: Frame, duration: number)
 	local descendants = frame:GetDescendants()
@@ -72,64 +74,8 @@ local function fadeAndDestroy(frame: Frame, duration: number)
 	end)
 end
 
-local function showFlyHint(gui: ScreenGui)
-	-- Outer frame ─ semi-transparent pill centered near the bottom third
-	local frame = Instance.new("Frame")
-	frame.Name = "FlyHint"
-	frame.Size = UDim2.new(0, 280, 0, 52)
-	frame.Position = UDim2.new(0.5, 0, 0.72, 0)
-	frame.AnchorPoint = Vector2.new(0.5, 0.5)
-	frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	frame.BackgroundTransparency = 0.35
-	frame.BorderSizePixel = 0
-	frame.ZIndex = 10
-	frame.Parent = gui
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 12)
-	corner.Parent = frame
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 255, 255)
-	stroke.Transparency = 0.6
-	stroke.Thickness = 1.5
-	stroke.Parent = frame
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -16, 1, 0)
-	label.Position = UDim2.new(0, 8, 0, 0)
-	label.Text = "Press  E  to Fly!"
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.BackgroundTransparency = 1
-	label.ZIndex = 11
-	label.Parent = frame
-
-	-- Auto-dismiss after 8 seconds
-	task.delay(8, function()
-		if frame.Parent then
-			fadeAndDestroy(frame, 0.5)
-		end
-	end)
-
-	-- Dismiss on first E press
-	local conn: RBXScriptConnection
-	conn = UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
-		if gameProcessed then
-			return
-		end
-		if input.KeyCode == Enum.KeyCode.E then
-			conn:Disconnect()
-			if frame.Parent then
-				fadeAndDestroy(frame, 0.3)
-			end
-		end
-	end)
-end
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- Hint 1b: "Earn a Win to unlock your Superman suit!"  (shown alongside Hint 1)
+-- Hint 1b: unlock first suit at UpgradeWins Button1 (3 wins total)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function showSupermanHint(gui: ScreenGui)
@@ -157,7 +103,7 @@ local function showSupermanHint(gui: ScreenGui)
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.new(1, -16, 1, 0)
 	label.Position = UDim2.new(0, 8, 0, 0)
-	label.Text = "🏆 Earn 1 Win to unlock Superman!"
+	label.Text = "🏆 Get 3 wins, then unlock Superman at Upgrade!"
 	label.TextColor3 = Color3.fromRGB(255, 230, 100)
 	label.Font = Enum.Font.GothamBold
 	label.TextScaled = true
@@ -165,10 +111,10 @@ local function showSupermanHint(gui: ScreenGui)
 	label.ZIndex = 11
 	label.Parent = frame
 
-	-- Dismiss when player earns their first win
+	-- Dismiss when player has enough wins for UpgradeWins Button1
 	local winConn: RBXScriptConnection? = nil
 	winConn = DataLib.OnChanged(function(data: any)
-		if data and type(data.Wins) == "number" and data.Wins > 0 then
+		if data and type(data.Wins) == "number" and data.Wins >= 3 then
 			if winConn then
 				winConn:Disconnect()
 				winConn = nil
@@ -188,13 +134,10 @@ local function showWinHint()
 		return
 	end
 
-	-- Pick the first Model (Button1)
 	local button: Model? = nil
-	for _, child in folder:GetChildren() do
-		if child:IsA("Model") then
-			button = child :: Model
-			break
-		end
+	local named = folder:FindFirstChild("Button1")
+	if named and named:IsA("Model") then
+		button = named
 	end
 	if not button then
 		return
@@ -287,38 +230,20 @@ function OnboardingController:KnitStart()
 	local playerGui = player:WaitForChild("PlayerGui")
 	local gui = playerGui:WaitForChild("GUI", 120) :: ScreenGui?
 
-	-- If data arrives and the player is brand-new (e.g. after /devresetdata or first ever join),
-	-- reset the hintsShown flag so onboarding can fire when SpawnIntroLifted arrives.
-	DataLib.OnChanged(function(data: any)
-		if not data then return end
-		local playTime = type(data.TotalPlayTime) == "number" and data.TotalPlayTime or 0
-		local wins    = type(data.Wins)          == "number" and data.Wins          or 0
-		local level   = type(data.Level)         == "number" and data.Level         or 1
-		-- Fresh / reset profile: allow hints to show
-		if playTime < 30 and wins == 0 and level <= 1 then
-			hintsShown = false
-		end
-	end)
-
 	local function triggerHints()
 		if hintsShown then return end
 		-- Retry loop: wait up to 3s for data to replicate before giving up
 		task.spawn(function()
 			for _ = 1, 6 do
-				if isNewPlayer() then
+				if isNewPlayer() and isTutorialComplete() then
 					break
 				end
 				task.wait(0.5)
 			end
-			if not isNewPlayer() then return end
+			if not isNewPlayer() or not isTutorialComplete() then return end
 			hintsShown = true
 
-			-- Hint 1: fly hint after landing (~3s)
-			task.delay(3, function()
-				if gui and isNewPlayer() then showFlyHint(gui) end
-			end)
-
-			-- Hint 1b: Superman unlock hint (~4s)
+			-- Superman unlock hint (~4s)
 			task.delay(4, function()
 				if gui and isNewPlayer() then showSupermanHint(gui) end
 			end)
@@ -331,6 +256,21 @@ function OnboardingController:KnitStart()
 	end
 
 	SpawnIntroService.SpawnIntroLifted:Connect(triggerHints)
+
+	DataLib.OnChanged(function(data: any)
+		if not data then
+			return
+		end
+		local playTime = type(data.TotalPlayTime) == "number" and data.TotalPlayTime or 0
+		local wins = type(data.Wins) == "number" and data.Wins or 0
+		local level = type(data.Level) == "number" and data.Level or 1
+		if playTime < 30 and wins == 0 and level <= 1 then
+			hintsShown = false
+		end
+		if not hintsShown and isTutorialComplete() and isNewPlayer() then
+			triggerHints()
+		end
+	end)
 
 	print("[iseesupes] OnboardingController ready.")
 end

@@ -24,7 +24,9 @@ local player = Players.LocalPlayer
 local animFolder: Folder? = nil
 local jumpActionBound = false
 local abilityBlocking = false
+local lastJumpPressAt = -math.huge
 local jumpInterceptors: { () -> boolean } = {}
+local jumpReleaseListeners: { () -> () } = {}
 local treadmillController: any = nil
 
 type AnimMode = "locomotion" | "jump" | "fall" | "landing"
@@ -393,6 +395,10 @@ function CharacterController:RegisterJumpInterceptor(fn: () -> boolean)
 	table.insert(jumpInterceptors, fn)
 end
 
+function CharacterController:RegisterJumpReleaseListener(fn: () -> ())
+	table.insert(jumpReleaseListeners, fn)
+end
+
 local function tryCustomJump(character: Model)
 	if not Features.UseCustomJump or abilityBlocking then
 		return
@@ -428,29 +434,58 @@ local function tryCustomJump(character: Model)
 	end
 end
 
-local function onJumpAction(_actionName: string, inputState: Enum.UserInputState, _inputObject: InputObject)
-	if inputState ~= Enum.UserInputState.Begin then
-		return Enum.ContextActionResult.Pass
+local function handleJumpPress()
+	local now = os.clock()
+	if now - lastJumpPressAt < 0.05 then
+		return
 	end
+	lastJumpPressAt = now
 
 	local character = player.Character
 	if not character then
-		return Enum.ContextActionResult.Pass
+		return
 	end
 
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid and HumanoidLocomotion.usesEngineLocomotion(humanoid) then
-		return Enum.ContextActionResult.Pass
+		return
 	end
 
 	for _, interceptor in jumpInterceptors do
 		if interceptor() then
-			return Enum.ContextActionResult.Sink
+			return
 		end
 	end
 
 	tryCustomJump(character)
-	return Enum.ContextActionResult.Sink
+end
+
+local function handleJumpRelease()
+	for _, listener in jumpReleaseListeners do
+		listener()
+	end
+end
+
+function CharacterController:PressJump()
+	handleJumpPress()
+end
+
+function CharacterController:ReleaseJump()
+	handleJumpRelease()
+end
+
+local function onJumpAction(_actionName: string, inputState: Enum.UserInputState, _inputObject: InputObject)
+	if inputState == Enum.UserInputState.Begin then
+		handleJumpPress()
+		return Enum.ContextActionResult.Sink
+	end
+
+	if inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
+		handleJumpRelease()
+		return Enum.ContextActionResult.Pass
+	end
+
+	return Enum.ContextActionResult.Pass
 end
 
 local function bindJumpAction()

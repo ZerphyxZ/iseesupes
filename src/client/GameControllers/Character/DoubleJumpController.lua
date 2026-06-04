@@ -13,6 +13,7 @@ local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
 local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJumpFlightPhysics)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
+local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
@@ -599,13 +600,6 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 	local look = camera.CFrame.LookVector
 	local rightVector = camera.CFrame.RightVector
 
-	if not followPitch then
-		local move = state.humanoid.MoveDirection
-		if move.Magnitude >= getSteerThreshold() then
-			return flatUnit(move)
-		end
-	end
-
 	local forward = 0
 	local right = 0
 	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
@@ -637,10 +631,6 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 	end
 
 	if forward == 0 and right == 0 then
-		local move = state.humanoid.MoveDirection
-		if move.Magnitude >= getSteerThreshold() then
-			return flatUnit(move)
-		end
 		if followPitch then
 			-- Include camera pitch so looking up/down moves the player up/down,
 			-- mirroring how yaw already steers left/right.
@@ -658,6 +648,8 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 
 	return flatUnit(flatLook * forward + flatRight * right)
 end
+
+local TOUCH_STICK_DRIFT_DEADZONE = 0.22
 
 local function getTouchSteerAxis(): number
 	if not UserInputService.TouchEnabled then
@@ -684,11 +676,15 @@ local function getTouchSteerAxis(): number
 	local okMove, moveVector = pcall(function()
 		return controls:GetMoveVector()
 	end)
-	if not okMove or typeof(moveVector) ~= "Vector3" or moveVector.Magnitude <= 0.1 then
+	if not okMove or typeof(moveVector) ~= "Vector3" or moveVector.Magnitude <= TOUCH_STICK_DRIFT_DEADZONE then
 		return 0
 	end
 
 	if math.abs(moveVector.Z) > math.abs(moveVector.X) then
+		return 0
+	end
+
+	if math.abs(moveVector.X) < TOUCH_STICK_DRIFT_DEADZONE then
 		return 0
 	end
 
@@ -803,6 +799,9 @@ local function getCameraYawRateSteerAxis(dt: number): number
 	local yawRate = delta / safeDt
 	local axis = math.clamp(yawRate / fullBankRate, -1, 1)
 	local minRate = poseCfg.CameraYawRateMin or 0.35
+	if UserInputService.TouchEnabled then
+		minRate = math.max(minRate, 0.9)
+	end
 	if math.abs(yawRate) >= minRate and math.abs(axis) < 0.55 then
 		axis = math.sign(yawRate) * 0.55
 	end
@@ -1522,6 +1521,7 @@ local function stabilizeCharacter(character: Model, flightDir: Vector3?)
 	end
 	if humanoid then
 		humanoid.PlatformStand = false
+		humanoid.AutoRotate = true
 	end
 end
 
@@ -1577,6 +1577,8 @@ onAbilityEnded = function()
 			pcall(function()
 				state.humanoid.PlatformStand = false
 			end)
+		else
+			CharacterStance.resetToStanding(character)
 		end
 	end
 end
@@ -1837,6 +1839,11 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 				abilityActive = true
 				markAbilityStarted()
 				resetCameraSteerTracking()
+				smoothedSteerDir = nil
+				smoothedSteerAxis = 0
+				smoothedSteerPitchAxis = 0
+				pendingSteerHasDirection = false
+				pendingSteerDirection = nil
 				service:SetHolding(true)
 
 				local character = player.Character
@@ -1947,6 +1954,11 @@ function DoubleJumpController:KnitStart()
 			abilityActive = true
 			markAbilityStarted()
 			resetCameraSteerTracking()
+			smoothedSteerDir = nil
+			smoothedSteerAxis = 0
+			smoothedSteerPitchAxis = 0
+			pendingSteerHasDirection = false
+			pendingSteerDirection = nil
 			if character then
 				ensureAbilityState(character)
 				local abilityState = characterStates[character]
@@ -1974,9 +1986,7 @@ function DoubleJumpController:KnitStart()
 	-- tracks so the character doesn't land in a prone Superman pose at the lobby spawn.
 	player:GetAttributeChangedSignal("ForceStandUp"):Connect(function()
 		if player:GetAttribute("ForceStandUp") == true then
-			if abilityActive or player:GetAttribute(PHASE_ATTR) then
-				onAbilityEnded()
-			end
+			onAbilityEnded()
 		end
 	end)
 

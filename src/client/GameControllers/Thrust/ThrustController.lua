@@ -14,6 +14,7 @@ local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local TouchZone = require(ReplicatedStorage.Shared.Utils.TouchZone)
 
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -376,25 +377,63 @@ local function bindCloseButton(frame: Instance)
 	end)
 end
 
-local CLOSE_DISTANCE = 20
+local function getTouchZoneOptions(): TouchZone.ZoneOptions
+	return {
+		horizontalPadding = ThrustUpgradeConfigs.TouchZoneHorizontalPadding,
+		maxHeightAbove = ThrustUpgradeConfigs.TouchZoneMaxHeightAbove,
+		minHeightBelow = ThrustUpgradeConfigs.TouchZoneMinHeightBelow,
+	}
+end
 
-local function startProximityWatcher(touchPart: BasePart)
+local function tryOpenShopFromPad()
+	if isFrameOpen or isFrameBusy then
+		return
+	end
+
+	local now = os.clock()
+	if now - lastTouchTime < ThrustUpgradeConfigs.TouchDebounce then
+		return
+	end
+	lastTouchTime = now
+
+	local DataService = Knit.GetService("DataService")
+	if cachedData == nil then
+		cachedData = DataService:RequestData()
+	end
+	openShop()
+end
+
+local function startShopPadWatcher(touchPart: BasePart)
+	touchPart.CanTouch = true
+
+	local wasInZone = false
+
 	RunService.Heartbeat:Connect(function()
-		if not isFrameOpen then
-			return
-		end
 		local character = player.Character
 		if not character then
-			closeShop()
+			if isFrameOpen then
+				closeShop()
+			end
+			wasInZone = false
 			return
 		end
+
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if not root then
 			return
 		end
-		if (root.Position - touchPart.Position).Magnitude > CLOSE_DISTANCE then
-			closeShop()
+
+		local inZone = TouchZone.isRootInPartZone(root, touchPart, getTouchZoneOptions())
+
+		if isFrameOpen then
+			if not inZone then
+				closeShop()
+			end
+		elseif inZone and not wasInZone then
+			tryOpenShopFromPad()
 		end
+
+		wasInZone = inZone
 	end)
 end
 
@@ -511,34 +550,21 @@ function ThrustController:KnitStart()
 		return
 	end
 
-	local touchPart = uTouch:FindFirstChild(ThrustUpgradeConfigs.TouchPartName) :: BasePart?
+	local touchPart = uTouch:FindFirstChild(ThrustUpgradeConfigs.TouchPartName, true) :: BasePart?
 	if not touchPart or not touchPart:IsA("BasePart") then
 		warn("[iseesupes] ThrustController: Touch part not found in UTouch")
 		return
 	end
 
+	-- .Touched backup (instant when physics overlap works).
 	touchPart.Touched:Connect(function(hit: BasePart)
-		local character = hit:FindFirstAncestorOfClass("Model")
-		if not character then
+		if TouchZone.getPlayerFromCharacterPart(hit) ~= player then
 			return
 		end
-		if Players:GetPlayerFromCharacter(character) ~= player then
-			return
-		end
-
-		local now = os.clock()
-		if now - lastTouchTime < ThrustUpgradeConfigs.TouchDebounce then
-			return
-		end
-		lastTouchTime = now
-
-		if cachedData == nil then
-			cachedData = DataService:RequestData()
-		end
-		openShop()
+		tryOpenShopFromPad()
 	end)
 
-	startProximityWatcher(touchPart)
+	startShopPadWatcher(touchPart)
 
 	-- Apply row visibility before first open (Robux rows, prices).
 	task.defer(function()

@@ -25,6 +25,11 @@ local ThrustUpgradeConfigs = {
 
 	TouchDebounce  = 2,
 
+	--- HRP zone around UpgradeShop Touch (covers tall / aura / morph suits when .Touched misses).
+	TouchZoneHorizontalPadding = 6,
+	TouchZoneMaxHeightAbove = 18,
+	TouchZoneMinHeightBelow = -8,
+
 	--- When true, BuyRobux stays visible even if ProductId is 0 (shows "—", click disabled).
 	ShowRobuxWhenUnconfigured = true,
 }

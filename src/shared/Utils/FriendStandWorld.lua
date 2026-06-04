@@ -19,30 +19,73 @@ local function walkPath(root: Instance, segments: { string }): Instance?
 	return node
 end
 
-function FriendStandWorld.resolveStandModel(): Model?
-	local paths: { { string } } = { FriendStandConfigs.RootPath }
-	for _, alt in FriendStandConfigs.AlternateRootPaths do
-		table.insert(paths, alt)
-	end
-
-	for _, segments in paths do
+function FriendStandWorld.getMapFolder(): Instance?
+	local segments = FriendStandConfigs.MapFolderPath
+	if segments and #segments > 0 then
 		local node = walkPath(Workspace, segments)
-		if node and node:IsA("Model") then
-			FriendStandDebug.log("resolveStand: path", table.concat(segments, "."), "→", node:GetFullName())
+		if node then
 			return node
 		end
-		if node then
-			FriendStandDebug.warn("resolveStand: found", table.concat(segments, "."), "but type is", node.ClassName, "not Model")
+	end
+	return Workspace:FindFirstChild("Map")
+end
+
+function FriendStandWorld.collectAllStandModels(): { Model }
+	local standName = FriendStandConfigs.StandModelName
+	local models: { Model } = {}
+	local seen: { [Model]: boolean } = {}
+
+	local function tryAdd(model: Model)
+		if seen[model] then
+			return
+		end
+		seen[model] = true
+		table.insert(models, model)
+	end
+
+	local mapFolder = FriendStandWorld.getMapFolder()
+	if mapFolder then
+		for _, desc in mapFolder:GetDescendants() do
+			if desc:IsA("Model") and desc.Name == standName then
+				tryAdd(desc)
+			end
 		end
 	end
 
-	for _, desc in Workspace:GetDescendants() do
-		if desc:IsA("Model") and desc.Name == FriendStandConfigs.RootPath[#FriendStandConfigs.RootPath] then
-			FriendStandDebug.log("resolveStand: descendant search →", desc:GetFullName())
-			return desc
+	if #models == 0 then
+		local paths: { { string } } = { FriendStandConfigs.RootPath }
+		for _, alt in FriendStandConfigs.AlternateRootPaths do
+			table.insert(paths, alt)
+		end
+		for _, segments in paths do
+			local node = walkPath(Workspace, segments)
+			if node and node:IsA("Model") then
+				tryAdd(node)
+			end
 		end
 	end
 
+	if #models == 0 then
+		for _, desc in Workspace:GetDescendants() do
+			if desc:IsA("Model") and desc.Name == standName then
+				tryAdd(desc)
+			end
+		end
+	end
+
+	table.sort(models, function(a, b)
+		return a:GetFullName() < b:GetFullName()
+	end)
+
+	FriendStandDebug.log("collectAllStandModels:", #models)
+	return models
+end
+
+function FriendStandWorld.resolveStandModel(): Model?
+	local all = FriendStandWorld.collectAllStandModels()
+	if #all > 0 then
+		return all[1]
+	end
 	FriendStandDebug.warn("resolveStand: FriendStand not found in Workspace")
 	return nil
 end

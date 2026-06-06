@@ -48,7 +48,9 @@ local function grantTier(player: Player, tier: number): string
 	end
 
 	local newMax = ThrustConfigs.BaseMaxFuel + totalBonus
+	data.ThrustUpgradeTier = math.max(getCurrentTier(data), tier)
 	DataService:ApplyUpgradedMax(player, newMax)
+	DataService:ForceSave(player)
 
 	print(
 		"[iseesupes] ThrustUpgradeService:",

@@ -52,8 +52,8 @@ local pendingLeaderboardSave: { [Player]: thread } = {}
 local pendingSaveStartedAt: { [Player]: number } = {}
 local lastLeaderboardScores: { [Player]: { [string]: number } } = {}
 
-local LEADERBOARD_SAVE_DEBOUNCE = 8
-local LEADERBOARD_SAVE_MAX_WAIT = 15
+local LEADERBOARD_SAVE_DEBOUNCE = 20
+local LEADERBOARD_SAVE_MAX_WAIT = 45
 
 local function getOrderedStore(storeName: string): OrderedDataStore?
 	if orderedStoreCache[storeName] ~= nil then
@@ -99,7 +99,7 @@ local function syncLeaderboards(player: Player, refreshBoardKeys: { string }?)
 		if not ok or not leaderboardService then
 			return
 		end
-		leaderboardService:SavePlayer(player)
+		leaderboardService:SavePlayer(player, refreshBoardKeys)
 		if refreshBoardKeys then
 			for _, boardKey in refreshBoardKeys do
 				local config = LeaderboardConfigs.Boards[boardKey]
@@ -126,14 +126,8 @@ local function pushLeaderboardScores(player: Player, refreshBoardKeys: { string 
 		return
 	end
 
-	leaderboardService:SavePlayer(player)
-	local keys = refreshBoardKeys or { "Speed", "Time" }
-	for _, boardKey in keys do
-		local config = LeaderboardConfigs.Boards[boardKey]
-		if config then
-			leaderboardService:UpdateDisplay(config)
-		end
-	end
+	local saveKeys = refreshBoardKeys or { "Speed" }
+	leaderboardService:SavePlayer(player, saveKeys)
 end
 
 local function scheduleLeaderboardSave(player: Player, profile: any)
@@ -160,7 +154,7 @@ local function scheduleLeaderboardSave(player: Player, profile: any)
 			task.cancel(pending)
 			pendingLeaderboardSave[player] = nil
 			pendingSaveStartedAt[player] = nil
-			pushLeaderboardScores(player, { "Speed", "Time" })
+			pushLeaderboardScores(player, { "Speed" })
 		end
 		return
 	end
@@ -170,7 +164,7 @@ local function scheduleLeaderboardSave(player: Player, profile: any)
 	pendingLeaderboardSave[player] = task.delay(LEADERBOARD_SAVE_DEBOUNCE, function()
 		pendingLeaderboardSave[player] = nil
 		pendingSaveStartedAt[player] = nil
-		pushLeaderboardScores(player, { "Speed", "Time" })
+		pushLeaderboardScores(player, { "Speed" })
 	end)
 end
 
@@ -581,14 +575,16 @@ function DataService:AddWins(player: Player, amount: number): boolean
 end
 
 function DataService:ApplyUpgradedMax(player: Player, newMax: number): boolean
-	local data = self:GetData(player)
-	if not data then
+	local profile = profiles[player]
+	if not profile then
 		return false
 	end
+	local data = profile.Data
 	ThrustConfigs.EnsureFuelDefaults(data)
 	data.ThrustMax = newMax
-	data.ThrustCurrent = math.min(data.ThrustCurrent, data.ThrustMax)
-	replicateThrust(player)
+	data.ThrustCurrent = newMax
+	player:SetAttribute(ThrustConfigs.PowerAttribute, newMax)
+	replicateData(player, profile)
 	return true
 end
 
@@ -710,10 +706,25 @@ local function applyProfileMigrations(profile: any)
 	ThrustConfigs.MigrateProfile(profile.Data)
 	TrailConfigs.EnsureDefaultTrail(profile.Data)
 
-	local savedTier = profile.Data.ThrustUpgradeTier
-	if type(savedTier) == "number" and savedTier > 0 then
-		local bonus = ThrustUpgradeConfigs.GetTotalBonusForTier(savedTier)
-		profile.Data.ThrustMax = ThrustConfigs.BaseMaxFuel + bonus
+	local data = profile.Data
+	local totalBonus = 0
+	local purchases = data.ThrustUpgradePurchases
+	if type(purchases) == "table" then
+		for tier, cfg in ThrustUpgradeConfigs.Tiers do
+			local count = purchases[tier] or 0
+			if type(count) == "number" and count > 0 then
+				totalBonus += (cfg.FuelBonus or 0) * math.floor(count)
+			end
+		end
+	end
+	if totalBonus <= 0 then
+		local savedTier = data.ThrustUpgradeTier
+		if type(savedTier) == "number" and savedTier > 0 then
+			totalBonus = ThrustUpgradeConfigs.GetTotalBonusForTier(savedTier)
+		end
+	end
+	if totalBonus > 0 then
+		data.ThrustMax = ThrustConfigs.BaseMaxFuel + totalBonus
 	end
 
 	ThrustConfigs.RefillToMax(profile.Data)

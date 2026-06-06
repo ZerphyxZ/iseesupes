@@ -375,7 +375,7 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 	maxAbilityDuration = math.max(maxAbilityDuration, LevelDesignTuning.estimateAbilityDuration(tuningDraft :: DoubleJumpTuning))
 	maxAbilityDuration = ThrustConfigs.GetAbilityTimeCap(ThrustConfigs.BaseMaxFuel, maxAbilityDuration)
 
-	return {
+	local tuning: DoubleJumpTuning = {
 		ActionName = BaseDj.ActionName,
 		Key = BaseDj.Key,
 		Cooldown = readNumberForPlayer(player, ATTR.Cooldown, LEGACY.Cooldown, BaseDj.Cooldown),
@@ -481,6 +481,9 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 
 		Activation = BaseDj.Activation,
 	}
+
+	local level = SpeedConfigs.GetPlayerLevel(player)
+	return SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning, level) :: DoubleJumpTuning
 end
 
 function LevelDesignTuning.getSpeedMultiplier(player: Player): number

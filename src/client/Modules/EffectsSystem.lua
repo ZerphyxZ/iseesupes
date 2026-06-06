@@ -7,11 +7,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 local EffectsSystem = {}
-
-local SPEED_ICON = "rbxassetid://122922293878122"
-local THRUST_ICON = "rbxassetid://118156105091587"
 
 local POPUP_LIFETIME = 1.1
 local POPUP_TRAVEL_PX = 280
@@ -21,6 +19,7 @@ local DIRECTION_SLOTS = 5
 local COMBINE_WINDOW = 0.2
 
 local ICON_PX = 108
+local GAIN_ICON_PX = 270
 local TEXT_SIZE = 62
 local POPUP_HEIGHT = 118
 local POPUP_WIDTH_WITH_ICON = 300
@@ -128,21 +127,25 @@ local function spawnBurstPopup(kind: BurstKind, gain: number)
 	local iconImage: string?
 	if kind == "Thrust" then
 		textColor = Color3.fromRGB(255, 140, 100)
-		iconImage = THRUST_ICON
+		iconImage = SpeedConfigs.ThrustGainPopupImage
 	elseif kind == "Speed" then
 		textColor = Color3.fromRGB(90, 255, 140)
-		iconImage = SPEED_ICON
+		iconImage = SpeedConfigs.SpeedGainPopupImage
 	else
 		textColor = Color3.fromRGB(255, 220, 80)
 		iconImage = nil
 	end
+
+	local iconPx = if kind == "Speed" or kind == "Thrust" then GAIN_ICON_PX else ICON_PX
+	local popupHeight = math.max(POPUP_HEIGHT, iconPx + 8)
+	local popupWidth = if iconImage then iconPx + 12 + POPUP_WIDTH_TEXT_ONLY else POPUP_WIDTH_TEXT_ONLY
 
 	local container = Instance.new("Frame")
 	container.Name = "BurstPopup"
 	container.BackgroundTransparency = 1
 	container.AnchorPoint = Vector2.new(0.5, 0.5)
 	container.Position = UDim2.new(0.5, startOffset.X, 0.5, startOffset.Y)
-	container.Size = UDim2.fromOffset(if iconImage then POPUP_WIDTH_WITH_ICON else POPUP_WIDTH_TEXT_ONLY, POPUP_HEIGHT)
+	container.Size = UDim2.fromOffset(popupWidth, popupHeight)
 	container.ZIndex = 50 + slot
 	container.Parent = parent
 
@@ -155,13 +158,14 @@ local function spawnBurstPopup(kind: BurstKind, gain: number)
 		local icon = Instance.new("ImageLabel")
 		icon.Name = "Icon"
 		icon.BackgroundTransparency = 1
-		icon.Size = UDim2.fromOffset(ICON_PX, ICON_PX)
-		icon.Position = UDim2.fromOffset(0, math.floor((POPUP_HEIGHT - ICON_PX) * 0.5))
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		icon.Size = UDim2.fromOffset(iconPx, iconPx)
+		icon.Position = UDim2.fromOffset(0, math.floor(popupHeight * 0.5))
 		icon.Image = iconImage
 		icon.ScaleType = Enum.ScaleType.Fit
 		icon.ZIndex = 51
 		icon.Parent = container
-		textOffsetX = ICON_PX + 10
+		textOffsetX = iconPx + 10
 	end
 
 	local label = Instance.new("TextLabel")
@@ -187,7 +191,9 @@ local function spawnBurstPopup(kind: BurstKind, gain: number)
 	TweenService:Create(popScale, popIn, { Scale = 1.08 }):Play()
 	task.delay(0.18, function()
 		if popScale.Parent then
-			TweenService:Create(popScale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			TweenService
+				:Create(popScale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
 		end
 	end)
 

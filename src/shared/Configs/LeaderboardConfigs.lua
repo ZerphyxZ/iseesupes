@@ -18,8 +18,8 @@ local LeaderboardConfigs = {}
 --- When false, first join per DATA_VERSION does not import OrderedDataStore scores into the profile (test wipes).
 LeaderboardConfigs.RestoreFromOdsOnJoin = false
 
-LeaderboardConfigs.RefreshInterval = 60
-LeaderboardConfigs.SaveInterval = 60
+LeaderboardConfigs.RefreshInterval = 90
+LeaderboardConfigs.SaveInterval = 90
 LeaderboardConfigs.TopN = 50
 LeaderboardConfigs.RootPath = { "Map", "Leaderboards" }
 LeaderboardConfigs.EntryTemplateName = "LeaderboardEntry"

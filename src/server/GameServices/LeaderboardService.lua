@@ -22,6 +22,19 @@ local LeaderboardService = Knit.CreateService({
 
 local orderedDataStores: { [string]: OrderedDataStore } = {}
 local sessionStartAt: { [Player]: number } = {}
+local lastOdsWritten: { [Player]: { [string]: number } } = {}
+
+local function shouldFlushPlayTime(boardKeys: { string }?): boolean
+	if boardKeys == nil then
+		return true
+	end
+	for _, boardKey in boardKeys do
+		if boardKey == "Time" then
+			return true
+		end
+	end
+	return false
+end
 
 local function getODS(storeName: string): OrderedDataStore?
 	if orderedDataStores[storeName] then
@@ -340,8 +353,10 @@ function LeaderboardService:RefreshAllDisplays()
 	end
 end
 
-function LeaderboardService:SavePlayer(player: Player)
-	flushPlayTimeToProfile(player)
+function LeaderboardService:SavePlayer(player: Player, boardKeys: { string }?)
+	if shouldFlushPlayTime(boardKeys) then
+		flushPlayTimeToProfile(player)
+	end
 
 	local profile = DataService:GetProfile(player)
 	if not profile or not profile.Data then
@@ -350,16 +365,43 @@ function LeaderboardService:SavePlayer(player: Player)
 
 	local data = profile.Data
 	local userKey = tostring(player.UserId)
+	local written = lastOdsWritten[player]
+	if not written then
+		written = {}
+		lastOdsWritten[player] = written
+	end
 
-	for _, config in LeaderboardConfigs.Boards do
+	local function saveBoard(boardKey: string)
+		local config = LeaderboardConfigs.Boards[boardKey]
+		if not config then
+			return
+		end
 		local score = config.GetScore(data)
-		if type(score) == "number" then
-			local ods = getODS(config.StoreName)
-			if ods then
-				pcall(function()
-					ods:SetAsync(userKey, math.max(0, math.floor(score)))
-				end)
+		if type(score) ~= "number" then
+			return
+		end
+		local floored = math.max(0, math.floor(score))
+		if written[boardKey] == floored then
+			return
+		end
+		local ods = getODS(config.StoreName)
+		if ods then
+			local ok = pcall(function()
+				ods:SetAsync(userKey, floored)
+			end)
+			if ok then
+				written[boardKey] = floored
 			end
+		end
+	end
+
+	if boardKeys then
+		for _, boardKey in boardKeys do
+			saveBoard(boardKey)
+		end
+	else
+		for boardKey in LeaderboardConfigs.Boards do
+			saveBoard(boardKey)
 		end
 	end
 end
@@ -397,6 +439,7 @@ function LeaderboardService:KnitStart()
 	Players.PlayerRemoving:Connect(function(player)
 		self:SavePlayer(player)
 		sessionStartAt[player] = nil
+		lastOdsWritten[player] = nil
 	end)
 
 	task.delay(5, function()

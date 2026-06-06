@@ -26,6 +26,7 @@ local Features = CharacterConfigs.Features
 
 local cachedTuning: LevelDesignTuning.DoubleJumpTuning? = nil
 local tuningAttrConns: { RBXScriptConnection } = {}
+local levelTuningConns: { RBXScriptConnection } = {}
 
 local function refreshTuning()
 	cachedTuning = LevelDesignTuning.getDoubleJump(Players.LocalPlayer)
@@ -52,6 +53,45 @@ local function bindTuningAttrListeners(character: Model?)
 		table.insert(tuningAttrConns, character.AttributeChanged:Connect(onAttr))
 	end
 	refreshTuning()
+end
+
+local function bindLevelTuningRefresh()
+	for _, conn in levelTuningConns do
+		conn:Disconnect()
+	end
+	table.clear(levelTuningConns)
+
+	local function hookLevel(levelValue: IntValue)
+		table.insert(levelTuningConns, levelValue.Changed:Connect(refreshTuning))
+		refreshTuning()
+	end
+
+	local function onLeaderstats(folder: Instance)
+		if not folder:IsA("Folder") then
+			return
+		end
+		local levelValue = folder:FindFirstChild("Level")
+		if levelValue and levelValue:IsA("IntValue") then
+			hookLevel(levelValue)
+			return
+		end
+		table.insert(levelTuningConns, folder.ChildAdded:Connect(function(child)
+			if child.Name == "Level" and child:IsA("IntValue") then
+				hookLevel(child)
+			end
+		end))
+	end
+
+	local localPlayer = Players.LocalPlayer
+	local existing = localPlayer:FindFirstChild("leaderstats")
+	if existing then
+		onLeaderstats(existing)
+	end
+	table.insert(levelTuningConns, localPlayer.ChildAdded:Connect(function(child)
+		if child.Name == "leaderstats" then
+			onLeaderstats(child)
+		end
+	end))
 end
 
 local PHASE = {
@@ -1453,9 +1493,11 @@ end
 local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 	local tracks = state.tracks
 	if phase == PHASE.FlightTransit then
+		state.humanoid.AutoRotate = false
 		state.humanoid.PlatformStand = false
 		playTrack(state, tracks.flightTransit)
 	elseif phase == PHASE.AfterTransition then
+		state.humanoid.AutoRotate = false
 		state.humanoid.PlatformStand = false
 		playTrack(state, tracks.afterTransition)
 	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
@@ -1463,6 +1505,7 @@ local function playPhaseAnim(state: CharacterAbilityState, phase: string)
 		state.leapDownCommitted = false
 		state.leanAnimSubphase = nil
 		state.downSupesGroundedFrames = 0
+		state.humanoid.AutoRotate = false
 		state.humanoid.PlatformStand = false
 		playLeanUpHold(state, "playPhaseAnim")
 		updateLeanUpAnimSubphase(state)
@@ -1930,6 +1973,13 @@ function DoubleJumpController:KnitStart()
 	bindAction()
 	bindPhaseAttributeSync()
 	bindTuningAttrListeners(player.Character)
+	bindLevelTuningRefresh()
+
+	DataLib.OnChanged(function(data)
+		if data and type(data.Level) == "number" then
+			refreshTuning()
+		end
+	end)
 
 	-- Watchdog: if ability blocking lingers without an active ability, force-clear it.
 	-- Defends against missed AbilityEnded signals / race conditions on respawn.

@@ -101,17 +101,24 @@ function LevelDesignController:KnitStart()
 		end
 	end)
 
-	local thrustMismatchSynced = false
 	DataLib.OnChanged(function(data)
-		if thrustMismatchSynced or not data then
+		if not data then
 			return
 		end
-		local power = player:GetAttribute(ThrustConfigs.PowerAttribute)
+		local attr = ThrustConfigs.PowerAttribute
+		local power = player:GetAttribute(attr)
+		local profileMax = data.ThrustMax
+		if typeof(profileMax) ~= "number" or profileMax <= 0 then
+			return
+		end
 		if typeof(power) ~= "number" or power <= 0 then
+			player:SetAttribute(attr, profileMax)
 			return
 		end
-		if typeof(data.ThrustMax) == "number" and math.abs(power - data.ThrustMax) > 0.5 then
-			thrustMismatchSynced = true
+		if profileMax > power + 0.5 then
+			-- Upgrades / boosts raised max on the server; do not overwrite with stale ThrustPower.
+			player:SetAttribute(attr, profileMax)
+		elseif power > profileMax + 0.5 then
 			syncThrustPowerFromClient(power)
 		end
 	end)

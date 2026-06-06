@@ -2,6 +2,13 @@
 
 -- Speed progression (XP), level thresholds, swim/walk display speed, rebirth boost.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+
+local FLIGHT_SCALE_FULL_AT_LEVEL = 10
+local WALK_AT_FLIGHT_REF = 8 + (FLIGHT_SCALE_FULL_AT_LEVEL - 1) * 3
+local LEGACY_AFTER_FORWARD = CharacterConfigs.DoubleJump.Phases.AfterTransition.ForwardSpeed
+
 local SpeedConfigs = {
 	StudsRequired = 8,
 	BaseXpCost = 300,
@@ -12,6 +19,10 @@ local SpeedConfigs = {
 	SpeedGainPerStudBatch = 1,
 	AddSpeedMinInterval = 0.05,
 	SwimSpeedAttribute = "SwimSpeed",
+	--- Icon on the +Speed burst when walking / gaining speed (EffectsSystem).
+	SpeedGainPopupImage = "rbxassetid://79786696302749",
+	--- Icon on the +Thrust burst when thrust refills (EffectsSystem).
+	ThrustGainPopupImage = "rbxassetid://109635513870423",
 }
 
 function SpeedConfigs.GetExperienceForLevel(level: number): number
@@ -67,6 +78,80 @@ function SpeedConfigs.SyncLevelFromSpeed(data: any): (number, number)
 	local newLevel = SpeedConfigs.GetLevelFromSpeed(speed)
 	data.Level = newLevel
 	return oldLevel, newLevel
+end
+
+-- E-ability horizontal flight scales with Speed level (walk-linked); thrust fuel unchanged.
+SpeedConfigs.Flight = {
+	MinWalkMultiplier = 1.15,
+	MaxWalkMultiplier = (LEGACY_AFTER_FORWARD / WALK_AT_FLIGHT_REF) * 1.12,
+	ScaleFullAtLevel = FLIGHT_SCALE_FULL_AT_LEVEL,
+	ReferenceAfterForward = LEGACY_AFTER_FORWARD,
+	--- Extra horizontal flight feel (1 = plan baseline). Tune here after playtest.
+	SpeedBoost = 1.08,
+}
+
+function SpeedConfigs.GetFlightWalkMultiplier(level: number): number
+	local cfg = SpeedConfigs.Flight
+	local lvl = math.max(1, math.floor(level))
+	local t = 1
+	if cfg.ScaleFullAtLevel > 1 then
+		t = math.clamp((lvl - 1) / (cfg.ScaleFullAtLevel - 1), 0, 1)
+	end
+	return cfg.MinWalkMultiplier + (cfg.MaxWalkMultiplier - cfg.MinWalkMultiplier) * t
+end
+
+function SpeedConfigs.GetFlightForwardSpeed(level: number): number
+	local cfg = SpeedConfigs.Flight
+	local boost = if typeof(cfg.SpeedBoost) == "number" and cfg.SpeedBoost > 0 then cfg.SpeedBoost else 1
+	return SpeedConfigs.GetSpeedFromLevel(level) * SpeedConfigs.GetFlightWalkMultiplier(level) * boost
+end
+
+function SpeedConfigs.GetPlayerLevel(player: Player): number
+	local folder = player:FindFirstChild("leaderstats")
+	if folder and folder:IsA("Folder") then
+		local levelValue = folder:FindFirstChild("Level")
+		if levelValue and levelValue:IsA("IntValue") then
+			return math.max(1, levelValue.Value)
+		end
+	end
+	return 1
+end
+
+function SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning: any, level: number): any
+	local phases = tuning.Phases
+	if not phases or not phases.AfterTransition then
+		return tuning
+	end
+
+	local resolvedForward = phases.AfterTransition.ForwardSpeed
+	if typeof(resolvedForward) ~= "number" or resolvedForward <= 0.01 then
+		return tuning
+	end
+
+	local targetForward = SpeedConfigs.GetFlightForwardSpeed(level)
+	local scale = targetForward / resolvedForward
+
+	phases.AfterTransition.ForwardSpeed = resolvedForward * scale
+	phases.LeanUp.ForwardSpeed = (phases.LeanUp.ForwardSpeed or resolvedForward) * scale
+
+	local transit = phases.FlightTransit
+	if transit and typeof(transit.ForwardNudgeSpeed) == "number" then
+		transit.ForwardNudgeSpeed = transit.ForwardNudgeSpeed * scale
+	end
+
+	local steering = tuning.Steering
+	if steering then
+		if typeof(steering.HorizontalSpeed) == "number" then
+			steering.HorizontalSpeed = steering.HorizontalSpeed * scale
+		end
+		local strafe = steering.KeyboardStrafeSpeed
+		if typeof(strafe) ~= "number" then
+			strafe = CharacterConfigs.DoubleJump.Steering.KeyboardStrafeSpeed or 58
+		end
+		steering.KeyboardStrafeSpeed = strafe * scale
+	end
+
+	return tuning
 end
 
 -- Thrust flight fuel (lives here so one synced module is enough; ThrustConfigs.lua re-exports this).

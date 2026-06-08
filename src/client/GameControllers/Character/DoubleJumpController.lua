@@ -796,8 +796,9 @@ local function getCameraPitchRateSteerAxis(dt: number): number
 	local pitchRate = delta / safeDt
 	local axis = math.clamp(-pitchRate / fullPitchRate, -1, 1)
 	local minRate = poseCfg.CameraPitchRateMin or 0.3
-	if math.abs(pitchRate) >= minRate and math.abs(axis) < 0.55 then
-		axis = math.sign(pitchRate) * -0.55
+	local minAxis = poseCfg.CameraPitchRateMinAxis or 0.25
+	if math.abs(pitchRate) >= minRate and math.abs(axis) < minAxis then
+		axis = math.sign(pitchRate) * -minAxis
 	end
 	return axis
 end
@@ -837,18 +838,46 @@ local function getCameraYawRateSteerAxis(dt: number): number
 	end
 
 	local yawRate = delta / safeDt
-	local axis = math.clamp(yawRate / fullBankRate, -1, 1)
+	local axis = math.clamp(-yawRate / fullBankRate, -1, 1)
 	local minRate = poseCfg.CameraYawRateMin or 0.35
 	if UserInputService.TouchEnabled then
 		minRate = math.max(minRate, 0.9)
 	end
-	if math.abs(yawRate) >= minRate and math.abs(axis) < 0.55 then
-		axis = math.sign(yawRate) * 0.55
+	local minAxis = poseCfg.CameraYawRateMinAxis or 0.28
+	if math.abs(yawRate) >= minRate and math.abs(axis) < minAxis then
+		axis = -math.sign(yawRate) * minAxis
 	end
 	return axis
 end
 
-local function getSteerAxisFromInput(_state: CharacterAbilityState, dt: number): number
+local function getCameraHeadingBankAxis(state: CharacterAbilityState): number
+	local poseCfg = getTuning().SupermanPose
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return 0
+	end
+
+	local flatLook = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+	if flatLook.Magnitude < 0.01 then
+		return 0
+	end
+	flatLook = flatLook.Unit
+
+	local flatFlight = Vector3.new(state.flightDirection.X, 0, state.flightDirection.Z)
+	if flatFlight.Magnitude < 0.01 then
+		return 0
+	end
+	flatFlight = flatFlight.Unit
+
+	-- Camera left/right of current flight heading → bank while mouse-steering.
+	local sinTurn = flatFlight:Cross(flatLook).Y
+	local cosTurn = flatFlight:Dot(flatLook)
+	local turnAngle = math.atan2(sinTurn, cosTurn)
+	local fullBankAngle = math.rad(poseCfg.CameraHeadingDegreesForFullBank or 48)
+	return math.clamp(-turnAngle / fullBankAngle, -1, 1)
+end
+
+local function getSteerAxisFromInput(state: CharacterAbilityState, dt: number): number
 	local steerAxis = 0
 
 	-- A = left, D = right (bank roll sign)
@@ -862,6 +891,15 @@ local function getSteerAxisFromInput(_state: CharacterAbilityState, dt: number):
 	local touchSteer = getTouchSteerAxis()
 	if touchSteer ~= 0 then
 		steerAxis = touchSteer
+	end
+
+	local headingAxis = getCameraHeadingBankAxis(state)
+	if math.abs(headingAxis) > 0.02 then
+		if math.abs(steerAxis) < 0.01 then
+			steerAxis = headingAxis
+		else
+			steerAxis = math.clamp(steerAxis + headingAxis * 0.75, -1, 1)
+		end
 	end
 
 	local adHeld = UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D)
@@ -920,7 +958,13 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 		raw = Vector3.zero
 	end
 	if raw.Magnitude >= 0.01 then
-		local smoothRate = steerCfg.SteerSmoothRate or 14
+		local moveKeysHeld = UserInputService:IsKeyDown(Enum.KeyCode.W)
+			or UserInputService:IsKeyDown(Enum.KeyCode.S)
+			or UserInputService:IsKeyDown(Enum.KeyCode.A)
+			or UserInputService:IsKeyDown(Enum.KeyCode.D)
+		local smoothRate = if moveKeysHeld
+			then (steerCfg.SteerSmoothRate or 14)
+			else (steerCfg.CameraSteerSmoothRate or steerCfg.SteerSmoothRate or 6)
 		local alpha = math.min(1, smoothRate * dt)
 		local normalized = normalizeFlightDirection(raw, currentPhase)
 		if smoothedSteerDir then

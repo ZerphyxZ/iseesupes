@@ -537,6 +537,12 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 	if SuperJumpService and SuperJumpService._endAbility then
 		pcall(function() SuperJumpService:_endAbility(player) end)
 	end
+	pcall(function()
+		local hv = Knit.GetService("HeatVisionService")
+		if hv and hv.ForceEndForLobby then
+			hv:ForceEndForLobby(player)
+		end
+	end)
 	player:SetAttribute("ForceStandUp", true)
 	task.delay(0.2, function()
 		if player.Parent then
@@ -561,6 +567,13 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 	if DataService then
 		DataService:RefillThrustToMax(player)
 	end
+
+	pcall(function()
+		local stageCheckpoint = Knit.GetService("StageCheckpointService")
+		if stageCheckpoint and stageCheckpoint.ResetSessionGatesForPlayer then
+			stageCheckpoint:ResetSessionGatesForPlayer(player)
+		end
+	end)
 end
 
 local function onKillPartPlayerKilled(player: Player, character: Model)

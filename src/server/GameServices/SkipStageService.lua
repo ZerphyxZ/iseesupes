@@ -6,6 +6,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local StageCheckpointProgress = require(ReplicatedStorage.Shared.Utils.StageCheckpointProgress)
+local StageCheckpointConfigs = require(ReplicatedStorage.Shared.Configs.StageCheckpointConfigs)
+local StageCheckpointDebug = require(ReplicatedStorage.Shared.Utils.StageCheckpointDebug)
 
 local SkipStageService = Knit.CreateService({
 	Name = "SkipStageService",
@@ -26,6 +29,7 @@ local FALLBACK_Y_OFFSET = 5
 
 local DataService: any = nil
 local FunnelAnalyticsService: any = nil
+local StageCheckpointService: any = nil
 local touchTimes: { [number]: number } = {}
 
 local function notifyMaxStageReached(player: Player, newMaxStage: number)
@@ -136,12 +140,45 @@ function SkipStageService:TeleportToStage(player: Player, stage: number): boolea
 	return true
 end
 
+function SkipStageService:AdvanceStageForPlayer(player: Player, stageNum: number): boolean
+	if stageNum > StageCheckpointConfigs.MaxGateStage then
+		return false
+	end
+	local profile = DataService and DataService:GetProfile(player)
+	if not profile then
+		return false
+	end
+
+	local currentStage = StageCheckpointProgress.getEffectiveStage(profile.Data)
+	if stageNum <= currentStage then
+		StageCheckpointDebug.log(string.format(
+			"AdvanceStageForPlayer skip player=%s stage=%d current=%d",
+			player.Name,
+			stageNum,
+			currentStage
+		), player.Name .. ":advanceSkip", 2)
+		return false
+	end
+
+	profile.Data.Stage = stageNum
+	local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
+	if stageNum > maxStage then
+		profile.Data.MaxStage = stageNum
+		notifyMaxStageReached(player, stageNum)
+	end
+	DataService:Replicate(player)
+	SkipStageService.Client.StageChanged:Fire(player, stageNum)
+	print("[SkipStageService]", player.Name, "reached Stage", stageNum)
+	StageCheckpointDebug.logAlways(string.format("AdvanceStageForPlayer OK player=%s stage=%d", player.Name, stageNum))
+	return true
+end
+
 function SkipStageService.Client:GetCurrentStage(player: Player): number
 	local profile = DataService and DataService:GetProfile(player)
-	if profile and type(profile.Data.Stage) == "number" then
-		return profile.Data.Stage
+	if profile then
+		return StageCheckpointProgress.getEffectiveStage(profile.Data)
 	end
-	return 1
+	return 0
 end
 
 -- Returns the product ID for a given stage teleport (used by MonetizationService).
@@ -157,57 +194,22 @@ local function connectCheckpointTouches()
 		return
 	end
 
+	local gateCount = 0
 	for _, child in folder:GetChildren() do
 		if not child:IsA("BasePart") then
 			continue
 		end
 		local stageNum = tonumber(child.Name)
-		if not stageNum then
-			continue
+		if stageNum and stageNum <= StageCheckpointConfigs.MaxGateStage then
+			gateCount += 1
 		end
-
-		local part = child :: BasePart
-		part.Touched:Connect(function(hit: BasePart)
-			local character = hit:FindFirstAncestorOfClass("Model")
-			if not character then
-				return
-			end
-			local player = Players:GetPlayerFromCharacter(character)
-			if not player then
-				return
-			end
-
-			local uid = player.UserId
-			local now = os.clock()
-			if touchTimes[uid] and now - touchTimes[uid] < TOUCH_DEBOUNCE then
-				return
-			end
-			touchTimes[uid] = now
-
-			local profile = DataService:GetProfile(player)
-			if not profile then
-				return
-			end
-
-			local currentStage = type(profile.Data.Stage) == "number" and profile.Data.Stage or 1
-			if stageNum <= currentStage then
-				return
-			end
-
-			profile.Data.Stage = stageNum
-			-- Track lifetime high-water mark for funnel analytics
-			local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
-			if stageNum > maxStage then
-				profile.Data.MaxStage = stageNum
-				notifyMaxStageReached(player, stageNum)
-			end
-			DataService:Replicate(player)
-			SkipStageService.Client.StageChanged:Fire(player, stageNum)
-			print("[SkipStageService]", player.Name, "reached Stage", stageNum)
-		end)
 	end
 
-	print("[SkipStageService] Wired", #folder:GetChildren(), "checkpoint parts")
+	print(
+		"[SkipStageService]",
+		gateCount,
+		"stage gate part(s) — unlock with heat vision (F) only, not touch"
+	)
 end
 
 --- Print a live funnel showing how many players in this server have reached each stage.
@@ -234,6 +236,7 @@ end
 function SkipStageService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	FunnelAnalyticsService = Knit.GetService("FunnelAnalyticsService")
+	StageCheckpointService = Knit.GetService("StageCheckpointService")
 
 	task.defer(connectCheckpointTouches)
 

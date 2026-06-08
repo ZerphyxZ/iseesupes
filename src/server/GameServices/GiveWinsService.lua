@@ -128,6 +128,12 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 		if SuperJumpService and SuperJumpService._endAbility then
 			SuperJumpService:_endAbility(player)
 		end
+		pcall(function()
+			local hv = Knit.GetService("HeatVisionService")
+			if hv and hv.ForceEndForLobby then
+				hv:ForceEndForLobby(player)
+			end
+		end)
 		player:SetAttribute("ForceStandUp", true)
 
 		task.delay(0.25, function()

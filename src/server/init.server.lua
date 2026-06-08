@@ -20,7 +20,7 @@ end
 -- Setup collision groups for player-to-player collisions disabled
 local function setupPlayerCollisions()
 	pcall(function()
-		PhysicsService:CreateCollisionGroup("Players")
+		PhysicsService:RegisterCollisionGroup("Players")
 	end)
 
 	local function addCharacterToCollisionGroup(character: Model)

@@ -11,6 +11,7 @@ local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
 local DataService: any = nil
 local DoubleJumpService: any = nil
 local SuperJumpService: any = nil
+local HeatVisionService: any = nil
 local equipMutex: { [Player]: boolean } = {}
 
 local function endActiveAbilitiesBeforeMorph(player: Player)
@@ -19,6 +20,9 @@ local function endActiveAbilitiesBeforeMorph(player: Player)
 	end
 	if SuperJumpService and SuperJumpService._endAbility then
 		SuperJumpService:_endAbility(player)
+	end
+	if HeatVisionService and HeatVisionService.ForceEndForLobby then
+		HeatVisionService:ForceEndForLobby(player)
 	end
 end
 
@@ -290,6 +294,9 @@ function AuraShopService:KnitStart()
 	end)
 	pcall(function()
 		SuperJumpService = Knit.GetService("SuperJumpService")
+	end)
+	pcall(function()
+		HeatVisionService = Knit.GetService("HeatVisionService")
 	end)
 
 	task.defer(function()

@@ -40,6 +40,7 @@ local HudConfigs = {
 		ReleaseDuration = 0.18,
 		ExcludePaths = {
 			{ "HUD", "Right", "SupesMobile" },
+			{ "ScreenGui", "VisionMobile" },
 		},
 		SkipAttribute = "HudSkipButtonFx",
 		BoundAttribute = "_HudButtonFxBound",

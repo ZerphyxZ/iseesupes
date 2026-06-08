@@ -199,6 +199,12 @@ local function endMovementAbilitiesBeforeMorph(player: Player)
 	if SuperJumpService and SuperJumpService._endAbility then
 		SuperJumpService:_endAbility(player)
 	end
+	pcall(function()
+		local hv = Knit.GetService("HeatVisionService")
+		if hv and hv.ForceEndForLobby then
+			hv:ForceEndForLobby(player)
+		end
+	end)
 end
 
 local function applyEquippedAvatar(player: Player, data: any, avatarId: string, stepBonus: number): boolean

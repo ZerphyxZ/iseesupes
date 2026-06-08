@@ -633,6 +633,12 @@ function DataService:TeleportToLobby(player: Player)
 			sj:_endAbility(player)
 		end
 	end)
+	pcall(function()
+		local hv = Knit.GetService("HeatVisionService")
+		if hv and hv.ForceEndForLobby then
+			hv:ForceEndForLobby(player)
+		end
+	end)
 
 	player:SetAttribute("ForceStandUp", true)
 	task.delay(0.15, function()
@@ -663,6 +669,13 @@ function DataService:TeleportToLobby(player: Player)
 		local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 		local uprightRetry = CharacterStance.buildUprightCFrame(hrp, spawnCf)
 		CharacterStance.resetToStanding(char, uprightRetry)
+	end)
+
+	pcall(function()
+		local stageCheckpoint = Knit.GetService("StageCheckpointService")
+		if stageCheckpoint and stageCheckpoint.ResetSessionGatesForPlayer then
+			stageCheckpoint:ResetSessionGatesForPlayer(player)
+		end
 	end)
 end
 

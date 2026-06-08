@@ -483,11 +483,12 @@ function DoubleJumpFlightPhysics.tickPhase(
 				nudge
 			)
 		end
+		DoubleJumpFlightPhysics.updateBankRoll(state, dt, tuning, isSteeringEnabled(tuning))
 		DoubleJumpFlightPhysics.applyFlightYawRollAndVelocity(
 			root,
 			state,
 			DoubleJumpFlightPhysics.getOrientationHeading(state),
-			0,
+			state.currentRoll,
 			vel,
 			state.currentPitch
 		)
@@ -511,11 +512,12 @@ function DoubleJumpFlightPhysics.tickPhase(
 			local aim = DoubleJumpFlightPhysics.getFlightDirectionWithPitch(state, tuning, phase, steerDirection)
 			vel = unit3D(vel.Unit:Lerp(aim, pitchBlend)) * vel.Magnitude
 		end
+		DoubleJumpFlightPhysics.updateBankRoll(state, dt, tuning, isSteeringEnabled(tuning))
 		DoubleJumpFlightPhysics.applyFlightYawRollAndVelocity(
 			root,
 			state,
 			DoubleJumpFlightPhysics.getOrientationHeading(state),
-			0,
+			state.currentRoll,
 			vel,
 			state.currentPitch
 		)

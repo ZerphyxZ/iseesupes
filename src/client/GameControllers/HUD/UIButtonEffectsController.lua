@@ -1,6 +1,6 @@
 --!strict
 
--- Binds hover + click scale effects to all GuiButtons under PlayerGui.GUI.
+-- Binds hover + click scale effects (GUI) and hover / click SFX (all PlayerGui buttons).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38,7 +38,7 @@ local function pathMatchesExcluded(button: GuiButton): boolean
 	return false
 end
 
-local function shouldBindButton(button: GuiButton): boolean
+local function shouldBindScaleEffects(button: GuiButton): boolean
 	local cfg = HudConfigs.ButtonEffects
 	if button:GetAttribute(cfg.BoundAttribute) == true then
 		return false
@@ -55,11 +55,25 @@ local function shouldBindButton(button: GuiButton): boolean
 	return true
 end
 
+local function shouldBindButtonSounds(button: GuiButton): boolean
+	local cfg = HudConfigs.ButtonSounds
+	if button:GetAttribute(cfg.BoundAttribute) == true then
+		return false
+	end
+	if not button.Active then
+		return false
+	end
+	return true
+end
+
 local function tryBindButton(button: Instance)
 	if not button:IsA("GuiButton") then
 		return
 	end
-	if shouldBindButton(button) then
+	if shouldBindButtonSounds(button) then
+		HudAnimations.bindButtonSounds(button)
+	end
+	if shouldBindScaleEffects(button) then
 		HudAnimations.bindButtonEffects(button)
 	end
 end
@@ -75,17 +89,15 @@ end
 
 function UIButtonEffectsController:KnitStart()
 	local player = Players.LocalPlayer
-	local playerGui = player:WaitForChild("PlayerGui")
+	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	local gui = playerGui:WaitForChild("GUI", 120)
-	if not gui then
-		warn("[iseesupes] UIButtonEffectsController: timed out waiting for PlayerGui.GUI.")
-		return
+	if gui then
+		guiRoot = gui
 	end
 
-	guiRoot = gui
-	bindTree(gui)
+	bindTree(playerGui)
 
-	gui.DescendantAdded:Connect(function(desc)
+	playerGui.DescendantAdded:Connect(function(desc)
 		tryBindButton(desc)
 	end)
 

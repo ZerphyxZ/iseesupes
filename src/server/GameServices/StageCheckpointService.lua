@@ -9,6 +9,7 @@ local StageCheckpointConfigs = require(ReplicatedStorage.Shared.Configs.StageChe
 local StageCheckpointCollision = require(ReplicatedStorage.Shared.Utils.StageCheckpointCollision)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 local StageCheckpointDebug = require(ReplicatedStorage.Shared.Utils.StageCheckpointDebug)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 local StageCheckpointService = Knit.CreateService({
 	Name = "StageCheckpointService",
@@ -23,6 +24,64 @@ local StageCheckpointService = Knit.CreateService({
 
 local DataService: any = nil
 local SkipStageService: any = nil
+local HeatVisionService: any = nil
+
+local function ensureGatesPrepared(): boolean
+	local folder = StageCheckpointWorld.getFolder()
+	if not folder then
+		return false
+	end
+	local prepared = StageCheckpointWorld.prepareGateParts()
+	for stageNum in prepared do
+		StageCheckpointCollision.registerGateGroup(stageNum)
+	end
+	return #StageCheckpointWorld.getAllGateStageNumbers() > 0
+end
+
+local function bindMapFolderWatch()
+	local function watchFolder(folder: Instance)
+		ensureGatesPrepared()
+		folder.ChildAdded:Connect(function(child)
+			local stageNum = tonumber(child.Name)
+			if stageNum and StageCheckpointWorld.isMeltGateStage(stageNum) then
+				ensureGatesPrepared()
+			end
+		end)
+	end
+
+	local folder = StageCheckpointWorld.getFolder()
+	if folder then
+		watchFolder(folder)
+		return
+	end
+
+	task.spawn(function()
+		for _ = 1, 40 do
+			folder = StageCheckpointWorld.getFolder()
+			if folder then
+				watchFolder(folder)
+				return
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+local function bindPlayerRespawnGateReset(player: Player)
+	player.CharacterAdded:Connect(function(_character)
+		task.defer(function()
+			task.wait(0.25)
+			if not player.Parent then
+				return
+			end
+			if player:GetAttribute("SkipSessionGateReset") == true then
+				player:SetAttribute("SkipSessionGateReset", nil)
+				return
+			end
+			StageCheckpointService:ResetSessionGatesForPlayer(player)
+		end)
+	end)
+end
 
 local playerHp: { [number]: { [number]: number } } = {}
 local brokenGates: { [number]: { [number]: boolean } } = {}
@@ -70,11 +129,28 @@ local function setHp(player: Player, stageNum: number, hp: number)
 	playerHp[player.UserId][stageNum] = math.clamp(hp, 0, StageCheckpointConfigs.MaxHp)
 end
 
+local function refreshHeatVisionGateExcludes(player: Player)
+	if not HeatVisionService or not HeatVisionService.SetBrokenGateRayExcludes then
+		return
+	end
+	local excludes: { Instance } = {}
+	for stageNum = StageCheckpointConfigs.FirstGateStage, StageCheckpointConfigs.MaxGateStage do
+		if isBrokenForPlayer(player, stageNum) then
+			local gatePart = StageCheckpointWorld.getGatePart(stageNum)
+			if gatePart then
+				table.insert(excludes, gatePart)
+			end
+		end
+	end
+	HeatVisionService:SetBrokenGateRayExcludes(player, excludes)
+end
+
 local function markBroken(player: Player, stageNum: number)
 	ensurePlayerState(player)
 	brokenGates[player.UserId][stageNum] = true
 	setHp(player, stageNum, 0)
 	StageCheckpointCollision.allowPassThrough(player, stageNum)
+	refreshHeatVisionGateExcludes(player)
 end
 
 local function maybeToastGateMeltBlocked(player: Player, stageNum: number, reason: string)
@@ -99,6 +175,7 @@ function StageCheckpointService:MarkGateCleared(player: Player, stageNum: number
 end
 
 local function getNextSessionMeltGate(player: Player): number?
+	-- Always melt in order from gate 1 this run. Skip Stage Robux clears earlier gates via ApplySkipStageSession.
 	for stageNum = StageCheckpointConfigs.FirstGateStage, StageCheckpointConfigs.MaxGateStage do
 		if not isBrokenForPlayer(player, stageNum) then
 			return stageNum
@@ -156,6 +233,8 @@ local function logNextSessionGate(player: Player)
 end
 
 local function resetSessionGatesForPlayer(player: Player)
+	ensureGatesPrepared()
+
 	StageCheckpointDebug.logAlways(string.format(
 		"ResetSessionGates player=%s — all walls locked FULL bar until laser breaks them (ignores saved Stage)",
 		player.Name
@@ -168,16 +247,29 @@ local function resetSessionGatesForPlayer(player: Player)
 
 	StageCheckpointCollision.resetAllGatesForPlayer(player)
 
+	local character = player.Character
+	if character then
+		StageCheckpointCollision.applyToCharacter(player, character)
+	end
+
 	for _, stageNum in StageCheckpointWorld.getAllGateStageNumbers() do
 		local gatePart = StageCheckpointWorld.getGatePart(stageNum)
 		local req = StageCheckpointWorld.getCachedRequirement(stageNum)
+		if gatePart then
+			StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
+		end
 		if gatePart and req and StageCheckpointWorld.hasGateUi(gatePart) then
 			StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
 			StageCheckpointWorld.applyGateUi(gatePart, req, 1, "ServerSessionReset")
 		end
 	end
 
+	refreshHeatVisionGateExcludes(player)
 	logNextSessionGate(player)
+end
+
+function StageCheckpointService:RefreshHeatVisionGateExcludesForPlayer(player: Player)
+	refreshHeatVisionGateExcludes(player)
 end
 
 function StageCheckpointService:ResetSessionGatesForPlayer(player: Player)
@@ -186,6 +278,47 @@ function StageCheckpointService:ResetSessionGatesForPlayer(player: Player)
 	end
 	resetSessionGatesForPlayer(player)
 	StageCheckpointService.Client.SessionGatesReset:Fire(player)
+
+	task.delay(0.35, function()
+		if not player.Parent then
+			return
+		end
+		resetSessionGatesForPlayer(player)
+		StageCheckpointService.Client.SessionGatesReset:Fire(player)
+	end)
+end
+
+--- Robux Skip Stage: pass through earlier gates this run; next melt target matches saved stage.
+function StageCheckpointService:ApplySkipStageSession(player: Player, stage: number)
+	if not player.Parent then
+		return
+	end
+	if not StageCheckpointWorld.isMeltGateStage(stage) then
+		return
+	end
+
+	ensureGatesPrepared()
+	ensurePlayerState(player)
+
+	for gateNum = StageCheckpointConfigs.FirstGateStage, stage - 1 do
+		if not StageCheckpointWorld.isMeltGateStage(gateNum) then
+			continue
+		end
+		if isBrokenForPlayer(player, gateNum) then
+			continue
+		end
+		markBroken(player, gateNum)
+		StageCheckpointService.Client.CheckpointHpChanged:Fire(player, gateNum, 0)
+	end
+
+	refreshHeatVisionGateExcludes(player)
+	logNextSessionGate(player)
+	StageCheckpointDebug.logAlways(string.format(
+		"ApplySkipStageSession player=%s stage=%d nextMeltGate=%s",
+		player.Name,
+		stage,
+		tostring(getNextSessionMeltGate(player))
+	))
 end
 
 function StageCheckpointService.Client:GetGateSync(player: Player)
@@ -220,7 +353,9 @@ local function computeDamagePerSecond(playerSpeed: number, requirement: number):
 		return 0
 	end
 	local speedRatio = playerSpeed / requirement
-	return StageCheckpointConfigs.BaseDamagePerSecond * speedRatio
+	local level = SpeedConfigs.GetLevelFromSpeed(playerSpeed)
+	local levelBonus = 1 + math.max(0, level - 1) * (StageCheckpointConfigs.LevelDamageBonusPerLevel or 0)
+	return StageCheckpointConfigs.BaseDamagePerSecond * speedRatio * levelBonus
 end
 
 local function maybeToastInsufficientSpeed(player: Player, stageNum: number, requirement: number, playerSpeed: number)
@@ -282,6 +417,25 @@ function StageCheckpointService:tryDamageFromHit(player: Player, rayResult: Rayc
 	end
 	if not StageCheckpointWorld.isMeltGateStage(stageNum) then
 		return
+	end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root and root:IsA("BasePart") then
+		local hitDistance = (rayResult.Position - root.Position).Magnitude
+		if hitDistance > HeatVisionConfigs.getCheckpointDamageMaxRange() then
+			StageCheckpointDebug.log(
+				string.format(
+					"tryDamage stage=%d blocked: too far (%.0f > %.0f studs)",
+					stageNum,
+					hitDistance,
+					HeatVisionConfigs.getCheckpointDamageMaxRange()
+				),
+				player.Name .. ":range",
+				1.5
+			)
+			return
+		end
 	end
 
 	StageCheckpointDebug.log(string.format(
@@ -376,15 +530,23 @@ end
 function StageCheckpointService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	SkipStageService = Knit.GetService("SkipStageService")
+	HeatVisionService = Knit.GetService("HeatVisionService")
 
-	local gates = StageCheckpointWorld.prepareGateParts()
-	StageCheckpointDebug.logAlways(string.format("KnitStart prepared %d melt gate(s) (stages %d-%d)", #StageCheckpointWorld.getAllStageNumbers(), StageCheckpointConfigs.FirstGateStage, StageCheckpointConfigs.MaxGateStage))
-	for stageNum in gates do
-		StageCheckpointCollision.registerGateGroup(stageNum)
-	end
+	bindMapFolderWatch()
+	ensureGatesPrepared()
+
+	local gates = StageCheckpointWorld.getAllGateStageNumbers()
+	StageCheckpointDebug.logAlways(string.format(
+		"KnitStart prepared %d melt gate(s) (stages %d-%d)",
+		#gates,
+		StageCheckpointConfigs.FirstGateStage,
+		StageCheckpointConfigs.MaxGateStage
+	))
+
 	StageCheckpointCollision.init()
 
 	for _, player in Players:GetPlayers() do
+		bindPlayerRespawnGateReset(player)
 		task.defer(function()
 			if DataService:GetProfile(player) then
 				self:ResetSessionGatesForPlayer(player)
@@ -393,6 +555,7 @@ function StageCheckpointService:KnitStart()
 	end
 
 	Players.PlayerAdded:Connect(function(player)
+		bindPlayerRespawnGateReset(player)
 		task.defer(function()
 			local deadline = os.clock() + 15
 			while os.clock() < deadline do

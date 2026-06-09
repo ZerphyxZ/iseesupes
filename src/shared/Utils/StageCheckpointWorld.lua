@@ -58,13 +58,57 @@ function StageCheckpointWorld.getGatePart(stageNum: number): BasePart?
 		return nil
 	end
 	local child = folder:FindFirstChild(tostring(stageNum))
-	if child and child:IsA("BasePart") then
+	if not child then
+		return nil
+	end
+	if child:IsA("BasePart") then
 		return child
 	end
-	return nil
+	return child:FindFirstChildWhichIsA("BasePart", true)
 end
 
 function StageCheckpointWorld.getCheckpointFromHit(part: Instance): (number?, BasePart?)
+	local folder = StageCheckpointWorld.getFolder()
+	if not folder then
+		return nil, nil
+	end
+
+	local stageEntry: Instance? = nil
+	local stageNum: number? = nil
+	local current: Instance? = part
+	while current and current ~= folder do
+		if current.Parent == folder then
+			local num = tonumber(current.Name)
+			if num and StageCheckpointWorld.isMeltGateStage(num) then
+				stageNum = num
+				stageEntry = current
+				break
+			end
+		end
+		current = current.Parent
+	end
+
+	if not stageNum or not stageEntry then
+		return nil, nil
+	end
+
+	if stageEntry:IsA("BasePart") then
+		return stageNum, stageEntry
+	end
+
+	local gatePart = stageEntry:FindFirstChildWhichIsA("BasePart", true)
+	if gatePart then
+		return stageNum, gatePart
+	end
+	return stageNum, nil
+end
+
+function StageCheckpointWorld.isCheckpointHit(part: Instance): boolean
+	local stageNum = StageCheckpointWorld.getCheckpointFromHit(part)
+	return stageNum ~= nil
+end
+
+function StageCheckpointWorld.getStageEntryFromPart(part: Instance): (number?, Instance?)
 	local folder = StageCheckpointWorld.getFolder()
 	if not folder then
 		return nil, nil
@@ -74,8 +118,8 @@ function StageCheckpointWorld.getCheckpointFromHit(part: Instance): (number?, Ba
 	while current and current ~= folder do
 		if current.Parent == folder then
 			local stageNum = tonumber(current.Name)
-			if stageNum and current:IsA("BasePart") and StageCheckpointWorld.isMeltGateStage(stageNum) then
-				return stageNum, current :: BasePart
+			if stageNum and StageCheckpointWorld.isMeltGateStage(stageNum) then
+				return stageNum, current
 			end
 		end
 		current = current.Parent
@@ -83,9 +127,25 @@ function StageCheckpointWorld.getCheckpointFromHit(part: Instance): (number?, Ba
 	return nil, nil
 end
 
-function StageCheckpointWorld.isCheckpointHit(part: Instance): boolean
-	local stageNum = StageCheckpointWorld.getCheckpointFromHit(part)
-	return stageNum ~= nil
+--- Spawn pads under each stage entry (SkipStageService) — not real flight floor while gliding.
+function StageCheckpointWorld.isCheckpointSpawnPart(part: Instance): boolean
+	local _, entry = StageCheckpointWorld.getStageEntryFromPart(part)
+	if not entry then
+		return false
+	end
+
+	local current: Instance? = part
+	while current and current ~= entry do
+		if current.Name == "Spawn" and current:IsA("BasePart") then
+			return true
+		end
+		current = current.Parent
+	end
+	return part.Name == "Spawn" and part:IsA("BasePart")
+end
+
+function StageCheckpointWorld.getFlightProbeFolder(): Instance?
+	return StageCheckpointWorld.getFolder()
 end
 
 function StageCheckpointWorld.getBarProgressFrame(gatePart: BasePart): Frame?
@@ -192,6 +252,26 @@ function StageCheckpointWorld.getNextMeltGateStage(currentStage: number): number
 	return nextStage
 end
 
+function StageCheckpointWorld.restoreGatePartLockedVisual(
+	gatePart: BasePart,
+	requirement: number?,
+	hp01: number?,
+	logContext: string?
+)
+	gatePart.LocalTransparencyModifier = 0
+	StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
+	StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
+	if requirement and requirement > 0 then
+		StageCheckpointWorld.applyGateUi(gatePart, requirement, hp01 or 1, logContext or "RestoreLockedVisual")
+	end
+end
+
+function StageCheckpointWorld.setGateInteractionEnabled(gatePart: BasePart, enabled: boolean)
+	gatePart.CanQuery = enabled
+	gatePart.CanCollide = enabled
+	gatePart.CanTouch = false
+end
+
 function StageCheckpointWorld.setXpOverlayEnabled(gatePart: BasePart, enabled: boolean)
 	local xp = gatePart:FindFirstChild(StageCheckpointConfigs.UiPaths.SurfaceGui)
 	if xp and xp:IsA("SurfaceGui") then
@@ -217,14 +297,17 @@ function StageCheckpointWorld.applyGateVisualState(
 	if state == "broken" then
 		StageCheckpointWorld.applyGateUi(gatePart, requirement, 0, logContext .. " → BROKEN (beam cleared)")
 		StageCheckpointWorld.disableXpOverlay(gatePart)
+		StageCheckpointWorld.setGateInteractionEnabled(gatePart, false)
 		gatePart.LocalTransparencyModifier = 1
 	elseif state == "active" then
 		StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
+		StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
 		local hp01 = if hp01Override ~= nil then hp01Override else 1
 		StageCheckpointWorld.applyGateUi(gatePart, requirement, hp01, logContext .. " → ACTIVE melt with F")
 		gatePart.LocalTransparencyModifier = 0
 	else
 		StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
+		StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
 		StageCheckpointWorld.applyGateUi(gatePart, requirement, 1, logContext .. " → LOCKED (melt previous gates first)")
 		gatePart.LocalTransparencyModifier = 0
 	end
@@ -259,16 +342,29 @@ function StageCheckpointWorld.prepareGateParts(): { [number]: BasePart }
 	end
 
 	for _, child in folder:GetChildren() do
-		if not child:IsA("BasePart") then
-			continue
-		end
 		local stageNum = tonumber(child.Name)
 		if not stageNum or not StageCheckpointWorld.isMeltGateStage(stageNum) then
 			continue
 		end
 
-		local gatePart = child :: BasePart
+		local gatePart: BasePart? = nil
+		if child:IsA("BasePart") then
+			gatePart = child :: BasePart
+		else
+			gatePart = child:FindFirstChildWhichIsA("BasePart", true)
+		end
+		if not gatePart then
+			warn("[StageCheckpointWorld] No BasePart under stage", stageNum)
+			continue
+		end
+
+		for _, desc in child:GetDescendants() do
+			if desc:IsA("BasePart") then
+				desc.CanTouch = false
+			end
+		end
 		gatePart.CanQuery = true
+		gatePart.CanTouch = false
 		gatePart.CollisionGroup = StageCheckpointWorld.getGateCollisionGroupName(stageNum)
 
 		local requirement = StageCheckpointWorld.resolveRequirement(gatePart, stageNum)
@@ -321,11 +417,9 @@ function StageCheckpointWorld.getFolderGateStageNumbers(): { number }
 		return stages
 	end
 	for _, child in folder:GetChildren() do
-		if child:IsA("BasePart") then
-			local stageNum = tonumber(child.Name)
-			if stageNum and StageCheckpointWorld.isMeltGateStage(stageNum) then
-				table.insert(stages, stageNum)
-			end
+		local stageNum = tonumber(child.Name)
+		if stageNum and StageCheckpointWorld.isMeltGateStage(stageNum) then
+			table.insert(stages, stageNum)
 		end
 	end
 	table.sort(stages)
@@ -337,6 +431,11 @@ function StageCheckpointWorld.hasGateUi(gatePart: BasePart): boolean
 end
 
 function StageCheckpointWorld.resolveRequirement(gatePart: BasePart, stageNum: number): number?
+	local fromConfig = StageCheckpointConfigs.GetGateSpeedRequirement(stageNum)
+	if fromConfig then
+		return fromConfig
+	end
+
 	local requirement = StageCheckpointWorld.readRequirement(gatePart)
 	if requirement and requirement > 0 then
 		return requirement

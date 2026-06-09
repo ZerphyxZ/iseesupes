@@ -11,6 +11,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
+local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJumpFlightPhysics)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
@@ -255,6 +256,7 @@ type CharacterAbilityState = {
 	lastFlatHeading: Vector3?,
 	currentPitch: number,
 	currentRoll: number,
+	lastBankHeadingYaw: number?,
 	phaseStartedAt: number,
 	descentStartedAt: number?,
 	downSupesGroundedFrames: number,
@@ -616,6 +618,22 @@ local function flatDistance(from: Vector3, to: Vector3): number
 	local a = Vector3.new(from.X, 0, from.Z)
 	local b = Vector3.new(to.X, 0, to.Z)
 	return (b - a).Magnitude
+end
+
+local function getFlightProbeOptions(phase: string): DoubleJumpLanding.FlightProbeOptions?
+	if phase ~= PHASE.AfterTransition and phase ~= PHASE.LeanUp then
+		return nil
+	end
+	local folder = StageCheckpointWorld.getFlightProbeFolder()
+	if not folder then
+		return {
+			ignoreWalkableInstance = StageCheckpointWorld.isCheckpointSpawnPart,
+		}
+	end
+	return {
+		ignoreWallProbeHitsIn = folder,
+		ignoreWalkableInstance = StageCheckpointWorld.isCheckpointSpawnPart,
+	}
 end
 
 local function getSteerThreshold(): number
@@ -1081,6 +1099,7 @@ local function buildFlightPhysicsState(state: CharacterAbilityState): DoubleJump
 		clientSteerAxis = smoothedSteerAxis,
 		clientSteerPitchAxis = smoothedSteerPitchAxis,
 		clientSteerDirection = smoothedSteerDir,
+		lastBankHeadingYaw = state.lastBankHeadingYaw,
 	}
 end
 
@@ -1090,6 +1109,7 @@ local function applyFlightStateFromPhysics(state: CharacterAbilityState, fpState
 	state.currentPitch = fpState.currentPitch
 	state.currentRoll = fpState.currentRoll
 	state.descentStartedAt = fpState.descentStartedAt
+	state.lastBankHeadingYaw = fpState.lastBankHeadingYaw
 end
 
 local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number, phase: string)
@@ -1347,7 +1367,14 @@ enforceLandingAnim = function(state: CharacterAbilityState, runHeavyChecks: bool
 
 	local landingCfg = getTuning().Phases.DownSupes
 	local moveDir = state.flightDirection
-	if DoubleJumpLanding.hasObstacleContact(state.humanoid, root, state.rayParams, landingCfg, moveDir) then
+	if DoubleJumpLanding.hasObstacleContact(
+		state.humanoid,
+		root,
+		state.rayParams,
+		landingCfg,
+		moveDir,
+		getFlightProbeOptions(currentPhase)
+	) then
 		stopLeanUpHard(state.tracks)
 		stopDownSupesHard(state.tracks, "wall_contact")
 		pcall(function()
@@ -1415,7 +1442,14 @@ local function enforceCancelApproachLanding(state: CharacterAbilityState)
 	local tuning = getTuning()
 	local cancelCfg = tuning.Cancel
 	local landingCfg = tuning.Phases.DownSupes
-	if DoubleJumpLanding.hasObstacleContact(state.humanoid, root, state.rayParams, landingCfg, state.flightDirection) then
+	if DoubleJumpLanding.hasObstacleContact(
+		state.humanoid,
+		root,
+		state.rayParams,
+		landingCfg,
+		state.flightDirection,
+		getFlightProbeOptions(currentPhase)
+	) then
 		stopLeanUpHard(state.tracks)
 		stopDownSupesHard(state.tracks, "wall_contact")
 		return
@@ -1716,10 +1750,12 @@ onPhaseChanged = function(phase: string)
 	if phase == PHASE.FlightTransit then
 		state.currentPitch = getTuning().SupermanPose.TransitStartPitch
 		state.currentRoll = 0
+		state.lastBankHeadingYaw = nil
 		state.descentStartedAt = nil
 	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
 		state.currentPitch = getTuning().SupermanPose.UprightPitch
 		state.currentRoll = 0
+		state.lastBankHeadingYaw = nil
 		state.descentStartedAt = nil
 		state.flightDirection = flatUnit(state.flightDirection)
 	elseif
@@ -1729,6 +1765,7 @@ onPhaseChanged = function(phase: string)
 	then
 		state.currentPitch = getTuning().SupermanPose.UprightPitch
 		state.currentRoll = 0
+		state.lastBankHeadingYaw = nil
 		state.descentStartedAt = nil
 		state.flightDirection = flatUnit(state.flightDirection)
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -1848,6 +1885,7 @@ setupCharacter = function(character: Model)
 		lastFlatHeading = flatUnit(startCFrame.LookVector),
 		currentPitch = getTuning().SupermanPose.TransitStartPitch,
 		currentRoll = 0,
+		lastBankHeadingYaw = nil,
 		phaseStartedAt = os.clock(),
 		descentStartedAt = nil,
 		downSupesGroundedFrames = 0,

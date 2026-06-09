@@ -5,7 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 
-local FLIGHT_SCALE_FULL_AT_LEVEL = 10
+local FLIGHT_SCALE_FULL_AT_LEVEL = 4
 local WALK_AT_FLIGHT_REF = 8 + (FLIGHT_SCALE_FULL_AT_LEVEL - 1) * 3
 local LEGACY_AFTER_FORWARD = CharacterConfigs.DoubleJump.Phases.AfterTransition.ForwardSpeed
 
@@ -149,20 +149,42 @@ function SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning: any, level: number)
 			strafe = CharacterConfigs.DoubleJump.Steering.KeyboardStrafeSpeed or 58
 		end
 		steering.KeyboardStrafeSpeed = strafe * scale
+		-- Match yaw / camera-follow rates to forward speed so turn radius stays controllable.
+		if typeof(steering.DirectionLerp) == "number" then
+			steering.DirectionLerp = steering.DirectionLerp * scale
+		end
+		if typeof(steering.KeyboardYawDegreesPerSecond) == "number" then
+			steering.KeyboardYawDegreesPerSecond = steering.KeyboardYawDegreesPerSecond * scale
+		end
+		for _, key in {
+			"SteerSmoothRate",
+			"CameraSteerSmoothRate",
+			"SteerAxisSmoothRate",
+			"KeyboardAxisSmoothRateLeanUp",
+		} do
+			local rate = steering[key]
+			if typeof(rate) == "number" then
+				steering[key] = rate * scale
+			end
+		end
+	end
+
+	local pose = tuning.SupermanPose
+	if pose and typeof(pose.BankFollowRate) == "number" then
+		pose.BankFollowRate = pose.BankFollowRate * math.sqrt(scale)
 	end
 
 	return tuning
 end
 
--- Thrust flight fuel (lives here so one synced module is enough; ThrustConfigs.lua re-exports this).
--- BaseMaxFuel = 60 → ~374 studs per charge (new players reach Stage 2, not Stage 3 in one shot).
--- PassiveRefillRate = 6 → 10s from empty to full; prevents chain-flying across stages.
--- MinFuelToStartFlight = 15 → must wait ~2.5s on ground before flying again.
+-- Thrust = flight bar (SupesMobile). Refills on the ground; drains while flying.
+-- Solar energy (heat vision) lives in HeatVisionConfigs.SolarEnergy — separate profile fields.
 local Thrust = {
 	BaseMaxFuel = 60,
 	DrainPerSecond = 10,
 	TreadmillRefillPerTick = 0,
-	PassiveRefillRate = 6,
+	PassiveRefillRate = 7,
+	FlightRefillRate = 0,
 	MinFuelToStartFlight = 15,
 	EmptyDescentGrace = 0.6,
 	SpeedPointsToMaxFuelBonus = 1,
@@ -172,31 +194,54 @@ local Thrust = {
 	-- Player attribute (Properties panel) to set max thrust fuel directly. 0 = use BaseMaxFuel.
 	PowerAttribute = "ThrustPower",
 	DefaultPower = 0,
-	--- DjAbilityPhase values that block passive refill (in-air thrust use only).
-	PassiveRefillBlockPhases = {
+	--- Phases where thrust refills (in-air flight only).
+	FlightRefillPhases = {
 		FlightTransit = true,
 		AfterTransition = true,
 		LeanUp = true,
 	},
+	SuperJumpRefillPhases = {
+		LeanUp = true,
+		LeapDown = true,
+	},
 }
 
-function Thrust.BlocksPassiveRefill(djPhase: any): boolean
+function Thrust.GetEffectiveMinFuelToStart(thrustMax: number): number
+	if typeof(thrustMax) ~= "number" or thrustMax <= 0 then
+		return Thrust.MinFuelToStartFlight
+	end
+	return math.min(Thrust.MinFuelToStartFlight, thrustMax)
+end
+
+function Thrust.IsInFlightRefillPhase(djPhase: any, sjPhase: any): boolean
+	if typeof(sjPhase) == "string" and sjPhase ~= "" then
+		return Thrust.SuperJumpRefillPhases[sjPhase] == true
+	end
 	if djPhase == nil or djPhase == "" then
 		return false
 	end
 	if typeof(djPhase) ~= "string" then
-		return true
+		return false
 	end
-	return Thrust.PassiveRefillBlockPhases[djPhase] == true
+	return Thrust.FlightRefillPhases[djPhase] == true
+end
+
+--- @deprecated use IsInFlightRefillPhase — kept for any external callers
+function Thrust.BlocksPassiveRefill(djPhase: any): boolean
+	return Thrust.IsInFlightRefillPhase(djPhase, nil)
+end
+
+function Thrust.GetNetDrainPerSecond(): number
+	return math.max(Thrust.DrainPerSecond, 0.01)
 end
 
 function Thrust.GetAbilityTimeCap(fuelAtStart: number, tuningMax: number): number
-	local drain = Thrust.DrainPerSecond
-	if drain <= 0 then
+	local netDrain = Thrust.GetNetDrainPerSecond()
+	if netDrain <= 0 then
 		return tuningMax
 	end
-	local fuelSeconds = fuelAtStart / drain
-	return math.max(tuningMax, fuelSeconds + 5)
+	local fuelSeconds = fuelAtStart / netDrain
+	return math.max(tuningMax, fuelSeconds + 2)
 end
 
 function Thrust.EnsureFuelDefaults(data: any)

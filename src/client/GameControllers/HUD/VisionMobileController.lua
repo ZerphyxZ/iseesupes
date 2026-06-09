@@ -1,16 +1,15 @@
 --!strict
 
--- VisionMobile tap → heat vision (F). Cooldown mask + active state on ImageButton.
+-- VisionMobile tap → heat vision (F). Fill shows solar energy (charges while flying only).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
-local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local VisionMobileUI = require(ReplicatedStorage.Shared.Utils.VisionMobileUI)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
@@ -21,7 +20,7 @@ local ATTR = HeatVisionConfigs.Attributes
 
 local C_IDLE = Color3.fromRGB(255, 120, 60)
 local C_ACTIVE = Color3.fromRGB(255, 200, 80)
-local C_COOLDOWN = Color3.fromRGB(120, 120, 120)
+local C_EMPTY = Color3.fromRGB(120, 120, 120)
 
 type Refs = {
 	visionFrame: Frame,
@@ -33,7 +32,6 @@ local HeatVisionService: any = nil
 local HeatVisionController: any = nil
 local currentRefs: Refs? = nil
 local buttonTapConn: RBXScriptConnection? = nil
-local cooldownEndsAt = 0
 local lastRejectedToastAt = -math.huge
 
 local function isActive(): boolean
@@ -47,20 +45,35 @@ local function localActiveViaController(): boolean
 	return false
 end
 
-local function getCooldownFill(): number
-	local remaining = cooldownEndsAt - os.clock()
-	if remaining <= 0 then
+local function getSolarFill(): number
+	local data = DataLib.GetData()
+	if not data then
 		return 1
 	end
-	return math.clamp(1 - remaining / HeatVisionConfigs.Cooldown, 0, 1)
+	local current = data.SolarCurrent
+	local max = data.SolarMax
+	if typeof(current) ~= "number" or typeof(max) ~= "number" or max <= 0 then
+		return 1
+	end
+	return math.clamp(current / max, 0, 1)
+end
+
+local function hasEnoughSolar(): boolean
+	local data = DataLib.GetData()
+	if not data then
+		return false
+	end
+	local current = if typeof(data.SolarCurrent) == "number" then data.SolarCurrent else 0
+	local max = if typeof(data.SolarMax) == "number" and data.SolarMax > 0 then data.SolarMax else nil
+	return current >= HeatVisionConfigs.getMinSolarToStart(max)
 end
 
 local function getButtonTint(): Color3
 	if isActive() then
 		return C_ACTIVE
 	end
-	if os.clock() < cooldownEndsAt then
-		return C_COOLDOWN
+	if not hasEnoughSolar() then
+		return C_EMPTY
 	end
 	return C_IDLE
 end
@@ -99,7 +112,7 @@ local function setupFill(visionFrame: Frame): Refs?
 end
 
 local function applyVisuals(refs: Refs)
-	local fill = getCooldownFill()
+	local fill = getSolarFill()
 	local active = isActive()
 	refs.emptyMask.Size = UDim2.fromScale(1, 1 - fill)
 	refs.emptyMask.BackgroundTransparency = if active then 0.28 else 0.42
@@ -112,11 +125,12 @@ local function notifyRejected(reason: string?)
 		return
 	end
 	lastRejectedToastAt = now
-	if reason == "cooldown" then
-		local remaining = math.max(0.1, cooldownEndsAt - now)
-		NotificationManager.show(string.format("Heat vision ready in %.1fs", remaining), "Info")
+	if reason == "no_solar" then
+		NotificationManager.show("Fly to recharge solar energy for heat vision", "Info")
 	elseif reason == "active" then
 		return
+	elseif reason == "flying" then
+		NotificationManager.show("Land before using heat vision", "Info")
 	else
 		NotificationManager.show("Heat vision unavailable", "Info")
 	end
@@ -132,8 +146,8 @@ local function onButtonTapped()
 		return
 	end
 
-	if os.clock() < cooldownEndsAt then
-		notifyRejected("cooldown")
+	if not hasEnoughSolar() then
+		notifyRejected("no_solar")
 		return
 	end
 
@@ -164,9 +178,7 @@ local function bindVisionButton(refs: Refs)
 	currentRefs = refs
 	applyVisuals(refs)
 
-	buttonTapConn = refs.baseButton.MouseButton1Down:Connect(function()
-		HudAnimations.buttonPress(refs.baseButton, onButtonTapped)
-	end)
+	buttonTapConn = refs.baseButton.MouseButton1Click:Connect(onButtonTapped)
 end
 
 local function refsAreAlive(refs: Refs?): boolean
@@ -226,7 +238,6 @@ function VisionMobileController:KnitStart()
 	end)
 
 	HeatVisionService.AbilityEnded:Connect(function()
-		cooldownEndsAt = os.clock() + HeatVisionConfigs.Cooldown
 		local refs = currentRefs
 		if refsAreAlive(refs) then
 			applyVisuals(refs :: Refs)
@@ -237,12 +248,26 @@ function VisionMobileController:KnitStart()
 		notifyRejected(reason)
 	end)
 
+	DataLib.OnSolarChanged(function()
+		local refs = currentRefs
+		if refsAreAlive(refs) then
+			applyVisuals(refs :: Refs)
+		end
+	end)
+
+	DataLib.OnChanged(function()
+		local refs = currentRefs
+		if refsAreAlive(refs) then
+			applyVisuals(refs :: Refs)
+		end
+	end)
+
 	RunService.RenderStepped:Connect(function()
 		local refs = currentRefs
 		if not refsAreAlive(refs) then
 			return
 		end
-		if os.clock() < cooldownEndsAt or isActive() then
+		if isActive() then
 			applyVisuals(refs :: Refs)
 		end
 	end)

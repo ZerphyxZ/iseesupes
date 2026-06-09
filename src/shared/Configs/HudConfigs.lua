@@ -38,12 +38,25 @@ local HudConfigs = {
 		HoverDuration = 0.12,
 		PressDuration = 0.08,
 		ReleaseDuration = 0.18,
-		ExcludePaths = {
-			{ "HUD", "Right", "SupesMobile" },
-			{ "ScreenGui", "VisionMobile" },
+		ExcludePaths = {} :: { { string } },
+		--- ImageButtons inside these frames tween their .Parent on hover / press.
+		ScaleTweenParentFrameNames = {
+			SupesMobile = true,
+			VisionMobile = true,
 		},
 		SkipAttribute = "HudSkipButtonFx",
 		BoundAttribute = "_HudButtonFxBound",
+	},
+
+	--- Global GuiButton hover / click SFX (UIButtonEffectsController — all PlayerGui buttons).
+	ButtonSounds = {
+		SoundId = "rbxassetid://133216848606395",
+		HoverVolume = 0.42,
+		ClickVolume = 0.58,
+		HoverPlaybackSpeed = 1.06,
+		ClickPlaybackSpeed = 0.94,
+		HoverDebounce = 0.04,
+		BoundAttribute = "_HudButtonSoundBound",
 	},
 }
 

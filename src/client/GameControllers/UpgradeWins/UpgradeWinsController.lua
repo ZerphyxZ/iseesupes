@@ -38,15 +38,18 @@ local function refreshOwnedLabels()
 
 	local prefix = UpgradeWinsConfigs.ButtonNamePrefix
 	local labelName = UpgradeWinsConfigs.WinCostLabelName
+	local lockedText = "LOCKED"
 
 	for _, button in folder:GetChildren() do
 		if not button:IsA("Model") then continue end
 
-		-- Determine avatar id: either explicit attribute or button index (Button5 → "5")
+		local buttonIndex = AvatarReplace.getButtonIndex(button)
 		local avatarId: string? = nil
 		local attr = button:GetAttribute(UpgradeWinsConfigs.AvatarIdAttribute)
 		if typeof(attr) == "number" and attr > 0 then
 			avatarId = tostring(math.floor(attr))
+		elseif buttonIndex then
+			avatarId = tostring(buttonIndex)
 		else
 			local indexStr = string.match(button.Name, "^" .. prefix .. "(%d+)$")
 			if indexStr then
@@ -55,7 +58,8 @@ local function refreshOwnedLabels()
 		end
 		if not avatarId then continue end
 
-		-- Find the WinCost TextLabel inside Touch
+		local prerequisiteLocked = buttonIndex
+			and not UpgradeWinsConfigs.isPrerequisiteUnlocked(buttonIndex, owned)
 		local touch = button:FindFirstChild(UpgradeWinsConfigs.TouchPartName)
 		local searchRoot = if touch then touch else button
 		local winLabel: TextLabel? = nil
@@ -69,11 +73,16 @@ local function refreshOwnedLabels()
 
 		-- Cache the original text so we can restore it if the player later loses ownership
 		if not originalCostText[winLabel] then
-			originalCostText[winLabel] = winLabel.Text
+			local cached = winLabel.Text
+			if cached ~= "OWNED" and cached ~= lockedText then
+				originalCostText[winLabel] = cached
+			end
 		end
 
 		if owned[avatarId] then
 			winLabel.Text = "OWNED"
+		elseif prerequisiteLocked then
+			winLabel.Text = lockedText
 		else
 			winLabel.Text = originalCostText[winLabel] or winLabel.Text
 		end
@@ -153,6 +162,8 @@ function UpgradeWinsController:KnitStart()
 			NotificationManager.show("Equipped avatar " .. avatarId, "Success")
 		elseif kind == "NotEnoughWins" then
 			NotificationManager.show("Not enough wins!", "Error")
+		elseif kind == "PrerequisiteLocked" then
+			NotificationManager.show("Unlock the previous avatar first!", "Info")
 		elseif kind == "AvatarMissing" then
 			NotificationManager.show("Avatar model not found in showcase.", "Error")
 		elseif kind == "InvalidButton" then

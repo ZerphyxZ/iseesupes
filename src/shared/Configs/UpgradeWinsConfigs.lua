@@ -32,6 +32,8 @@ export type UpgradeWinsConfig = {
 	TouchDebounce: number,
 	ButtonNamePrefix: string,
 	DefaultButtons: { [number]: ButtonDefaults },
+	--- Buttons at this index and above require the previous button's avatar unlocked first.
+	SequentialUnlockMinIndex: number,
 }
 
 local UpgradeWinsConfigs: UpgradeWinsConfig = {
@@ -69,7 +71,27 @@ local UpgradeWinsConfigs: UpgradeWinsConfig = {
 		[11] = { WinCost = 25000, StepBonus = 2500 },
 		[12] = { WinCost = 50000, StepBonus = 5000 },
 	},
+	SequentialUnlockMinIndex = 9,
 }
+
+function UpgradeWinsConfigs.getPrerequisiteAvatarId(buttonIndex: number): string?
+	local minIndex = UpgradeWinsConfigs.SequentialUnlockMinIndex
+	if typeof(minIndex) ~= "number" or buttonIndex < minIndex then
+		return nil
+	end
+	return tostring(buttonIndex - 1)
+end
+
+function UpgradeWinsConfigs.isPrerequisiteUnlocked(buttonIndex: number, unlockedAvatars: { [string]: boolean }?): boolean
+	local prereqId = UpgradeWinsConfigs.getPrerequisiteAvatarId(buttonIndex)
+	if not prereqId then
+		return true
+	end
+	if typeof(unlockedAvatars) ~= "table" then
+		return false
+	end
+	return unlockedAvatars[prereqId] == true
+end
 
 function UpgradeWinsConfigs.getDefaults(buttonIndex: number): ButtonDefaults?
 	return UpgradeWinsConfigs.DefaultButtons[buttonIndex]

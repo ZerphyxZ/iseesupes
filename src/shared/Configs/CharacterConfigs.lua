@@ -84,6 +84,11 @@ local CharacterConfigs = {
 			MaxBankDegrees = 42,
 			BankFollowRate = 3.5,
 			BankReturnRate = 2,
+			--- Heading turn rate (deg/s) that drives full bank — roll follows actual yaw like a plane.
+			TurnYawRateForFullBank = 95,
+			TurnSpeedReference = 65,
+			TurnBankWeight = 0.92,
+			InputBankWeight = 0.28,
 			CameraBankBlend = 0.5,
 			CameraYawRateForFullBank = 2.2,
 			CameraYawRateMin = 0.6,

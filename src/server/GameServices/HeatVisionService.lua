@@ -12,6 +12,7 @@ local StageCheckpointDebug = require(ReplicatedStorage.Shared.Utils.StageCheckpo
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 
 local StageCheckpointService: any = nil
+local DataService: any = nil
 
 local function logHeatVisionRay(player: Player, rayResult: RaycastResult?)
 	if not rayResult then
@@ -20,19 +21,24 @@ local function logHeatVisionRay(player: Player, rayResult: RaycastResult?)
 	end
 	local stageNum = StageCheckpointWorld.getCheckpointFromHit(rayResult.Instance)
 	if stageNum then
-		StageCheckpointDebug.log(string.format(
-			"HeatVision ray HIT checkpoint stage=%d part=%s CanQuery=%s group=%s",
-			stageNum,
-			rayResult.Instance:GetFullName(),
-			tostring(rayResult.Instance.CanQuery),
-			tostring(rayResult.Instance.CollisionGroup)
-		), player.Name .. ":gateHit:" .. tostring(stageNum), 0.35)
+		StageCheckpointDebug.log(
+			string.format(
+				"HeatVision ray HIT checkpoint stage=%d part=%s CanQuery=%s group=%s",
+				stageNum,
+				rayResult.Instance:GetFullName(),
+				tostring(rayResult.Instance.CanQuery),
+				tostring(rayResult.Instance.CollisionGroup)
+			),
+			player.Name .. ":gateHit:" .. tostring(stageNum),
+			0.35
+		)
 		return
 	end
-	StageCheckpointDebug.log(string.format(
-		"HeatVision ray hit NON-checkpoint: %s",
-		rayResult.Instance:GetFullName()
-	), player.Name .. ":nonGate", 1.5)
+	StageCheckpointDebug.log(
+		string.format("HeatVision ray hit NON-checkpoint: %s", rayResult.Instance:GetFullName()),
+		player.Name .. ":nonGate",
+		1.5
+	)
 end
 
 local Features = CharacterConfigs.Features
@@ -46,7 +52,6 @@ type HeatVisionSession = {
 	rig: HeatVisionRig.HeatVisionRig?,
 	lastLook: Vector3,
 	startedAt: number,
-	endsAt: number,
 	lastAimAt: number,
 	autoRotateWas: boolean,
 }
@@ -60,8 +65,6 @@ local HeatVisionService = Knit.CreateService({
 })
 
 local sessions: { [Player]: HeatVisionSession } = {}
-local cooldownEndsAt: { [Player]: number } = {}
-local heartbeatConn: RBXScriptConnection? = nil
 
 local aimMinInterval = 1 / math.max(HeatVisionConfigs.AimSendHz, 1)
 
@@ -103,6 +106,24 @@ local function clearAttributes(player: Player)
 	player:SetAttribute(ATTR.AimZ, nil)
 end
 
+local function canStartSolarBeam(player: Player): boolean
+	if not DataService or not DataService.CanStartSolar then
+		return true
+	end
+	return DataService:CanStartSolar(player)
+end
+
+local function drainSolarForBeam(player: Player, dt: number): boolean
+	if not DataService or not DataService.TryConsumeSolar then
+		return true
+	end
+	local drain = HeatVisionConfigs.getSolarDrainPerSecond() * dt
+	if drain <= 0 then
+		return true
+	end
+	return DataService:TryConsumeSolar(player, drain)
+end
+
 function HeatVisionService:_endAbility(player: Player)
 	local session = sessions[player]
 	if not session then
@@ -121,7 +142,6 @@ function HeatVisionService:_endAbility(player: Player)
 	HeatVisionRig.destroy(session.character)
 	sessions[player] = nil
 	clearAttributes(player)
-	cooldownEndsAt[player] = os.clock() + HeatVisionConfigs.Cooldown
 	self.Client.AbilityEnded:Fire(player)
 end
 
@@ -141,7 +161,7 @@ function HeatVisionService:_applyAim(session: HeatVisionSession, lookVector: Vec
 	session.lastLook = flatUnit(lookVector)
 	setAimAttributes(session.player, session.lastLook)
 	if session.rig then
-		return HeatVisionRig.updateAim(session.rig, session.lastLook, HeatVisionConfigs.MaxRange)
+		return HeatVisionRig.updateAim(session.rig, session.lastLook, HeatVisionConfigs.MaxRange, nil)
 	end
 	return nil
 end
@@ -155,13 +175,12 @@ function HeatVisionService:_tryStart(player: Player): (boolean, string?)
 		return false, "active"
 	end
 
-	local now = os.clock()
-	if now < (cooldownEndsAt[player] or 0) then
-		return false, "cooldown"
-	end
-
 	if isPlayerFlying(player) then
 		return false, "flying"
+	end
+
+	if not canStartSolarBeam(player) then
+		return false, "no_solar"
 	end
 
 	local character = getCharacter(player)
@@ -185,7 +204,6 @@ function HeatVisionService:_tryStart(player: Player): (boolean, string?)
 	end
 
 	local initialLook = flatUnit(head.CFrame.LookVector)
-	local startedAt = now
 	local autoRotateWas = humanoid.AutoRotate
 	humanoid.AutoRotate = false
 	local session: HeatVisionSession = {
@@ -193,8 +211,7 @@ function HeatVisionService:_tryStart(player: Player): (boolean, string?)
 		character = character,
 		rig = rig,
 		lastLook = initialLook,
-		startedAt = startedAt,
-		endsAt = startedAt + HeatVisionConfigs.Duration,
+		startedAt = os.clock(),
 		lastAimAt = 0,
 		autoRotateWas = autoRotateWas,
 	}
@@ -204,21 +221,12 @@ function HeatVisionService:_tryStart(player: Player): (boolean, string?)
 	HeatVisionRig.setActive(rig, true)
 	self:_applyAim(session, initialLook)
 
-	local diedConn: RBXScriptConnection?
-	diedConn = humanoid.Died:Connect(function()
-		if diedConn then
-			diedConn:Disconnect()
-		end
-		self:_endAbility(player)
-	end)
+	if StageCheckpointService and StageCheckpointService.RefreshHeatVisionGateExcludesForPlayer then
+		StageCheckpointService:RefreshHeatVisionGateExcludesForPlayer(player)
+	end
 
-	task.delay(HeatVisionConfigs.Duration, function()
-		if diedConn then
-			diedConn:Disconnect()
-		end
-		if sessions[player] == session then
-			self:_endAbility(player)
-		end
+	humanoid.Died:Once(function()
+		self:_endAbility(player)
 	end)
 
 	return true, nil
@@ -238,6 +246,14 @@ function HeatVisionService.Client:RequestCancel(player: Player): boolean
 		return true
 	end
 	return false
+end
+
+function HeatVisionService:SetBrokenGateRayExcludes(player: Player, gateParts: { Instance })
+	local session = sessions[player]
+	if not session or not session.rig then
+		return
+	end
+	HeatVisionRig.setRayExcludes(session.rig, gateParts)
 end
 
 function HeatVisionService.Client:UpdateAim(player: Player, lookVector: Vector3)
@@ -264,22 +280,23 @@ end
 
 function HeatVisionService:KnitStart()
 	StageCheckpointService = Knit.GetService("StageCheckpointService")
+	DataService = Knit.GetService("DataService")
 
-	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-		local now = os.clock()
+	RunService.Heartbeat:Connect(function(dt)
 		for player, session in sessions do
 			if player.Parent ~= Players then
 				self:_endAbility(player)
-			elseif now >= session.endsAt then
-				self:_endAbility(player)
 			elseif isPlayerFlying(player) then
+				self:_endAbility(player)
+			elseif not drainSolarForBeam(player, dt) then
 				self:_endAbility(player)
 			else
 				local character = getCharacter(player)
 				if not character or character ~= session.character then
 					self:_endAbility(player)
 				elseif session.rig then
-					local rayResult = HeatVisionRig.updateAim(session.rig, session.lastLook, HeatVisionConfigs.MaxRange)
+					local rayResult =
+						HeatVisionRig.updateAim(session.rig, session.lastLook, HeatVisionConfigs.MaxRange, dt)
 					logHeatVisionRay(player, rayResult)
 					if StageCheckpointService and rayResult then
 						StageCheckpointService:tryDamageFromHit(player, rayResult)
@@ -295,7 +312,6 @@ function HeatVisionService:KnitStart()
 			HeatVisionRig.destroy(session.character)
 		end
 		sessions[player] = nil
-		cooldownEndsAt[player] = nil
 	end)
 end
 

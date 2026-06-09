@@ -20,6 +20,7 @@ local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfi
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
+local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
 assert(
 	ThrustConfigs,
 	"[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again."
@@ -39,6 +40,7 @@ local DataService = Knit.CreateService({
 	Client = {
 		DataReplicated = Knit.CreateSignal(),
 		ThrustChanged = Knit.CreateSignal(),
+		SolarChanged = Knit.CreateSignal(),
 		ThrustDepleted = Knit.CreateSignal(),
 	},
 })
@@ -46,6 +48,7 @@ local DataService = Knit.CreateService({
 local profiles: { [Player]: any } = {}
 local studioProfileReloading: { [Player]: boolean } = {}
 local lastThrustReplicateAt: { [Player]: number } = {}
+local lastSolarReplicateAt: { [Player]: number } = {}
 local lobbySpawnPart: BasePart? = nil
 local orderedStoreCache: { [string]: OrderedDataStore? } = {}
 local pendingLeaderboardSave: { [Player]: thread } = {}
@@ -303,11 +306,13 @@ end
 
 local function replicateData(player: Player, profile: any)
 	ThrustConfigs.EnsureFuelDefaults(profile.Data)
+	HeatVisionConfigs.ensureSolarDefaults(profile.Data)
 	repairTutorialStep(profile.Data)
 	evaluateTutorialStep(profile.Data)
 	LeaderstatsSync.Apply(player, profile.Data)
 	applyMovementSpeed(player, profile)
 	DataService.Client.DataReplicated:Fire(player, profile.Data)
+	DataService.Client.SolarChanged:Fire(player, profile.Data.SolarCurrent, profile.Data.SolarMax)
 end
 
 local function countUnlockedAvatars(data: any): number
@@ -402,6 +407,20 @@ local function reconcileProfileFromLeaderboards(player: Player, profile: any): (
 		replicateData(player, profile)
 	end
 	return true, restoredAny
+end
+
+local function replicateSolarOnly(player: Player, profile: any)
+	local data = profile.Data
+	HeatVisionConfigs.ensureSolarDefaults(data)
+	DataService.Client.SolarChanged:Fire(player, data.SolarCurrent, data.SolarMax)
+end
+
+local function replicateSolar(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	replicateSolarOnly(player, profile)
 end
 
 local function replicateThrustOnly(player: Player, profile: any)
@@ -526,8 +545,68 @@ function DataService:CanStartFlight(player: Player): boolean
 	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
 		return true
 	end
-	local current, _max = self:GetFuel(player)
-	return current >= ThrustConfigs.MinFuelToStartFlight
+	local current, max = self:GetFuel(player)
+	return current >= ThrustConfigs.GetEffectiveMinFuelToStart(max)
+end
+
+function DataService:GetSolar(player: Player): (number, number)
+	local data = self:GetData(player)
+	if not data then
+		local base = HeatVisionConfigs.SolarEnergy.BaseMax or 60
+		return 0, base
+	end
+	HeatVisionConfigs.ensureSolarDefaults(data)
+	return data.SolarCurrent, data.SolarMax
+end
+
+function DataService:TryConsumeSolar(player: Player, amount: number): boolean
+	if amount <= 0 then
+		return true
+	end
+
+	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
+
+	local data = self:GetData(player)
+	if not data then
+		return false
+	end
+
+	HeatVisionConfigs.ensureSolarDefaults(data)
+	if data.SolarCurrent < amount then
+		data.SolarCurrent = 0
+		replicateSolar(player)
+		return false
+	end
+
+	data.SolarCurrent -= amount
+	local now = os.clock()
+	local last = lastSolarReplicateAt[player] or 0
+	if now - last >= ThrustConfigs.ReplicateMinInterval then
+		lastSolarReplicateAt[player] = now
+		replicateSolar(player)
+	end
+	return true
+end
+
+function DataService:CanStartSolar(player: Player): boolean
+	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
+	local current, max = self:GetSolar(player)
+	return current >= HeatVisionConfigs.getEffectiveMinSolarToStart(max)
+end
+
+function DataService:RefillSolarToMax(player: Player): boolean
+	local data = self:GetData(player)
+	if not data then
+		return false
+	end
+
+	HeatVisionConfigs.refillSolarToMax(data)
+	replicateSolar(player)
+	return true
 end
 
 function DataService:TrySpendWins(player: Player, amount: number): boolean
@@ -679,9 +758,11 @@ function DataService:TeleportToLobby(player: Player)
 	end)
 end
 
-local function refillThrustOnRespawn(player: Player)
+local function refillEnergyOnRespawn(player: Player)
 	for _ = 1, 30 do
-		if DataService:RefillThrustToMax(player) then
+		local thrustOk = DataService:RefillThrustToMax(player)
+		local solarOk = DataService:RefillSolarToMax(player)
+		if thrustOk and solarOk then
 			return
 		end
 		if not player.Parent then
@@ -717,6 +798,7 @@ end
 local function applyProfileMigrations(profile: any)
 	ProfileTemplate.sanitizeForStore(profile.Data)
 	ThrustConfigs.MigrateProfile(profile.Data)
+	HeatVisionConfigs.migrateSolarProfile(profile.Data)
 	TrailConfigs.EnsureDefaultTrail(profile.Data)
 
 	local data = profile.Data
@@ -741,6 +823,7 @@ local function applyProfileMigrations(profile: any)
 	end
 
 	ThrustConfigs.RefillToMax(profile.Data)
+	HeatVisionConfigs.refillSolarToMax(profile.Data)
 	SpeedConfigs.SyncLevelFromSpeed(profile.Data)
 	RewardTiming.ensureAnchor(profile.Data)
 	migrateTutorialStep(profile.Data)
@@ -826,7 +909,7 @@ local function onPlayerAdded(player: Player)
 
 	player.CharacterAdded:Connect(function()
 		task.defer(function()
-			refillThrustOnRespawn(player)
+			refillEnergyOnRespawn(player)
 			applyMovementSpeed(player, profile)
 		end)
 	end)
@@ -851,6 +934,7 @@ local function onPlayerRemoving(player: Player)
 		profiles[player] = nil
 	end
 	lastThrustReplicateAt[player] = nil
+	lastSolarReplicateAt[player] = nil
 	local pendingSave = pendingLeaderboardSave[player]
 	if pendingSave then
 		task.cancel(pendingSave)
@@ -1123,15 +1207,16 @@ function DataService.Client:SyncThrustPower(player: Player, power: number)
 	applyThrustPower(player, true)
 end
 
-local function tickPassiveRefill(dt: number)
+local function tickThrustRefill(dt: number)
 	local rate = ThrustConfigs.PassiveRefillRate
 	if not rate or rate <= 0 then
 		return
 	end
 
 	for _, player in Players:GetPlayers() do
-		-- Refill on ground during landing; block only in-air thrust phases.
-		if ThrustConfigs.BlocksPassiveRefill(player:GetAttribute("DjAbilityPhase")) then
+		local djPhase = player:GetAttribute("DjAbilityPhase")
+		local sjPhase = player:GetAttribute("SjAbilityPhase")
+		if ThrustConfigs.IsInFlightRefillPhase(djPhase, sjPhase) then
 			continue
 		end
 
@@ -1159,6 +1244,43 @@ local function tickPassiveRefill(dt: number)
 	end
 end
 
+local function tickSolarRefill(dt: number)
+	local rate = HeatVisionConfigs.getSolarFlightRefillRate()
+	if rate <= 0 then
+		return
+	end
+
+	for _, player in Players:GetPlayers() do
+		local djPhase = player:GetAttribute("DjAbilityPhase")
+		local sjPhase = player:GetAttribute("SjAbilityPhase")
+		if not ThrustConfigs.IsInFlightRefillPhase(djPhase, sjPhase) then
+			continue
+		end
+
+		local profile = profiles[player]
+		if not profile then
+			continue
+		end
+
+		local data = profile.Data
+		HeatVisionConfigs.ensureSolarDefaults(data)
+		if data.SolarCurrent >= data.SolarMax then
+			continue
+		end
+
+		local wasBelowMax = data.SolarCurrent < data.SolarMax
+		data.SolarCurrent = math.min(data.SolarMax, data.SolarCurrent + rate * dt)
+
+		local now = os.clock()
+		local reachedMax = wasBelowMax and data.SolarCurrent >= data.SolarMax
+		local last = lastSolarReplicateAt[player] or 0
+		if reachedMax or now - last >= ThrustConfigs.ReplicateMinInterval then
+			lastSolarReplicateAt[player] = now
+			replicateSolarOnly(player, profile)
+		end
+	end
+end
+
 function DataService:KnitStart()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
@@ -1166,7 +1288,10 @@ function DataService:KnitStart()
 		task.spawn(onPlayerAdded, player)
 	end
 
-	RunService.Heartbeat:Connect(tickPassiveRefill)
+	RunService.Heartbeat:Connect(function(dt)
+		tickThrustRefill(dt)
+		tickSolarRefill(dt)
+	end)
 
 	task.spawn(function()
 		while true do

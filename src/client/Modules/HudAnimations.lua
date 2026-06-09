@@ -1,5 +1,7 @@
 --!strict
 
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
@@ -17,9 +19,68 @@ local heartbeatGeneration: { [GuiObject]: number } = {}
 local activeCountUpConns: { [TextLabel]: RBXScriptConnection } = {}
 local buttonHovered: { [GuiButton]: boolean } = {}
 local buttonPressed: { [GuiButton]: boolean } = {}
+local lastHoverSoundAt = -math.huge
 
 local function getButtonFxCfg()
 	return HudConfigs.ButtonEffects
+end
+
+local function resolveScaleTarget(gui: GuiObject): GuiObject
+	local parentNames = getButtonFxCfg().ScaleTweenParentFrameNames
+	if gui:IsA("GuiButton") and typeof(parentNames) == "table" then
+		local parent = gui.Parent
+		if parent and parent:IsA("GuiObject") and parentNames[parent.Name] == true then
+			return parent
+		end
+	end
+	return gui
+end
+
+local function getButtonSoundCfg()
+	return HudConfigs.ButtonSounds
+end
+
+local function playConfiguredButtonSound(kind: "Hover" | "Click")
+	local cfg = getButtonSoundCfg()
+	local soundId = cfg.SoundId
+	if typeof(soundId) ~= "string" or soundId == "" then
+		return
+	end
+
+	if kind == "Hover" then
+		local now = os.clock()
+		if now - lastHoverSoundAt < (cfg.HoverDebounce or 0.04) then
+			return
+		end
+		lastHoverSoundAt = now
+	end
+
+	local player = Players.LocalPlayer
+	local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+	if not playerGui then
+		return
+	end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = soundId
+	if kind == "Hover" then
+		sound.Volume = cfg.HoverVolume or 0.42
+		sound.PlaybackSpeed = cfg.HoverPlaybackSpeed or 1.06
+	else
+		sound.Volume = cfg.ClickVolume or 0.58
+		sound.PlaybackSpeed = cfg.ClickPlaybackSpeed or 0.94
+	end
+	sound.Parent = playerGui
+	sound:Play()
+	Debris:AddItem(sound, 2)
+end
+
+function HudAnimations.playButtonHoverSound()
+	playConfiguredButtonSound("Hover")
+end
+
+function HudAnimations.playButtonClickSound()
+	playConfiguredButtonSound("Click")
 end
 
 local function getOrCreateUIScale(gui: GuiObject): UIScale
@@ -122,29 +183,31 @@ function HudAnimations.startHeartbeat(gui: GuiObject, peakScale: number?, period
 end
 
 function HudAnimations.setButtonScale(button: GuiButton, targetScale: number, duration: number?, easingStyle: Enum.EasingStyle?)
-	if not button.Parent then
+	local target = resolveScaleTarget(button)
+	if not target.Parent then
 		return
 	end
-	HudAnimations.rememberBaseScale(button)
-	local uiScale = getOrCreateUIScale(button)
-	cancelScaleTween(button)
+	HudAnimations.rememberBaseScale(target)
+	local uiScale = getOrCreateUIScale(target)
+	cancelScaleTween(target)
 	local dur = duration or 0.12
 	local tween = TweenService:Create(
 		uiScale,
 		TweenInfo.new(dur, easingStyle or Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Scale = targetScale }
 	)
-	activeScaleTweens[button] = tween
+	activeScaleTweens[target] = tween
 	tween:Play()
 	tween.Completed:Connect(function()
-		if activeScaleTweens[button] == tween then
-			activeScaleTweens[button] = nil
+		if activeScaleTweens[target] == tween then
+			activeScaleTweens[target] = nil
 		end
 	end)
 end
 
 local function getBaseScale(button: GuiButton): number
-	return button:GetAttribute(SCALE_KEY) :: number? or 1
+	local target = resolveScaleTarget(button)
+	return target:GetAttribute(SCALE_KEY) :: number? or 1
 end
 
 function HudAnimations.buttonHoverIn(button: GuiButton)
@@ -181,6 +244,30 @@ function HudAnimations.buttonPressUp(button: GuiButton)
 	end
 end
 
+function HudAnimations.bindButtonSounds(button: GuiButton)
+	local cfg = getButtonSoundCfg()
+	if button:GetAttribute(cfg.BoundAttribute) == true then
+		return
+	end
+	if not button.Active then
+		return
+	end
+
+	button:SetAttribute(cfg.BoundAttribute, true)
+
+	button.MouseEnter:Connect(function()
+		if button.Active then
+			HudAnimations.playButtonHoverSound()
+		end
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		if button.Active then
+			HudAnimations.playButtonClickSound()
+		end
+	end)
+end
+
 function HudAnimations.bindButtonEffects(button: GuiButton)
 	local cfg = getButtonFxCfg()
 	if button:GetAttribute(cfg.BoundAttribute) == true then
@@ -191,7 +278,7 @@ function HudAnimations.bindButtonEffects(button: GuiButton)
 	end
 
 	button:SetAttribute(cfg.BoundAttribute, true)
-	HudAnimations.rememberBaseScale(button)
+	HudAnimations.rememberBaseScale(resolveScaleTarget(button))
 
 	button.MouseEnter:Connect(function()
 		if not button.Active then
@@ -223,11 +310,12 @@ end
 
 function HudAnimations.buttonPress(button: GuiButton, onComplete: (() -> ())?)
 	local cfg = getButtonFxCfg()
-	HudAnimations.rememberBaseScale(button)
-	local uiScale = getOrCreateUIScale(button)
+	local target = resolveScaleTarget(button)
+	HudAnimations.rememberBaseScale(target)
+	local uiScale = getOrCreateUIScale(target)
 	local base = getBaseScale(button)
 
-	cancelScaleTween(button)
+	cancelScaleTween(target)
 	local press = TweenService:Create(
 		uiScale,
 		TweenInfo.new(cfg.PressDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),

@@ -10,6 +10,7 @@ local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLandi
 local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJumpFlightPhysics)
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -51,6 +52,7 @@ type AbilitySession = {
 	lastFlatHeading: Vector3?,
 	currentPitch: number,
 	currentRoll: number,
+	lastBankHeadingYaw: number?,
 	groundedAt: number?,
 	leapDownFirstGroundedAt: number?,
 	leapDownTouchdown: boolean,
@@ -92,6 +94,24 @@ local function phaseUsesLandingProbe(phase: string): boolean
 	return phase == PHASE.AfterTransition or phase == PHASE.LeanUp or phase == PHASE.LeapDown
 end
 
+local function getFlightProbeOptions(phase: string): DoubleJumpLanding.FlightProbeOptions?
+	if phase ~= PHASE.AfterTransition and phase ~= PHASE.LeanUp then
+		return nil
+	end
+
+	local folder = StageCheckpointWorld.getFlightProbeFolder()
+	if not folder then
+		return {
+			ignoreWalkableInstance = StageCheckpointWorld.isCheckpointSpawnPart,
+		}
+	end
+
+	return {
+		ignoreWallProbeHitsIn = folder,
+		ignoreWalkableInstance = StageCheckpointWorld.isCheckpointSpawnPart,
+	}
+end
+
 local function getLandingProbeDistanceForPhase(session: AbilitySession, phase: string): number?
 	local phaseCfg = session.tuning.Phases
 	local landingCfg = phaseCfg.DownSupes
@@ -114,6 +134,7 @@ local function refreshSessionLandingProbe(session: AbilitySession, now: number):
 	local phaseCfg = session.tuning.Phases
 	local landingCfg = phaseCfg.DownSupes
 	local probeDistance = getLandingProbeDistanceForPhase(session, session.phase)
+	local flightProbeOptions = getFlightProbeOptions(session.phase)
 	local probe, cacheAt, obstacleAt, obstacleBlocked = DoubleJumpLanding.refreshLandingProbe(
 		session.humanoid,
 		session.root,
@@ -125,7 +146,8 @@ local function refreshSessionLandingProbe(session: AbilitySession, now: number):
 		session.landingProbe,
 		session.obstacleProbeAt,
 		session.obstacleBlocked,
-		probeDistance
+		probeDistance,
+		flightProbeOptions
 	)
 	session.landingProbe = probe
 	session.landingProbeAt = cacheAt
@@ -468,11 +490,6 @@ local function finalizeCharacterControl(session: AbilitySession)
 	end
 end
 
-local function lerpRollToward(session: AbilitySession, targetRoll: number, dt: number, ratePerSec: number)
-	local alpha = math.min(1, ratePerSec * dt)
-	session.currentRoll = session.currentRoll + (targetRoll - session.currentRoll) * alpha
-end
-
 local function smoothstep01(t: number): number
 	local x = math.clamp(t, 0, 1)
 	return x * x * (3 - 2 * x)
@@ -517,20 +534,20 @@ local function computeLaunchRiseVelocity(
 end
 
 local function updateBankRoll(session: AbilitySession, dt: number, tuning: DjTuning, enabled: boolean)
-	local poseCfg = tuning.SupermanPose
-	if not enabled or poseCfg.BankEnabled == false then
-		lerpRollToward(session, 0, dt, poseCfg.BankReturnRate or 2)
-		return
-	end
-
-	local steer = math.clamp(session.clientSteerAxis or 0, -1, 1)
-	local maxBank = poseCfg.MaxBankDegrees or 40
-	if math.abs(steer) > 0.05 then
-		local target = steer * maxBank
-		lerpRollToward(session, target, dt, poseCfg.BankFollowRate or 3)
-	else
-		lerpRollToward(session, 0, dt, poseCfg.BankReturnRate or 2)
-	end
+	local fpState: DoubleJumpFlightPhysics.FlightState = {
+		flightDirection = session.flightDirection,
+		lastFlatHeading = session.lastFlatHeading,
+		currentPitch = session.currentPitch,
+		currentRoll = session.currentRoll,
+		descentStartedAt = session.descentStartedAt,
+		clientSteerAxis = session.clientSteerAxis or 0,
+		clientSteerPitchAxis = session.clientSteerPitchAxis or 0,
+		clientSteerDirection = session.clientSteerDirection,
+		lastBankHeadingYaw = session.lastBankHeadingYaw,
+	}
+	DoubleJumpFlightPhysics.updateBankRoll(fpState, dt, tuning, enabled)
+	session.currentRoll = fpState.currentRoll
+	session.lastBankHeadingYaw = fpState.lastBankHeadingYaw
 end
 
 local function setFlightGyroEnabled(session: AbilitySession, enabled: boolean)
@@ -906,7 +923,13 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 
 	local onWalkableGround = if probe then probe.onWalkableGround
-		else DoubleJumpLanding.isOnWalkableGround(humanoid, root, session.rayParams, landingCfg)
+		else DoubleJumpLanding.isOnWalkableGround(
+			humanoid,
+			root,
+			session.rayParams,
+			landingCfg,
+			getFlightProbeOptions(session.phase)
+		)
 
 	-- Wall/obstacle: end E immediately (PlatformStand often keeps FloorMaterial = Air on walls).
 	if probe then
@@ -925,7 +948,8 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 				root,
 				session.rayParams,
 				landingCfg,
-				session.flightDirection
+				session.flightDirection,
+				getFlightProbeOptions(session.phase)
 			)
 		then
 			self:_endAbilityFromCollision(session)
@@ -1052,6 +1076,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 				clientSteerAxis = session.clientSteerAxis,
 				clientSteerPitchAxis = session.clientSteerPitchAxis,
 				clientSteerDirection = session.clientSteerDirection,
+				lastBankHeadingYaw = session.lastBankHeadingYaw,
 			}
 			DoubleJumpFlightPhysics.applyLeanUpHeadingSteer(
 				fpState,
@@ -1062,6 +1087,7 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 			)
 			session.flightDirection = fpState.flightDirection
 			session.lastFlatHeading = fpState.lastFlatHeading
+			session.lastBankHeadingYaw = fpState.lastBankHeadingYaw
 		end
 
 		-- Glide ends when thrust fuel hits 0 (_onThrustEmpty), not ForwardDistance / E_LeanDist.
@@ -1407,6 +1433,7 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		lastFlatHeading = flatUnit(startCFrame.LookVector),
 		currentPitch = poseCfg.TransitStartPitch,
 		currentRoll = 0,
+		lastBankHeadingYaw = nil,
 		groundedAt = nil,
 		leapDownFirstGroundedAt = nil,
 		leapDownTouchdown = false,

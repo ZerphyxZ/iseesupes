@@ -1,6 +1,7 @@
 --!strict
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -14,10 +15,95 @@ local SupermanGroundVfx = require(script.Parent.Parent.Parent.Modules.SupermanGr
 
 local StageCheckpointController = Knit.CreateController({ Name = "StageCheckpointController" })
 
+local player = Players.LocalPlayer
+
 local activeBarTweens: { [number]: Tween } = {}
 local localHp: { [number]: number } = {}
+local gateBaselineColors: { [number]: Color3 } = {}
+local lastSyncNextMeltGate: number? = nil
+
+local MELT_HIGHLIGHT_NAME = "GateMeltHeat"
+
+local function lerpColor(a: Color3, b: Color3, t: number): Color3
+	return Color3.new(
+		a.R + (b.R - a.R) * t,
+		a.G + (b.G - a.G) * t,
+		a.B + (b.B - a.B) * t
+	)
+end
+
+local function ensureGateBaseline(stageNum: number, gatePart: BasePart)
+	if gateBaselineColors[stageNum] then
+		return
+	end
+	gateBaselineColors[stageNum] = gatePart.Color
+end
+
+local function removeGateMeltHighlight(gatePart: BasePart)
+	local existing = gatePart:FindFirstChild(MELT_HIGHLIGHT_NAME)
+	if existing then
+		existing:Destroy()
+	end
+end
+
+local function resetGateMeltVisual(stageNum: number, gatePart: BasePart)
+	local baseline = gateBaselineColors[stageNum]
+	if baseline then
+		gatePart.Color = baseline
+	else
+		gatePart.Color = StageCheckpointConfigs.GateMeltVisuals.ColdColor
+	end
+	removeGateMeltHighlight(gatePart)
+end
+
+local function applyGateMeltHeatVisual(stageNum: number, hp01: number)
+	local gatePart = StageCheckpointWorld.getGatePart(stageNum)
+	if not gatePart then
+		return
+	end
+
+	ensureGateBaseline(stageNum, gatePart)
+	local baseline = gateBaselineColors[stageNum] or StageCheckpointConfigs.GateMeltVisuals.ColdColor
+	local visuals = StageCheckpointConfigs.GateMeltVisuals
+	local heat = math.clamp(1 - hp01, 0, 1)
+
+	if heat <= 0.01 then
+		resetGateMeltVisual(stageNum, gatePart)
+		return
+	end
+
+	gatePart.Color = lerpColor(baseline, visuals.HotColor, heat)
+
+	if heat < visuals.HeatThreshold then
+		removeGateMeltHighlight(gatePart)
+		return
+	end
+
+	local highlight = gatePart:FindFirstChild(MELT_HIGHLIGHT_NAME) :: Highlight?
+	if not highlight then
+		highlight = Instance.new("Highlight")
+		highlight.Name = MELT_HIGHLIGHT_NAME
+		highlight.Adornee = gatePart
+		highlight.Parent = gatePart
+	end
+	highlight.FillColor = visuals.HighlightFillColor
+	highlight.OutlineColor = visuals.HighlightOutlineColor
+	highlight.FillTransparency = StageCheckpointConfigs.getGateHeatFillTransparency(heat)
+	highlight.OutlineTransparency = 0.25 + (1 - heat) * 0.45
+end
+
+function StageCheckpointController:GetNextMeltGateStage(): number?
+	return lastSyncNextMeltGate
+end
 
 local function getRequirementForGate(gatePart: BasePart, stageNum: number?): number?
+	if stageNum then
+		local fromConfig = StageCheckpointConfigs.GetGateSpeedRequirement(stageNum)
+		if fromConfig then
+			return fromConfig
+		end
+	end
+
 	local attrName = StageCheckpointConfigs.RequirementAttribute
 	local fromAttr = gatePart:GetAttribute(attrName)
 	if typeof(fromAttr) == "number" and fromAttr > 0 then
@@ -98,6 +184,7 @@ local function hideGateForLocalPlayer(stageNum: number, instant: boolean?)
 		end
 	end
 	StageCheckpointWorld.disableXpOverlay(gatePart)
+	StageCheckpointWorld.setGateInteractionEnabled(gatePart, false)
 	StageCheckpointDebug.logAlways(string.format("[BarUI] hideGate stage=%d (cleared/broken, XP disabled)", stageNum))
 end
 
@@ -107,6 +194,7 @@ local function showGateForLocalPlayer(stageNum: number)
 		return
 	end
 	StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
+	StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
 	gatePart.LocalTransparencyModifier = 0
 end
 
@@ -131,10 +219,13 @@ local function refreshGateUi(stageNum: number, hp01: number?)
 	if resolvedHp <= 0.01 then
 		StageCheckpointWorld.applyGateUi(gatePart, requirement, 0, "refreshGateUi → EMPTY")
 		StageCheckpointWorld.disableXpOverlay(gatePart)
+		StageCheckpointWorld.setGateInteractionEnabled(gatePart, false)
+		resetGateMeltVisual(stageNum, gatePart)
 		return
 	end
 
 	StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
+	StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
 	StageCheckpointDebug.log(string.format(
 		"refreshGateUi stage=%d req=%d hp=%.2f label->%s",
 		stageNum,
@@ -143,6 +234,7 @@ local function refreshGateUi(stageNum: number, hp01: number?)
 		StageCheckpointWorld.formatRequirementText(requirement)
 	), "client:ui:" .. tostring(stageNum), 1)
 	StageCheckpointWorld.applyGateUi(gatePart, requirement, resolvedHp, "refreshGateUi")
+	applyGateMeltHeatVisual(stageNum, resolvedHp)
 end
 
 type GateSyncEntry = {
@@ -168,19 +260,40 @@ local function applyGateFromSync(
 	if cleared then
 		localHp[stageNum] = 0
 		StageCheckpointWorld.applyGateVisualState(gatePart, requirement, "broken", 0, logContext)
+		resetGateMeltVisual(stageNum, gatePart)
 	elseif isNextTarget then
 		local resolvedHp = if hp01 ~= nil then hp01 else 1
 		localHp[stageNum] = resolvedHp
 		StageCheckpointWorld.applyGateVisualState(gatePart, requirement, "active", resolvedHp, logContext)
 		tweenBar(stageNum, resolvedHp)
+		applyGateMeltHeatVisual(stageNum, resolvedHp)
 	else
 		localHp[stageNum] = 1
 		StageCheckpointWorld.applyGateVisualState(gatePart, requirement, "future", 1, logContext)
+		resetGateMeltVisual(stageNum, gatePart)
 	end
 	return true
 end
 
-local lastSyncNextMeltGate: number? = nil
+local resyncGeneration = 0
+
+local function restoreLocalGatePartDefaults(stageNum: number)
+	local gatePart = StageCheckpointWorld.getGatePart(stageNum)
+	if not gatePart then
+		return false
+	end
+	local requirement = getRequirementForGate(gatePart, stageNum)
+	StageCheckpointWorld.restoreGatePartLockedVisual(gatePart, requirement, 1, "LocalSessionRestore")
+	resetGateMeltVisual(stageNum, gatePart)
+	localHp[stageNum] = 1
+	return true
+end
+
+local function restoreAllLocalGateDefaults()
+	for stageNum = StageCheckpointConfigs.FirstGateStage, StageCheckpointConfigs.MaxGateStage do
+		restoreLocalGatePartDefaults(stageNum)
+	end
+end
 
 local function applyServerGateSync(sync: {
 	sessionBrokenCount: number,
@@ -265,6 +378,7 @@ local function clearLocalGateState()
 	end
 	table.clear(activeBarTweens)
 	table.clear(localHp)
+	table.clear(gateBaselineColors)
 end
 
 local function pullServerGateSync()
@@ -292,6 +406,23 @@ local function pullServerGateSync()
 		end)
 end
 
+local function scheduleGateResyncPulls()
+	resyncGeneration += 1
+	local generation = resyncGeneration
+
+	local function tryPull()
+		if generation ~= resyncGeneration then
+			return
+		end
+		pullServerGateSync()
+	end
+
+	tryPull()
+	for _, delay in { 0.35, 0.9, 2.0 } do
+		task.delay(delay, tryPull)
+	end
+end
+
 local function onCheckpointBroken(stageNum: number, hitPos: Vector3, hitNormal: Vector3)
 	localHp[stageNum] = 0
 	tweenBar(stageNum, 0)
@@ -299,24 +430,39 @@ local function onCheckpointBroken(stageNum: number, hitPos: Vector3, hitNormal: 
 	local gatePart = StageCheckpointWorld.getGatePart(stageNum)
 	if gatePart then
 		StageCheckpointWorld.disableXpOverlay(gatePart)
+		StageCheckpointWorld.setGateInteractionEnabled(gatePart, false)
+		gatePart.LocalTransparencyModifier = 1
 	end
 
 	if gatePart then
-		SupermanGroundVfx.spawnGateGlassShatter(gatePart, hitPos, hitNormal, StageCheckpointConfigs.GlassChipCount)
+		SupermanGroundVfx.spawnGateMetalMelt(
+			gatePart,
+			hitPos,
+			hitNormal,
+			StageCheckpointConfigs.MetalMeltChipCount
+		)
 	else
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		local rayResult = workspace:Raycast(hitPos - hitNormal * 0.05, hitNormal * 0.1, params)
 		if rayResult then
-			SupermanGroundVfx.spawnGlassShatterAt(rayResult, StageCheckpointConfigs.GlassChipCount)
+			SupermanGroundVfx.spawnMetalMeltAt(rayResult, StageCheckpointConfigs.MetalMeltChipCount)
 		else
-			local synthetic = {
+			local syntheticPart = Instance.new("Part")
+			syntheticPart.Size = Vector3.new(4, 8, 0.5)
+			syntheticPart.Anchored = true
+			syntheticPart.CFrame = CFrame.new(hitPos, hitPos + hitNormal)
+			syntheticPart.Material = Enum.Material.Metal
+			syntheticPart.Color = StageCheckpointConfigs.GateMeltVisuals.ColdColor
+			syntheticPart.Parent = workspace
+			local syntheticResult = {
 				Position = hitPos,
 				Normal = hitNormal,
-				Instance = nil,
-				Material = Enum.Material.Glass,
+				Instance = syntheticPart,
+				Material = Enum.Material.Metal,
 			} :: any
-			SupermanGroundVfx.spawnGlassShatterAt(synthetic, StageCheckpointConfigs.GlassChipCount)
+			SupermanGroundVfx.spawnMetalMeltAt(syntheticResult, StageCheckpointConfigs.MetalMeltChipCount)
+			syntheticPart:Destroy()
 		end
 	end
 
@@ -327,9 +473,9 @@ end
 
 function StageCheckpointController:KnitStart()
 	local service = Knit.GetService("StageCheckpointService")
+	local SkipStageService = Knit.GetService("SkipStageService")
 	local folderWatchBound = false
 	local profileReady = false
-	local streamResyncPending = false
 
 	local function bindFolderStreamingResync()
 		if folderWatchBound then
@@ -348,19 +494,13 @@ function StageCheckpointController:KnitStart()
 			if not stageNum or not StageCheckpointWorld.isMeltGateStage(stageNum) then
 				return
 			end
-			if streamResyncPending then
-				return
-			end
-			streamResyncPending = true
 			StageCheckpointDebug.logAlways(string.format(
-				"Gate part streamed in: stage=%d — re-syncing UI",
+				"Gate part streamed in: stage=%d — restoring + re-syncing UI",
 				stageNum
 			))
-			task.delay(0.35, function()
-				streamResyncPending = false
-				if DataLib.GetData() then
-					pullServerGateSync()
-				end
+			task.defer(function()
+				restoreLocalGatePartDefaults(stageNum)
+				scheduleGateResyncPulls()
 			end)
 		end)
 	end
@@ -407,12 +547,13 @@ function StageCheckpointController:KnitStart()
 		StageCheckpointDebug.log(string.format("CheckpointHpChanged stage=%d hp=%.2f", stageNum, hp01), "client:hp", 0.3)
 		refreshGateUi(stageNum, hp01)
 		tweenBar(stageNum, hp01)
+		applyGateMeltHeatVisual(stageNum, hp01)
 	end)
 
 	service.CheckpointBroken:Connect(function(stageNum: number, hitPos: Vector3, hitNormal: Vector3)
 		StageCheckpointDebug.logAlways(string.format("CheckpointBroken stage=%d pos=%s", stageNum, tostring(hitPos)))
 		onCheckpointBroken(stageNum, hitPos, hitNormal)
-		task.defer(pullServerGateSync)
+		scheduleGateResyncPulls()
 	end)
 
 	service.SpeedRequirementFailed:Connect(function(_stageNum: number, requirement: number, playerSpeed: number)
@@ -425,10 +566,27 @@ function StageCheckpointController:KnitStart()
 		)
 	end)
 
-	service.SessionGatesReset:Connect(function()
-		StageCheckpointDebug.logAlways("SessionGatesReset — restoring all gate walls and XP bars")
+	local function onSessionGateRestoreRequested(source: string)
+		StageCheckpointDebug.logAlways("Gate session restore (" .. source .. ")")
 		clearLocalGateState()
-		pullServerGateSync()
+		restoreAllLocalGateDefaults()
+		scheduleGateResyncPulls()
+	end
+
+	service.SessionGatesReset:Connect(function()
+		onSessionGateRestoreRequested("SessionGatesReset")
+	end)
+
+	SkipStageService.StageChanged:Connect(function(_newStage: number)
+		scheduleGateResyncPulls()
+	end)
+
+	player.CharacterAdded:Connect(function()
+		task.delay(0.3, function()
+			if DataLib.GetData() then
+				onSessionGateRestoreRequested("CharacterAdded")
+			end
+		end)
 	end)
 
 	service.GateMeltBlocked:Connect(function(stageNum: number, reason: string)

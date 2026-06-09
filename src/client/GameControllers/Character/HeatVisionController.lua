@@ -10,7 +10,6 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
 local HeatVisionCamera = require(script.Parent.Parent.Parent.Modules.HeatVisionCamera)
-local StageCheckpointDebug = require(ReplicatedStorage.Shared.Utils.StageCheckpointDebug)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 local SupermanGroundVfx = require(script.Parent.Parent.Parent.Modules.SupermanGroundVfx)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
@@ -29,6 +28,7 @@ local HeatVisionController = Knit.CreateController({ Name = "HeatVisionControlle
 local player = Players.LocalPlayer
 
 local HeatVisionService: any = nil
+local StageCheckpointController: any = nil
 local actionBound = false
 local localActive = false
 local aimRenderBound = false
@@ -59,8 +59,8 @@ local function notifyRejected(reason: string?)
 		return
 	end
 	lastRejectedToastAt = now
-	if reason == "cooldown" then
-		NotificationManager.show("Heat vision on cooldown", "Info")
+	if reason == "no_solar" then
+		NotificationManager.show("Fly to recharge solar energy for heat vision", "Info")
 	elseif reason == "active" then
 		return
 	elseif reason == "no_rig" then
@@ -84,6 +84,14 @@ local function buildRayParams(): RaycastParams
 			table.insert(filter, rig)
 		end
 	end
+	local glassFolder = SupermanGroundVfx.getGlassBreakVfxFolder()
+	if glassFolder then
+		table.insert(filter, glassFolder)
+	end
+	local metalFolder = SupermanGroundVfx.getMetalMeltVfxFolder()
+	if metalFolder then
+		table.insert(filter, metalFolder)
+	end
 	if #filter > 0 then
 		params.FilterDescendantsInstances = filter
 	end
@@ -101,19 +109,33 @@ local function tryFakeDestruction()
 
 	local origin = cam.CFrame.Position + cam.CFrame.LookVector * HeatVisionConfigs.CameraRayOriginForward
 	local direction = cam.CFrame.LookVector
-	local result = Workspace:Raycast(origin, direction * HeatVisionConfigs.MaxRange, rayParams)
+	local result = Workspace:Raycast(origin, direction * HeatVisionConfigs.MaxRange, buildRayParams())
 	if not result then
 		return
 	end
 
 	if HeatVisionConfigs.CheckpointDamageEnabled and StageCheckpointWorld.isCheckpointHit(result.Instance) then
 		local stageNum = StageCheckpointWorld.getCheckpointFromHit(result.Instance)
-		StageCheckpointDebug.log(string.format(
-			"Client ray hit checkpoint stage=%s part=%s CanQuery=%s (skip melt VFX, server handles damage)",
-			tostring(stageNum),
-			result.Instance:GetFullName(),
-			tostring(result.Instance.CanQuery)
-		), "client:hvHit", 0.35)
+		local nextMeltGate = if StageCheckpointController and StageCheckpointController.GetNextMeltGateStage
+			then StageCheckpointController:GetNextMeltGateStage()
+			else nil
+		if stageNum and nextMeltGate and stageNum == nextMeltGate and result.Instance:IsA("BasePart") then
+			local now = os.clock()
+			if now - lastFakeBreakAt < HeatVisionConfigs.FakeDestruction.Interval then
+				return
+			end
+			local minMove = HeatVisionConfigs.FakeDestruction.MinMoveDistance
+			if lastFakeBreakPos and (result.Position - lastFakeBreakPos).Magnitude < minMove then
+				return
+			end
+			lastFakeBreakAt = now
+			lastFakeBreakPos = result.Position
+			SupermanGroundVfx.spawnGateMetalMeltImpact(
+				result.Instance :: BasePart,
+				result.Position,
+				result.Normal
+			)
+		end
 		return
 	end
 
@@ -217,13 +239,15 @@ function HeatVisionController:Begin()
 		return
 	end
 
-	HeatVisionService:RequestStart():andThen(function(ok: boolean, reason: string?)
-		if ok then
-			startAimLoop()
-		else
-			notifyRejected(reason)
-		end
-	end):catch(warn)
+	HeatVisionService:RequestStart()
+		:andThen(function(ok: boolean, reason: string?)
+			if ok then
+				startAimLoop()
+			else
+				notifyRejected(reason)
+			end
+		end)
+		:catch(warn)
 end
 
 function HeatVisionController:IsLocalActive(): boolean
@@ -260,6 +284,7 @@ end
 
 function HeatVisionController:KnitStart()
 	HeatVisionService = Knit.GetService("HeatVisionService")
+	StageCheckpointController = Knit.GetController("StageCheckpointController")
 
 	bindAction()
 

@@ -244,7 +244,7 @@ function LevelDesignTuning.estimateAbilityDuration(tuning: DoubleJumpTuning): nu
 	local ph = tuning.Phases
 	local after = ph.AfterTransition
 	local afterTime = math.max(after.MaxDuration or 1.1, after.MinDuration or 0)
-	local thrustGlide = ThrustConfigs.BaseMaxFuel / math.max(ThrustConfigs.DrainPerSecond, 0.01)
+	local thrustGlide = ThrustConfigs.BaseMaxFuel / ThrustConfigs.GetNetDrainPerSecond()
 	return (ph.FlightTransit.Duration or 0.35)
 		+ afterTime
 		+ thrustGlide

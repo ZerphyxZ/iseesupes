@@ -4,6 +4,7 @@
 -- Client-only; cleaned up via Debris.
 
 local Debris = game:GetService("Debris")
+local PhysicsService = game:GetService("PhysicsService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
@@ -267,12 +268,7 @@ local function getLandingVfxFolder(): Folder
 	return folder
 end
 
-local function spawnScorchPatch(
-	pos: Vector3,
-	normal: Vector3,
-	diameter: number,
-	alpha: number
-)
+local function spawnScorchPatch(pos: Vector3, normal: Vector3, diameter: number, alpha: number)
 	local scorchCfg = SupermanVfxConfigs.Break.Scorch
 	local right, up = buildSurfaceBasis(normal)
 	local radius = diameter / 2
@@ -302,12 +298,7 @@ local function spawnScorchPatch(
 	Debris:AddItem(patch, fadeDuration + 0.15)
 end
 
-local function spawnBurstParticles(
-	parent: Part,
-	tierCfg: any,
-	useBlack: boolean,
-	colorOverride: ColorSequence?
-)
+local function spawnBurstParticles(parent: Part, tierCfg: any, useBlack: boolean, colorOverride: ColorSequence?)
 	local shared = SupermanVfxConfigs.Break
 	local defaults = shared.ParticleDefaults
 	local scale = tierCfg.ParticleScale or 1
@@ -343,9 +334,7 @@ end
 
 local function spawnLandingParticles(anchor: Part, surfaceStyle: SurfaceStyle, burstOverride: number?)
 	local cfg = SupermanVfxConfigs.Break.LandingParticles
-	local colorSeq = if cfg.UseFloorTint == true
-		then colorSequenceFromSurface(surfaceStyle.color)
-		else cfg.DustColor
+	local colorSeq = if cfg.UseFloorTint == true then colorSequenceFromSurface(surfaceStyle.color) else cfg.DustColor
 
 	local e = Instance.new("ParticleEmitter")
 	e.Texture = cfg.Texture or "rbxassetid://243660364"
@@ -404,13 +393,7 @@ local function spawnLongJumpSmoke(anchor: Part, burstOverride: number?)
 	e:Emit(burstOverride or cfg.Burst)
 end
 
-local function spawnSurfaceRing(
-	pos: Vector3,
-	normal: Vector3,
-	maxDiameter: number,
-	duration: number,
-	color: Color3
-)
+local function spawnSurfaceRing(pos: Vector3, normal: Vector3, maxDiameter: number, duration: number, color: Color3)
 	local right, up = buildSurfaceBasis(normal)
 	local ring = Instance.new("Part")
 	ring.Size = Vector3.new(1, 1, 1)
@@ -504,14 +487,10 @@ local function spawnOneLandingChunk(
 
 	local startPos = floorPos + spawnOffset + up * chunkCfg.FootInset
 	local slideDir = (right * lateralSign + look * RNG:NextNumber(-0.35, 0.35)).Unit
-	local launchSpeed = chunkCfg.LaunchSpeed + RNG:NextNumber(
-		-(chunkCfg.LaunchSpeedSpread or 0),
-		chunkCfg.LaunchSpeedSpread or 0
-	)
-	local upSpeed = chunkCfg.UpLaunchSpeed + RNG:NextNumber(
-		-(chunkCfg.UpLaunchSpread or 0),
-		chunkCfg.UpLaunchSpread or 0
-	)
+	local launchSpeed = chunkCfg.LaunchSpeed
+		+ RNG:NextNumber(-(chunkCfg.LaunchSpeedSpread or 0), chunkCfg.LaunchSpeedSpread or 0)
+	local upSpeed = chunkCfg.UpLaunchSpeed
+		+ RNG:NextNumber(-(chunkCfg.UpLaunchSpread or 0), chunkCfg.UpLaunchSpread or 0)
 
 	local useWedge = RNG:NextNumber() < chunkCfg.WedgeRatio
 	local chip: BasePart
@@ -531,20 +510,18 @@ local function spawnOneLandingChunk(
 	chip.CanTouch = false
 	chip.Massless = true
 	chip.CastShadow = true
-	chip.CFrame = CFrame.new(startPos) * CFrame.Angles(
-		math.rad(RNG:NextNumber(-18, 18)),
-		math.rad(RNG:NextNumber(0, 360)),
-		math.rad(RNG:NextNumber(-25, 25))
-	)
+	chip.CFrame = CFrame.new(startPos)
+		* CFrame.Angles(
+			math.rad(RNG:NextNumber(-18, 18)),
+			math.rad(RNG:NextNumber(0, 360)),
+			math.rad(RNG:NextNumber(-25, 25))
+		)
 	chip.Parent = parentFolder
 
 	chip.AssemblyLinearVelocity = slideDir * launchSpeed + up * upSpeed
 	local spin = chunkCfg.AngularSpeed or 24
-	chip.AssemblyAngularVelocity = Vector3.new(
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin
-	)
+	chip.AssemblyAngularVelocity =
+		Vector3.new(RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin)
 
 	local fadeAt = chunkCfg.Lifetime * 0.5
 	task.delay(fadeAt, function()
@@ -671,12 +648,7 @@ local function spawnHeatVisionMeltFlash(hitPos: Vector3, surfaceNormal: Vector3,
 	Debris:AddItem(anchor, 0.6)
 end
 
-local function spawnHeatVisionChunks(
-	result: RaycastResult,
-	character: Model?,
-	count: number?,
-	beamDirection: Vector3?
-)
+local function spawnHeatVisionChunks(result: RaycastResult, character: Model?, count: number?, beamDirection: Vector3?)
 	local tierCfg = SupermanVfxConfigs.Break.Tiers.HeatVision
 	if not tierCfg or tierCfg.SpawnChunks ~= true then
 		return
@@ -687,7 +659,9 @@ local function spawnHeatVisionChunks(
 	local hitNormal = result.Normal
 	local surfaceRight, surfaceUp = buildSurfaceBasis(hitNormal)
 	local surfaceTangent = surfaceUp:Cross(surfaceRight).Unit
-	local beamDir = if beamDirection and beamDirection.Magnitude > 0.001 then beamDirection.Unit else Vector3.new(0, 0, -1)
+	local beamDir = if beamDirection and beamDirection.Magnitude > 0.001
+		then beamDirection.Unit
+		else Vector3.new(0, 0, -1)
 	local beamOnSurface = beamDir - hitNormal * beamDir:Dot(hitNormal)
 	local look = if beamOnSurface.Magnitude > 0.05 then beamOnSurface.Unit else surfaceTangent
 	local right = surfaceRight
@@ -722,17 +696,7 @@ local function spawnHeatVisionChunks(
 		local lateralSign = if i % 2 == 0 then 1 else -1
 		local jitter = surfaceRight * RNG:NextNumber(-0.65, 0.65) + surfaceTangent * RNG:NextNumber(-0.65, 0.65)
 		task.delay(stagger, function()
-			spawnOneLandingChunk(
-				hitPos,
-				hitNormal,
-				jitter,
-				look,
-				right,
-				surfaceStyle,
-				lateralSign,
-				folder,
-				chunkCfg
-			)
+			spawnOneLandingChunk(hitPos, hitNormal, jitter, look, right, surfaceStyle, lateralSign, folder, chunkCfg)
 		end)
 	end
 
@@ -844,13 +808,7 @@ local function spawnSurfaceBreakAt(
 	end
 
 	if tierCfg.Ring then
-		spawnSurfaceRing(
-			pos,
-			normal,
-			tierCfg.RingMaxDiameter,
-			tierCfg.RingDuration,
-			tierCfg.RingColor
-		)
+		spawnSurfaceRing(pos, normal, tierCfg.RingMaxDiameter, tierCfg.RingDuration, tierCfg.RingColor)
 	end
 
 	if tier == "Landing" and character and rayResult then
@@ -899,6 +857,28 @@ function SupermanGroundVfx.spawnLanding(hrp: BasePart)
 end
 
 local glassVfxFolder: Folder? = nil
+local glassVfxCollisionReady = false
+local GLASS_VFX_COLLISION_GROUP = "GlassBreakVfx"
+
+local function ensureGlassVfxCollisionGroup()
+	if glassVfxCollisionReady then
+		return
+	end
+	glassVfxCollisionReady = true
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup(GLASS_VFX_COLLISION_GROUP)
+		PhysicsService:CollisionGroupSetCollidable(GLASS_VFX_COLLISION_GROUP, "Default", false)
+	end)
+end
+
+local function applyGlassBreakVfxPhysics(part: BasePart)
+	ensureGlassVfxCollisionGroup()
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Massless = true
+	part.CollisionGroup = GLASS_VFX_COLLISION_GROUP
+end
 
 local function getGlassVfxFolder(): Folder
 	if glassVfxFolder and glassVfxFolder.Parent then
@@ -909,6 +889,17 @@ local function getGlassVfxFolder(): Folder
 	folder.Parent = Workspace
 	glassVfxFolder = folder
 	return folder
+end
+
+function SupermanGroundVfx.getGlassBreakVfxFolder(): Folder?
+	if glassVfxFolder and glassVfxFolder.Parent then
+		return glassVfxFolder
+	end
+	local existing = Workspace:FindFirstChild(SupermanVfxConfigs.Break.GlassChunks.FolderName)
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	return nil
 end
 
 local function buildGlassSurfaceStyle(result: RaycastResult): SurfaceStyle
@@ -1040,21 +1031,29 @@ end
 
 local warnedGlassSound = false
 
-local function playGlassBreakSound(atPos: Vector3)
-	local folder = resolveSoundsFolder()
-	if not folder then
-		if not warnedGlassSound then
-			warnedGlassSound = true
-		end
-		return
-	end
-
+function SupermanGroundVfx.playGateGlassBreakSound(atPos: Vector3)
 	local sounds = SupermanVfxConfigs.Sounds
 	local gateCfg = SupermanVfxConfigs.Break.GateGlassBreak
-	local soundName = sounds.GlassBreak or sounds.ImpactBreak
-	local template = folder:FindFirstChild(soundName)
-	if not template or not template:IsA("Sound") then
-		return
+
+	local sound: Sound
+	local soundId = gateCfg.SoundId
+	if typeof(soundId) == "string" and soundId ~= "" then
+		sound = Instance.new("Sound")
+		sound.SoundId = soundId
+	else
+		local folder = resolveSoundsFolder()
+		if not folder then
+			if not warnedGlassSound then
+				warnedGlassSound = true
+			end
+			return
+		end
+		local soundName = sounds.GlassBreak or sounds.ImpactBreak
+		local template = folder:FindFirstChild(soundName)
+		if not template or not template:IsA("Sound") then
+			return
+		end
+		sound = (template :: Sound):Clone()
 	end
 
 	local anchor = Instance.new("Part")
@@ -1068,13 +1067,22 @@ local function playGlassBreakSound(atPos: Vector3)
 	anchor.CastShadow = false
 	anchor.Parent = Workspace
 
-	local clone = (template :: Sound):Clone()
-	clone.Volume = gateCfg.SoundVolume or sounds.GlassBreakVolume or 0.85
-	clone.PlaybackSpeed = gateCfg.SoundPlaybackSpeed or 1.05
-	clone.RollOffMaxDistance = 80
-	clone.Parent = anchor
-	clone:Play()
+	sound.Volume = gateCfg.SoundVolume or sounds.GlassBreakVolume or 0.85
+	sound.PlaybackSpeed = gateCfg.SoundPlaybackSpeed or 1.05
+	sound.RollOffMode = Enum.RollOffMode.LinearSquare
+	sound.RollOffMinDistance = gateCfg.SoundRollOffMinDistance or 18
+	sound.RollOffMaxDistance = gateCfg.SoundRollOffMaxDistance or 700
+	local emitterSize = gateCfg.SoundEmitterSize
+	if typeof(emitterSize) == "number" and emitterSize > 0 then
+		sound.EmitterSize = emitterSize
+	end
+	sound.Parent = anchor
+	sound:Play()
 	Debris:AddItem(anchor, sounds.GlassBreakLifetime or sounds.ImpactBreakLifetime or 2.5)
+end
+
+local function playGlassBreakSound(atPos: Vector3)
+	SupermanGroundVfx.playGateGlassBreakSound(atPos)
 end
 
 local function spawnGlassSparkleBurst(anchor: Part, burst: number, color: Color3)
@@ -1201,14 +1209,14 @@ local function spawnOneGatePaneShard(
 	end
 
 	local paneScale = math.clamp((w + h) * 0.5 / (gateCfg.TargetPaneStuds or 5.5), 0.9, 2.4)
-	local throughSpeed = ((chunkCfg.ThroughLaunchSpeed or 54) + RNG:NextNumber(
-		-(chunkCfg.ThroughLaunchSpread or 18),
-		chunkCfg.ThroughLaunchSpread or 18
-	)) * paneScale
-	local tangSpeed = ((chunkCfg.TangentialLaunchSpeed or 32) + RNG:NextNumber(
-		-(chunkCfg.TangentialLaunchSpread or 16),
-		chunkCfg.TangentialLaunchSpread or 16
-	)) * math.sqrt(paneScale)
+	local throughSpeed = (
+		(chunkCfg.ThroughLaunchSpeed or 54)
+		+ RNG:NextNumber(-(chunkCfg.ThroughLaunchSpread or 18), chunkCfg.ThroughLaunchSpread or 18)
+	) * paneScale
+	local tangSpeed = (
+		(chunkCfg.TangentialLaunchSpeed or 32)
+		+ RNG:NextNumber(-(chunkCfg.TangentialLaunchSpread or 16), chunkCfg.TangentialLaunchSpread or 16)
+	) * math.sqrt(paneScale)
 	local upSpeed = (chunkCfg.UpLaunchSpeed or 22)
 		+ RNG:NextNumber(-(chunkCfg.UpLaunchSpread or 12), chunkCfg.UpLaunchSpread or 12)
 
@@ -1228,10 +1236,7 @@ local function spawnOneGatePaneShard(
 	chip.Transparency = RNG:NextNumber(0.02, 0.18)
 	chip.Reflectance = RNG:NextNumber(0.12, 0.28)
 	chip.Anchored = false
-	chip.CanCollide = chunkCfg.CanCollide == true
-	chip.CanQuery = false
-	chip.CanTouch = false
-	chip.Massless = false
+	applyGlassBreakVfxPhysics(chip)
 	chip.CastShadow = true
 	chip.CFrame = CFrame.fromMatrix(centerPos, face.right, face.up)
 		* CFrame.Angles(
@@ -1246,11 +1251,8 @@ local function spawnOneGatePaneShard(
 		+ Vector3.new(0, upSpeed, 0)
 
 	local spin = (chunkCfg.AngularSpeed or 28) / math.sqrt(paneScale)
-	chip.AssemblyAngularVelocity = Vector3.new(
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin
-	)
+	chip.AssemblyAngularVelocity =
+		Vector3.new(RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin)
 
 	local fadeAt = chunkCfg.Lifetime * 0.55
 	task.delay(fadeAt, function()
@@ -1351,10 +1353,7 @@ local function spawnOneGlassShard(
 	chip.Transparency = RNG:NextNumber(0.05, 0.28)
 	chip.Reflectance = RNG:NextNumber(0.08, 0.22)
 	chip.Anchored = false
-	chip.CanCollide = chunkCfg.CanCollide == true
-	chip.CanQuery = false
-	chip.CanTouch = false
-	chip.Massless = true
+	applyGlassBreakVfxPhysics(chip)
 	chip.CastShadow = true
 	chip.CFrame = CFrame.fromMatrix(startPos, face.right, face.up)
 		* CFrame.Angles(
@@ -1369,11 +1368,8 @@ local function spawnOneGlassShard(
 		+ Vector3.new(0, upSpeed, 0)
 
 	local spin = chunkCfg.AngularSpeed or 48
-	chip.AssemblyAngularVelocity = Vector3.new(
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin,
-		RNG:NextNumber(-1, 1) * spin
-	)
+	chip.AssemblyAngularVelocity =
+		Vector3.new(RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin)
 
 	local fadeAt = chunkCfg.Lifetime * 0.45
 	task.delay(fadeAt, function()
@@ -1408,6 +1404,9 @@ function SupermanGroundVfx.spawnGateGlassShatter(
 	local chunkCfg = SupermanVfxConfigs.Break.GlassChunks
 	local gateCfg = SupermanVfxConfigs.Break.GateGlassBreak
 	local face = getGateFaceFrame(gatePart, hitNormal)
+	gatePart.CanQuery = false
+	gatePart.CanCollide = false
+	gatePart.CanTouch = false
 	local surfaceStyle = buildGlassSurfaceStyleFromPart(gatePart)
 	local folder = getGlassVfxFolder()
 	local usePaneGrid = gateCfg.UsePaneGrid ~= false and (chipCount == nil or chipCount <= 0)
@@ -1470,7 +1469,12 @@ end
 
 function SupermanGroundVfx.spawnGlassShatterAt(result: RaycastResult, chipCount: number?): boolean
 	if result.Instance and result.Instance:IsA("BasePart") then
-		return SupermanGroundVfx.spawnGateGlassShatter(result.Instance :: BasePart, result.Position, result.Normal, chipCount)
+		return SupermanGroundVfx.spawnGateGlassShatter(
+			result.Instance :: BasePart,
+			result.Position,
+			result.Normal,
+			chipCount
+		)
 	end
 
 	local tier: BreakTier = "GlassBreak"
@@ -1528,6 +1532,7 @@ function SupermanGroundVfx.spawnGlassShatterAt(result: RaycastResult, chipCount:
 			chip.Transparency = RNG:NextNumber(0.1, 0.35)
 			chip.Material = Enum.Material.Glass
 			chip.Reflectance = 0.15
+			applyGlassBreakVfxPhysics(chip)
 		end)
 	end
 
@@ -1549,6 +1554,526 @@ function SupermanGroundVfx.spawnHeatMeltAt(
 
 	spawnHeatVisionChunks(result, character, chipCount, beamDirection)
 	return true
+end
+
+-- ── Metal gate melt (heat vision on stage barriers) ───────────────────────────
+
+local metalVfxFolder: Folder? = nil
+local METAL_VFX_COLLISION_GROUP = "MetalMeltVfx"
+local metalVfxCollisionReady = false
+
+local function ensureMetalVfxCollisionGroup()
+	if metalVfxCollisionReady then
+		return
+	end
+	metalVfxCollisionReady = true
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup(METAL_VFX_COLLISION_GROUP)
+		PhysicsService:CollisionGroupSetCollidable(METAL_VFX_COLLISION_GROUP, "Default", false)
+	end)
+end
+
+local function applyMetalMeltVfxPhysics(part: BasePart)
+	ensureMetalVfxCollisionGroup()
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Massless = true
+	part.CollisionGroup = METAL_VFX_COLLISION_GROUP
+end
+
+local function getMetalVfxFolder(): Folder
+	if metalVfxFolder and metalVfxFolder.Parent then
+		return metalVfxFolder
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = SupermanVfxConfigs.Break.MetalMeltChunks.FolderName
+	folder.Parent = Workspace
+	metalVfxFolder = folder
+	return folder
+end
+
+function SupermanGroundVfx.getMetalMeltVfxFolder(): Folder?
+	if metalVfxFolder and metalVfxFolder.Parent then
+		return metalVfxFolder
+	end
+	local existing = Workspace:FindFirstChild(SupermanVfxConfigs.Break.MetalMeltChunks.FolderName)
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	return nil
+end
+
+local function buildMetalSurfaceStyleFromPart(gatePart: BasePart): SurfaceStyle
+	local gateCfg = SupermanVfxConfigs.Break.GateMetalMelt
+	local color = gateCfg.ColdColor
+	if gatePart.Transparency < 0.98 then
+		color = gatePart.Color
+	end
+	return {
+		color = color,
+		material = Enum.Material.Metal,
+		textureId = if gatePart:IsA("MeshPart") and gatePart.TextureID ~= "" then gatePart.TextureID else nil,
+		sourceInstance = gatePart,
+	}
+end
+
+local function spawnMetalScorchPatch(pos: Vector3, normal: Vector3, diameter: number, alpha: number, color: Color3)
+	local scorchCfg = SupermanVfxConfigs.Break.Scorch
+	local right, up = buildSurfaceBasis(normal)
+	local radius = diameter / 2
+
+	local patch = Instance.new("Part")
+	patch.Size = Vector3.new(1, 1, 1)
+	patch.Anchored = true
+	patch.CFrame = CFrame.fromMatrix(pos + up * 0.02, right, up)
+	patch.Transparency = alpha
+	patch.CanCollide = false
+	patch.CanQuery = false
+	patch.CastShadow = false
+	patch.Material = Enum.Material.SmoothPlastic
+	patch.Color = color
+	patch.Parent = Workspace
+
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Cylinder
+	mesh.Scale = Vector3.new(radius, scorchCfg.Thickness, radius)
+	mesh.Parent = patch
+
+	registerScorch(patch)
+
+	local fadeDuration = scorchCfg.FadeDuration
+	TweenService:Create(patch, TweenInfo.new(fadeDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(patch, fadeDuration + 0.15)
+end
+
+function SupermanGroundVfx.playGateMetalMeltSound(atPos: Vector3)
+	local gateCfg = SupermanVfxConfigs.Break.GateMetalMelt
+	local soundId = gateCfg.SoundId
+	if typeof(soundId) ~= "string" or soundId == "" then
+		return
+	end
+
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Anchored = true
+	anchor.CFrame = CFrame.new(atPos)
+	anchor.Transparency = 1
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.CastShadow = false
+	anchor.Parent = Workspace
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = soundId
+	local startVol = gateCfg.SoundVolume or 0.32
+	local peakVol = math.clamp(gateCfg.SoundVolumePeak or 1, 0, 1)
+	sound.Volume = startVol
+	sound.PlaybackSpeed = gateCfg.SoundPlaybackSpeed or 0.84
+	local rollOffMode = gateCfg.SoundRollOffMode
+	if rollOffMode == "Inverse" then
+		sound.RollOffMode = Enum.RollOffMode.Inverse
+	elseif rollOffMode == "Linear" then
+		sound.RollOffMode = Enum.RollOffMode.Linear
+	else
+		sound.RollOffMode = Enum.RollOffMode.LinearSquare
+	end
+	sound.RollOffMinDistance = gateCfg.SoundRollOffMinDistance or 24
+	sound.RollOffMaxDistance = gateCfg.SoundRollOffMaxDistance or 980
+	local emitterSize = gateCfg.SoundEmitterSize
+	if typeof(emitterSize) == "number" and emitterSize > 0 then
+		sound.EmitterSize = emitterSize
+	end
+	if
+		typeof(gateCfg.SoundHighGain) == "number"
+		or typeof(gateCfg.SoundMidGain) == "number"
+		or typeof(gateCfg.SoundLowGain) == "number"
+	then
+		local eq = Instance.new("EqualizerSoundEffect")
+		eq.HighGain = if typeof(gateCfg.SoundHighGain) == "number" then gateCfg.SoundHighGain else 0
+		eq.MidGain = if typeof(gateCfg.SoundMidGain) == "number" then gateCfg.SoundMidGain else 0
+		eq.LowGain = if typeof(gateCfg.SoundLowGain) == "number" then gateCfg.SoundLowGain else 0
+		eq.Parent = sound
+	end
+	sound.Parent = anchor
+	sound:Play()
+
+	local rampSec = gateCfg.SoundVolumeRampSeconds or 1.15
+	if peakVol > startVol and rampSec > 0 then
+		TweenService:Create(
+			sound,
+			TweenInfo.new(rampSec, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),
+			{ Volume = peakVol }
+		):Play()
+	else
+		sound.Volume = peakVol
+	end
+
+	Debris:AddItem(anchor, math.max(4, rampSec + 2.5))
+end
+
+local function spawnMetalEmberBurst(anchor: Part, burst: number, hotColor: Color3)
+	local attachment = Instance.new("Attachment")
+	attachment.Parent = anchor
+
+	local emberColor = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 240, 180)),
+		ColorSequenceKeypoint.new(0.3, hotColor),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(80, 40, 20)),
+	})
+
+	local embers = Instance.new("ParticleEmitter")
+	embers.Name = "MetalEmbers"
+	embers.Texture = SupermanVfxConfigs.Break.ParticleTexture
+	embers.Color = emberColor
+	embers.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(0.35, 0.65),
+		NumberSequenceKeypoint.new(1, 0.08),
+	})
+	embers.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(0.55, 0.3),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	embers.Lifetime = NumberRange.new(0.25, 0.65)
+	embers.Speed = NumberRange.new(10, 26)
+	embers.SpreadAngle = Vector2.new(180, 180)
+	embers.Acceleration = Vector3.new(0, -32, 0)
+	embers.LightEmission = 0.9
+	embers.RotSpeed = NumberRange.new(-180, 180)
+	embers.Rate = 0
+	embers.Parent = attachment
+	embers:Emit(burst)
+
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Name = "MetalSmoke"
+	smoke.Texture = SupermanVfxConfigs.Break.ParticleTexture
+	smoke.Color = SupermanVfxConfigs.Break.BlackDustColor
+	smoke.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(0.45, 1.4),
+		NumberSequenceKeypoint.new(1, 0.2),
+	})
+	smoke.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	smoke.Lifetime = NumberRange.new(0.4, 0.9)
+	smoke.Speed = NumberRange.new(4, 12)
+	smoke.SpreadAngle = Vector2.new(55, 55)
+	smoke.LightEmission = 0.15
+	smoke.Rate = 0
+	smoke.Parent = attachment
+	smoke:Emit(math.max(6, math.floor(burst * 0.5)))
+end
+
+local function spawnMetalMeltFlash(hitPos: Vector3, surfaceNormal: Vector3, hotColor: Color3)
+	local normal = surfaceNormal.Unit
+	local right, up = buildSurfaceBasis(normal)
+
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Anchored = true
+	anchor.CFrame = CFrame.fromMatrix(hitPos + up * 0.04, right, up)
+	anchor.Transparency = 1
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.CastShadow = false
+	anchor.Parent = Workspace
+
+	spawnMetalEmberBurst(anchor, 8, hotColor)
+
+	local glow = Instance.new("PointLight")
+	glow.Color = hotColor
+	glow.Brightness = 2.5
+	glow.Range = 10
+	glow.Parent = anchor
+	TweenService:Create(glow, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = 0,
+	}):Play()
+
+	Debris:AddItem(anchor, 0.65)
+end
+
+local function spawnMoltenDrip(hitPos: Vector3, surfaceNormal: Vector3, gateCfg: any)
+	local hotColor = gateCfg.HotColor or Color3.fromRGB(255, 106, 26)
+	local slagColor = gateCfg.SlagColor or Color3.fromRGB(42, 36, 32)
+	local normal = surfaceNormal.Unit
+
+	local drip = Instance.new("Part")
+	drip.Name = "MoltenDrip"
+	drip.Size = Vector3.new(0.18, 0.35, 0.18)
+	drip.Shape = Enum.PartType.Ball
+	drip.Material = Enum.Material.Neon
+	drip.Color = hotColor
+	drip.Anchored = false
+	applyMetalMeltVfxPhysics(drip)
+	drip.CFrame = CFrame.new(hitPos + normal * 0.08)
+	drip.Parent = getMetalVfxFolder()
+
+	local dripSpeed = gateCfg.DripSpeed or 22
+	drip.AssemblyLinearVelocity = Vector3.new(0, -dripSpeed, 0) + normal * RNG:NextNumber(0.5, 2.5)
+
+	task.delay(0.35, function()
+		if drip.Parent then
+			TweenService:Create(
+				drip,
+				TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Color = slagColor, Transparency = 1 }
+			):Play()
+		end
+	end)
+	Debris:AddItem(drip, 0.85)
+end
+
+function SupermanGroundVfx.spawnGateMetalMeltImpact(gatePart: BasePart, hitPos: Vector3, hitNormal: Vector3)
+	local gateCfg = SupermanVfxConfigs.Break.GateMetalMelt
+	local hotColor = gateCfg.HotColor or Color3.fromRGB(255, 106, 26)
+	spawnMetalMeltFlash(hitPos, hitNormal, hotColor)
+	spawnMoltenDrip(hitPos, hitNormal, gateCfg)
+end
+
+local function spawnGateMetalFlash(face: GateFaceFrame, gateCfg: any)
+	local flashRange = (gateCfg.FlashRange or 26)
+		* math.clamp(math.max(face.halfWidth, face.halfHeight) * (gateCfg.FlashRangeScale or 0.7), 1, 3)
+	local hotColor = gateCfg.FlashColor or gateCfg.HotColor or Color3.fromRGB(255, 120, 40)
+
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Anchored = true
+	anchor.CFrame = CFrame.fromMatrix(face.center + face.normal * 0.06, face.right, face.up)
+	anchor.Transparency = 1
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.CastShadow = false
+	anchor.Parent = Workspace
+
+	spawnMetalEmberBurst(anchor, gateCfg.EmberBurst or 36, hotColor)
+
+	local glow = Instance.new("PointLight")
+	glow.Color = hotColor
+	glow.Brightness = gateCfg.FlashBrightness or 6
+	glow.Range = flashRange
+	glow.Parent = anchor
+	TweenService:Create(
+		glow,
+		TweenInfo.new(gateCfg.FlashDuration or 0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Brightness = 0 }
+	):Play()
+
+	Debris:AddItem(anchor, (gateCfg.FlashDuration or 0.32) + 0.35)
+end
+
+local function spawnOneMetalSlagPane(
+	centerPos: Vector3,
+	face: GateFaceFrame,
+	paneWidth: number,
+	paneHeight: number,
+	parentFolder: Folder,
+	gateCfg: any,
+	chunkCfg: any
+): BasePart
+	local jitter = gateCfg.PaneSizeJitter or 0.04
+	local w = paneWidth * RNG:NextNumber(1 - jitter, 1)
+	local h = paneHeight * RNG:NextNumber(1 - jitter, 1)
+	local depth = RNG:NextNumber(gateCfg.PaneThicknessMin or 0.18, gateCfg.PaneThicknessMax or 0.42)
+
+	local hotColor = gateCfg.HotColor or Color3.fromRGB(255, 106, 26)
+	local slagColor = gateCfg.SlagColor or chunkCfg.SlagColor or Color3.fromRGB(42, 36, 32)
+	local lifetime = gateCfg.SlagLifetime or chunkCfg.Lifetime or 3.2
+
+	local tangential = face.right * RNG:NextNumber(-1, 1) + face.up * RNG:NextNumber(-1, 1)
+	if tangential.Magnitude > 0.01 then
+		tangential = tangential.Unit
+	else
+		tangential = face.right
+	end
+
+	local dripSpeed = (gateCfg.DripSpeed or 22)
+		+ RNG:NextNumber(-(gateCfg.DripSpeedSpread or 8), gateCfg.DripSpeedSpread or 8)
+	local outward = (gateCfg.OutwardSpeed or 4)
+		+ RNG:NextNumber(-(gateCfg.OutwardSpread or 3), gateCfg.OutwardSpread or 3)
+	local tangSpeed = (gateCfg.TangentialSpeed or 6)
+		+ RNG:NextNumber(-(gateCfg.TangentialSpread or 4), gateCfg.TangentialSpread or 4)
+
+	local useWedge = RNG:NextNumber() < (chunkCfg.WedgeRatio or 0.15)
+	local chip: BasePart
+	if useWedge then
+		chip = Instance.new("WedgePart")
+	else
+		chip = Instance.new("Part")
+		chip.Shape = Enum.PartType.Block
+	end
+
+	chip.Name = "MetalSlagPane"
+	chip.Size = Vector3.new(w, h, depth)
+	chip.Material = if RNG:NextNumber() < 0.35 then Enum.Material.Neon else Enum.Material.Metal
+	chip.Color = hotColor
+	chip.Reflectance = RNG:NextNumber(0.05, 0.18)
+	chip.Anchored = false
+	applyMetalMeltVfxPhysics(chip)
+	chip.CastShadow = true
+	chip.CFrame = CFrame.fromMatrix(centerPos, face.right, face.up)
+		* CFrame.Angles(
+			math.rad(RNG:NextNumber(-12, 12)),
+			math.rad(RNG:NextNumber(-8, 8)),
+			math.rad(RNG:NextNumber(-12, 12))
+		)
+	chip.Parent = parentFolder
+
+	chip.AssemblyLinearVelocity = Vector3.new(0, -dripSpeed, 0)
+		+ face.normal * outward
+		+ tangential * tangSpeed
+
+	local spin = chunkCfg.AngularSpeed or 18
+	chip.AssemblyAngularVelocity =
+		Vector3.new(RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin, RNG:NextNumber(-1, 1) * spin)
+
+	local fadeAt = lifetime * 0.4
+	task.delay(fadeAt, function()
+		if chip.Parent then
+			TweenService:Create(
+				chip,
+				TweenInfo.new(lifetime - fadeAt, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Color = slagColor, Transparency = 1 }
+			):Play()
+		end
+	end)
+	Debris:AddItem(chip, lifetime)
+	return chip
+end
+
+local function spawnGateMetalSlagGrid(
+	face: GateFaceFrame,
+	folder: Folder,
+	chunkCfg: any,
+	gateCfg: any
+): (number, number)
+	local cols, rows, paneW, paneH = computeGatePaneLayout(face, gateCfg)
+	local maxDist = math.sqrt(face.halfWidth * face.halfWidth + face.halfHeight * face.halfHeight)
+	local waveMax = gateCfg.WaveStaggerMax or 0.12
+	local spawned = 0
+
+	for row = 0, rows - 1 do
+		for col = 0, cols - 1 do
+			local u = -face.halfWidth + paneW * (col + 0.5)
+			local v = -face.halfHeight + paneH * (row + 0.5)
+			local paneCenter = face.center + face.right * u + face.up * v
+			local dist01 = if maxDist > 0.01 then (paneCenter - face.center).Magnitude / maxDist else 0
+			local stagger = dist01 * waveMax + RNG:NextNumber(0, waveMax * 0.25)
+			spawned += 1
+
+			task.delay(stagger, function()
+				spawnOneMetalSlagPane(paneCenter, face, paneW, paneH, folder, gateCfg, chunkCfg)
+			end)
+		end
+	end
+
+	return spawned, waveMax
+end
+
+function SupermanGroundVfx.spawnGateMetalMelt(
+	gatePart: BasePart,
+	hitPos: Vector3,
+	hitNormal: Vector3,
+	chipCount: number?
+): boolean
+	local tier: BreakTier = "MetalMelt"
+	if not canSpawnTier(tier) then
+		return false
+	end
+
+	local tierCfg = SupermanVfxConfigs.Break.Tiers.MetalMelt
+	if not tierCfg or tierCfg.SpawnChunks ~= true then
+		return false
+	end
+
+	local chunkCfg = SupermanVfxConfigs.Break.MetalMeltChunks
+	local gateCfg = SupermanVfxConfigs.Break.GateMetalMelt
+	local face = getGateFaceFrame(gatePart, hitNormal)
+	gatePart.CanQuery = false
+	gatePart.CanCollide = false
+	gatePart.CanTouch = false
+	local folder = getMetalVfxFolder()
+	local usePaneGrid = gateCfg.UsePaneGrid ~= false and (chipCount == nil or chipCount <= 0)
+
+	spawnGateMetalFlash(face, gateCfg)
+	SupermanGroundVfx.playGateMetalMeltSound(face.center)
+
+	local staggerTotal = 0
+	if usePaneGrid then
+		local _, waveMax = spawnGateMetalSlagGrid(face, folder, chunkCfg, gateCfg)
+		staggerTotal = waveMax + 0.5
+	else
+		local spawnCount = math.max(1, chipCount or gateCfg.ShardCount or 32)
+		for i = 1, spawnCount do
+			local stagger = (i - 1) * (gateCfg.StaggerSeconds or 0.008)
+			task.delay(stagger, function()
+				local shardPos = sampleGateFacePoint(face, 0.12)
+				local cols, rows, paneW, paneH = computeGatePaneLayout(face, gateCfg)
+				spawnOneMetalSlagPane(shardPos, face, paneW, paneH, folder, gateCfg, chunkCfg)
+			end)
+		end
+		staggerTotal = spawnCount * (gateCfg.StaggerSeconds or 0.008)
+	end
+
+	local ringDiameter = math.max(face.halfWidth * 2, face.halfHeight * 2) * (gateCfg.RingScale or 1.08)
+	if tierCfg.Ring == true then
+		spawnSurfaceRing(
+			face.center,
+			face.normal,
+			math.max(ringDiameter, tierCfg.RingMaxDiameter or 22),
+			tierCfg.RingDuration or 0.38,
+			tierCfg.RingColor or Color3.fromRGB(255, 110, 35)
+		)
+	end
+
+	if (tierCfg.ScorchDiameter or 0) > 0 then
+		local scorchPos = face.center - face.up * (face.halfHeight * 0.85)
+		spawnMetalScorchPatch(
+			scorchPos,
+			Vector3.new(0, 1, 0),
+			tierCfg.ScorchDiameter,
+			tierCfg.ScorchAlpha or 0.42,
+			Color3.fromRGB(45, 28, 18)
+		)
+	end
+
+	if (tierCfg.ParticleBurst or 0) > 0 then
+		local anchor = Instance.new("Part")
+		anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+		anchor.Anchored = true
+		anchor.CFrame = CFrame.fromMatrix(hitPos + face.normal * 0.05, face.right, face.up)
+		anchor.Transparency = 1
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CanTouch = false
+		anchor.CastShadow = false
+		anchor.Parent = folder
+		spawnBurstParticles(anchor, tierCfg, true)
+		Debris:AddItem(anchor, SupermanVfxConfigs.Break.AnchorLifetime)
+	end
+
+	Debris:AddItem(folder, (gateCfg.SlagLifetime or chunkCfg.Lifetime or 3.2) + staggerTotal + 0.5)
+	return true
+end
+
+function SupermanGroundVfx.spawnMetalMeltAt(result: RaycastResult, chipCount: number?): boolean
+	if result.Instance and result.Instance:IsA("BasePart") then
+		return SupermanGroundVfx.spawnGateMetalMelt(
+			result.Instance :: BasePart,
+			result.Position,
+			result.Normal,
+			chipCount
+		)
+	end
+	return false
 end
 
 function SupermanGroundVfx.spawnImpact(impactPos: Vector3, normal: Vector3, _material: Enum.Material?)

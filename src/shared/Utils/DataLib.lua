@@ -14,6 +14,7 @@ local _lastData: any = nil
 local _gamepasses: { [string]: boolean } = {}
 local _dataChangedEvent = Signal.new()
 local _thrustChangedEvent = Signal.new()
+local _solarChangedEvent = Signal.new()
 local _gamepassChangedEvent = Signal.new()
 
 function DataLib.SetData(data: any)
@@ -37,8 +38,20 @@ function DataLib.SetThrust(current: number, max: number)
 	_thrustChangedEvent:Fire(current, max)
 end
 
+function DataLib.SetSolar(current: number, max: number)
+	if _lastData then
+		_lastData.SolarCurrent = current
+		_lastData.SolarMax = max
+	end
+	_solarChangedEvent:Fire(current, max)
+end
+
 function DataLib.OnThrustChanged(callback: (current: number, max: number) -> ())
 	return _thrustChangedEvent:Connect(callback)
+end
+
+function DataLib.OnSolarChanged(callback: (current: number, max: number) -> ())
+	return _solarChangedEvent:Connect(callback)
 end
 
 function DataLib.SetGamepass(key: string, owned: boolean)

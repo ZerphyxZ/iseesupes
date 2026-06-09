@@ -10,6 +10,7 @@ local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAur
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
 
 local GodSpeedAuraService = Knit.CreateService({
 	Name = "GodSpeedAuraService",
@@ -114,6 +115,7 @@ function GodSpeedAuraService:GrantRunBuff(player: Player): boolean
 
 	local data = profile.Data
 	SpeedConfigs.Thrust.RefillToMax(data)
+	HeatVisionConfigs.refillSolarToMax(data)
 	DataService:Replicate(player)
 
 	GodSpeedAuraService.Client.RunBuffGranted:Fire(player)

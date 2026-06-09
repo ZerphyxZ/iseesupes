@@ -17,6 +17,7 @@ end
 NotificationConfigs.KindByReason = {
 	cooldown = "Error",
 	no_thrust = "Error",
+	no_solar = "Error",
 	active = "Info",
 	grounded = "Info",
 	airborne = "Info",
@@ -33,10 +34,13 @@ end
 function NotificationConfigs.GetMessage(reason: string, detail: number?): string
 	if reason == "cooldown" then
 		local seconds = if type(detail) == "number" then detail else 0
-		return "Thrust on cooldown — " .. formatSeconds(seconds) .. " left"
+		return "Flight on cooldown — " .. formatSeconds(seconds) .. " left"
 	end
 	if reason == "no_thrust" then
-		return "Not enough thrust — wait to recharge!"
+		return "Not enough thrust — wait on the ground to recharge"
+	end
+	if reason == "no_solar" then
+		return "Not enough solar energy — fly to recharge heat vision"
 	end
 	if reason == "active" then
 		return "Already using thrust flight!"

@@ -568,11 +568,16 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 		DataService:RefillThrustToMax(player)
 	end
 
-	pcall(function()
-		local stageCheckpoint = Knit.GetService("StageCheckpointService")
-		if stageCheckpoint and stageCheckpoint.ResetSessionGatesForPlayer then
-			stageCheckpoint:ResetSessionGatesForPlayer(player)
+	task.delay(0.2, function()
+		if not player.Parent then
+			return
 		end
+		pcall(function()
+			local stageCheckpoint = Knit.GetService("StageCheckpointService")
+			if stageCheckpoint and stageCheckpoint.ResetSessionGatesForPlayer then
+				stageCheckpoint:ResetSessionGatesForPlayer(player)
+			end
+		end)
 	end)
 end
 

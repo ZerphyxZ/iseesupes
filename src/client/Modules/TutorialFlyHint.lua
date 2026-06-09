@@ -328,8 +328,9 @@ local function isThrustLow(): boolean
 	end
 	local current = if type(data.ThrustCurrent) == "number" then data.ThrustCurrent else data.ThrustMax
 	local maxFuel = if type(data.ThrustMax) == "number" and data.ThrustMax > 0 then data.ThrustMax else 60
+	local minStart = ThrustConfigs.GetEffectiveMinFuelToStart(maxFuel)
 	local ratio = current / maxFuel
-	if lowCfg.UseMinFuelThreshold ~= false and current < ThrustConfigs.MinFuelToStartFlight then
+	if lowCfg.UseMinFuelThreshold ~= false and current < minStart then
 		return true
 	end
 	local maxRatio = lowCfg.MaxFillRatio or 0.25

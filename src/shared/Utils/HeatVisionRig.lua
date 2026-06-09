@@ -14,6 +14,10 @@ export type HeatVisionRig = {
 	endPart: BasePart,
 	rayParams: RaycastParams,
 	character: Model,
+	extraRayExcludes: { Instance },
+	beamExtendAlpha: number,
+	targetBeamDistance: number,
+	aimDirection: Vector3,
 }
 
 local HeatVisionRig = {}
@@ -59,6 +63,16 @@ local function getAssetsTemplate(): Folder?
 		table.concat(HeatVisionConfigs.AssetsFolder, ".")
 	)
 	return nil
+end
+
+local function rebuildRayFilter(rig: HeatVisionRig)
+	local filter: { Instance } = { rig.character, rig.folder }
+	for _, inst in rig.extraRayExcludes do
+		if inst.Parent then
+			table.insert(filter, inst)
+		end
+	end
+	rig.rayParams.FilterDescendantsInstances = filter
 end
 
 local function flatUnit(vector: Vector3): Vector3
@@ -195,6 +209,57 @@ local function setEffectsEnabled(root: Instance, enabled: boolean)
 	end
 end
 
+local function getBeamExtendConfig()
+	local cfg = HeatVisionConfigs.BeamExtend
+	if type(cfg) ~= "table" then
+		return {
+			Duration = 0.55,
+			DurationPerStud = 0.0035,
+			MinDuration = 0.45,
+			MaxDuration = 1.15,
+			StartLength = 0.12,
+			Ease = "InOutCubic",
+		}
+	end
+	return cfg
+end
+
+local function easeOutQuad(t: number): number
+	return 1 - (1 - t) * (1 - t)
+end
+
+local function easeInOutCubic(t: number): number
+	if t < 0.5 then
+		return 4 * t * t * t
+	end
+	return 1 - (-2 * t + 2) ^ 3 / 2
+end
+
+local function easeOutExpo(t: number): number
+	if t >= 1 then
+		return 1
+	end
+	return 1 - 2 ^ (-10 * t)
+end
+
+local function applyBeamExtendEase(alpha: number, easeName: string?): number
+	local t = math.clamp(alpha, 0, 1)
+	if easeName == "OutExpo" then
+		return easeOutExpo(t)
+	elseif easeName == "OutQuad" then
+		return easeOutQuad(t)
+	end
+	return easeInOutCubic(t)
+end
+
+local function computeBeamExtendDuration(cfg: any, targetDistance: number): number
+	local base = if type(cfg.Duration) == "number" then cfg.Duration else 0.55
+	local perStud = if type(cfg.DurationPerStud) == "number" then cfg.DurationPerStud else 0.0035
+	local minDur = if type(cfg.MinDuration) == "number" then cfg.MinDuration else 0.45
+	local maxDur = if type(cfg.MaxDuration) == "number" then cfg.MaxDuration else 1.15
+	return math.clamp(base + targetDistance * perStud, minDur, maxDur)
+end
+
 local function getEyeOrigin(rig: HeatVisionRig): Vector3
 	local eyeRight = rig.headPart:FindFirstChild("Attachment")
 	local eyeLeft = rig.headPart:FindFirstChild("Attachment1")
@@ -202,6 +267,22 @@ local function getEyeOrigin(rig: HeatVisionRig): Vector3
 		return (eyeRight.WorldPosition + eyeLeft.WorldPosition) * 0.5
 	end
 	return rig.headPart.Position
+end
+
+local function placeEndPartAtDistance(rig: HeatVisionRig, distance: number)
+	local origin = getEyeOrigin(rig)
+	local direction = rig.aimDirection
+	local endPos = origin + direction * distance
+	rig.endPart.CFrame = CFrame.lookAt(endPos, endPos + direction)
+end
+
+function HeatVisionRig.resetBeamExtend(rig: HeatVisionRig)
+	local cfg = getBeamExtendConfig()
+	local startLen = if type(cfg.StartLength) == "number" then cfg.StartLength else 0.35
+	rig.beamExtendAlpha = 0
+	rig.targetBeamDistance = startLen
+	rig.aimDirection = rig.headPart.CFrame.LookVector
+	placeEndPartAtDistance(rig, startLen)
 end
 
 function HeatVisionRig.get(character: Model): HeatVisionRig?
@@ -269,24 +350,73 @@ function HeatVisionRig.mount(character: Model): HeatVisionRig?
 		endPart = endPart,
 		rayParams = rayParams,
 		character = character,
+		extraRayExcludes = {},
+		beamExtendAlpha = 0,
+		targetBeamDistance = 0.35,
+		aimDirection = head.CFrame.LookVector,
 	}
 
 	ensureFallbackBeams(rig)
 	setEffectsEnabled(clone, false)
+	HeatVisionRig.resetBeamExtend(rig)
 	rigs[character] = rig
 	return rig
 end
 
-function HeatVisionRig.setActive(rig: HeatVisionRig, active: boolean)
-	setEffectsEnabled(rig.root, active)
+function HeatVisionRig.addRayExclude(rig: HeatVisionRig, instance: Instance)
+	for _, existing in rig.extraRayExcludes do
+		if existing == instance then
+			return
+		end
+	end
+	table.insert(rig.extraRayExcludes, instance)
+	rebuildRayFilter(rig)
 end
 
-function HeatVisionRig.updateAim(rig: HeatVisionRig, lookVector: Vector3, maxRange: number): RaycastResult?
+function HeatVisionRig.clearRayExcludes(rig: HeatVisionRig)
+	table.clear(rig.extraRayExcludes)
+	rebuildRayFilter(rig)
+end
+
+function HeatVisionRig.setRayExcludes(rig: HeatVisionRig, instances: { Instance })
+	table.clear(rig.extraRayExcludes)
+	for _, inst in instances do
+		if inst.Parent then
+			table.insert(rig.extraRayExcludes, inst)
+		end
+	end
+	rebuildRayFilter(rig)
+end
+
+function HeatVisionRig.setActive(rig: HeatVisionRig, active: boolean)
+	setEffectsEnabled(rig.root, active)
+	if active then
+		HeatVisionRig.resetBeamExtend(rig)
+	end
+end
+
+function HeatVisionRig.updateAim(rig: HeatVisionRig, lookVector: Vector3, maxRange: number, dt: number?): RaycastResult?
 	local direction = flatUnit(lookVector)
+	rig.aimDirection = direction
 	local origin = getEyeOrigin(rig)
 	local result = Workspace:Raycast(origin, direction * maxRange, rig.rayParams)
-	local endPos = if result then result.Position else origin + direction * maxRange
-	rig.endPart.CFrame = CFrame.lookAt(endPos, endPos + direction)
+	local fullDist = if result then (result.Position - origin).Magnitude else maxRange
+	rig.targetBeamDistance = math.max(fullDist, 0.01)
+
+	if dt and dt > 0 then
+		local cfg = getBeamExtendConfig()
+		local duration = computeBeamExtendDuration(cfg, rig.targetBeamDistance)
+		rig.beamExtendAlpha = math.min(1, rig.beamExtendAlpha + dt / duration)
+	end
+
+	local cfg = getBeamExtendConfig()
+	local startLen = if type(cfg.StartLength) == "number" then cfg.StartLength else 0.12
+	local easeName = if type(cfg.Ease) == "string" then cfg.Ease else "InOutCubic"
+	local t = applyBeamExtendEase(rig.beamExtendAlpha, easeName)
+	local visualDist = startLen + (rig.targetBeamDistance - startLen) * t
+	visualDist = math.clamp(visualDist, startLen, rig.targetBeamDistance)
+
+	placeEndPartAtDistance(rig, visualDist)
 	return result
 end
 

@@ -40,26 +40,11 @@ local function getRootPart(character: Model): BasePart?
 	return nil
 end
 
-local function getYawPitchFromLookVector(look: Vector3): (number, number)
-	if look.Magnitude < 0.001 then
-		return yaw, pitch
-	end
-
-	local unit = look.Unit
-	local horizontalMag = math.sqrt(unit.X * unit.X + unit.Z * unit.Z)
-	if horizontalMag < 0.001 then
-		return yaw, math.atan2(-unit.Y, 1)
-	end
-
-	local extractedPitch = math.atan2(-unit.Y, horizontalMag)
-	local extractedYaw = math.atan2(unit.X, -unit.Z)
-	return extractedYaw, extractedPitch
-end
-
 local function initAimFromCamera(camera: Camera, cfg: typeof(HeatVisionConfigs.CameraLock))
-	local extractedYaw, extractedPitch = getYawPitchFromLookVector(camera.CFrame.LookVector)
-	yaw = extractedYaw
-	pitch = math.clamp(extractedPitch, cfg.MinPitch, cfg.MaxPitch)
+	-- Match scriptable shoulder camera to where the player is already looking.
+	local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+	yaw = ry
+	pitch = math.clamp(rx, cfg.MinPitch, cfg.MaxPitch)
 end
 
 local function getSensitivityScale(): number
@@ -109,6 +94,16 @@ local function applyCameraRelativeMove(humanoid: Humanoid)
 	humanoid:Move(moveVector, true)
 end
 
+local function getShoulderOffset(cfg: typeof(HeatVisionConfigs.CameraLock)): Vector3
+	local base = cfg.ShoulderOffset
+	local x = math.abs(base.X)
+	-- Keep the camera on the side that matches where the player is looking.
+	if math.sin(yaw) < 0 then
+		x = -x
+	end
+	return Vector3.new(x, base.Y, base.Z)
+end
+
 local function updateCamera(character: Model)
 	local cfg = HeatVisionConfigs.CameraLock
 	local camera = Workspace.CurrentCamera
@@ -120,21 +115,21 @@ local function updateCamera(character: Model)
 
 	local scale = getSensitivityScale()
 	local delta = UserInputService:GetMouseDelta()
-	local mouseMoved = delta.Magnitude > 0.001
-
-	if mouseMoved then
+	if delta.Magnitude > 0.001 then
 		yaw -= delta.X * cfg.YawSensitivity * scale
 		pitch = math.clamp(pitch - delta.Y * cfg.PitchSensitivity * scale, cfg.MinPitch, cfg.MaxPitch)
-		applyBodyYaw(root)
 	end
 
+	applyBodyYaw(root)
+
+	local shoulder = getShoulderOffset(cfg)
 	local rootPos = root.Position
 	local facing = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 	local focus = rootPos + Vector3.new(0, cfg.LookAtHeight, 0)
 	local camPos = focus
-		- facing.LookVector * cfg.ShoulderOffset.Z
-		+ facing.RightVector * cfg.ShoulderOffset.X
-		+ Vector3.new(0, cfg.ShoulderOffset.Y, 0)
+		- facing.LookVector * shoulder.Z
+		+ facing.RightVector * shoulder.X
+		+ Vector3.new(0, shoulder.Y, 0)
 	camera.CFrame = CFrame.lookAt(camPos, focus + facing.LookVector * 200)
 
 	applyCameraRelativeMove(humanoid)
@@ -273,6 +268,7 @@ function HeatVisionCamera.start(character: Model): boolean
 	}
 
 	initAimFromCamera(camera, cfg)
+	applyBodyYaw(root)
 
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 	UserInputService.MouseIconEnabled = false

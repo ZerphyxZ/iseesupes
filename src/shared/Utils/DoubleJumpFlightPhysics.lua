@@ -18,6 +18,7 @@ export type FlightState = {
 	clientSteerAxis: number,
 	clientSteerPitchAxis: number,
 	clientSteerDirection: Vector3?,
+	lastBankHeadingYaw: number?,
 }
 
 export type TickContext = {
@@ -70,6 +71,33 @@ end
 local function smoothstep01(t: number): number
 	local x = math.clamp(t, 0, 1)
 	return x * x * (3 - 2 * x)
+end
+
+local function wrapYawDelta(delta: number): number
+	while delta > math.pi do
+		delta -= math.pi * 2
+	end
+	while delta < -math.pi do
+		delta += math.pi * 2
+	end
+	return delta
+end
+
+local function getHeadingYaw(state: FlightState): number
+	local heading = DoubleJumpFlightPhysics.getOrientationHeading(state)
+	return math.atan2(heading.X, heading.Z)
+end
+
+local function getFlightForwardSpeed(tuning: DjTuning): number
+	local lean = tuning.Phases and tuning.Phases.LeanUp
+	if lean and typeof(lean.ForwardSpeed) == "number" and lean.ForwardSpeed > 0 then
+		return lean.ForwardSpeed
+	end
+	local after = tuning.Phases and tuning.Phases.AfterTransition
+	if after and typeof(after.ForwardSpeed) == "number" and after.ForwardSpeed > 0 then
+		return after.ForwardSpeed
+	end
+	return CharacterConfigs.DoubleJump.Phases.LeanUp.ForwardSpeed or 65
 end
 
 function DoubleJumpFlightPhysics.smoothstep01(t: number): number
@@ -359,14 +387,44 @@ end
 function DoubleJumpFlightPhysics.updateBankRoll(state: FlightState, dt: number, tuning: DjTuning, enabled: boolean)
 	local poseCfg = tuning.SupermanPose
 	if not enabled or poseCfg.BankEnabled == false then
+		state.lastBankHeadingYaw = nil
 		DoubleJumpFlightPhysics.lerpRollToward(state, 0, dt, poseCfg.BankReturnRate or 2)
 		return
 	end
 
-	local steer = math.clamp(state.clientSteerAxis or 0, -1, 1)
 	local maxBank = poseCfg.MaxBankDegrees or 55
-	if math.abs(steer) > 0.01 then
-		local target = steer * maxBank
+	local inputAxis = math.clamp(state.clientSteerAxis or 0, -1, 1)
+	local turnAxis = 0
+
+	local yaw = getHeadingYaw(state)
+	local lastYaw = state.lastBankHeadingYaw
+	state.lastBankHeadingYaw = yaw
+
+	if lastYaw ~= nil then
+		local safeDt = math.clamp(dt, 1 / 240, 1 / 15)
+		local yawRate = wrapYawDelta(yaw - lastYaw) / safeDt
+		local fullBankRate = math.rad(poseCfg.TurnYawRateForFullBank or 95)
+		if fullBankRate > 0 then
+			turnAxis = math.clamp(-yawRate / fullBankRate, -1, 1)
+			local speedRef = poseCfg.TurnSpeedReference or getFlightForwardSpeed(tuning)
+			if speedRef > 0 then
+				local speedBoost = math.sqrt(math.clamp(getFlightForwardSpeed(tuning) / speedRef, 0.5, 4))
+				turnAxis = math.clamp(turnAxis * speedBoost, -1, 1)
+			end
+		end
+	end
+
+	local turnWeight = poseCfg.TurnBankWeight or 0.92
+	local inputWeight = poseCfg.InputBankWeight or 0.28
+	local bankAxis = 0
+	if math.abs(turnAxis) > 0.04 then
+		bankAxis = math.clamp(turnAxis * turnWeight + inputAxis * inputWeight, -1, 1)
+	elseif math.abs(inputAxis) > 0.01 then
+		bankAxis = inputAxis
+	end
+
+	if math.abs(bankAxis) > 0.01 then
+		local target = bankAxis * maxBank
 		DoubleJumpFlightPhysics.lerpRollToward(state, target, dt, poseCfg.BankFollowRate or 6)
 	else
 		DoubleJumpFlightPhysics.lerpRollToward(state, 0, dt, poseCfg.BankReturnRate or 2)

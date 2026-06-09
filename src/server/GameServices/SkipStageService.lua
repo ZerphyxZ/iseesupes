@@ -136,6 +136,9 @@ function SkipStageService:TeleportToStage(player: Player, stage: number): boolea
 	end)
 
 	SkipStageService.Client.StageChanged:Fire(player, stage)
+	if StageCheckpointService and StageCheckpointService.ApplySkipStageSession then
+		StageCheckpointService:ApplySkipStageSession(player, stage)
+	end
 	print("[SkipStageService] Teleported", player.Name, "to Stage", stage)
 	return true
 end
@@ -151,12 +154,16 @@ function SkipStageService:AdvanceStageForPlayer(player: Player, stageNum: number
 
 	local currentStage = StageCheckpointProgress.getEffectiveStage(profile.Data)
 	if stageNum <= currentStage then
-		StageCheckpointDebug.log(string.format(
-			"AdvanceStageForPlayer skip player=%s stage=%d current=%d",
-			player.Name,
-			stageNum,
-			currentStage
-		), player.Name .. ":advanceSkip", 2)
+		StageCheckpointDebug.log(
+			string.format(
+				"AdvanceStageForPlayer skip player=%s stage=%d current=%d",
+				player.Name,
+				stageNum,
+				currentStage
+			),
+			player.Name .. ":advanceSkip",
+			2
+		)
 		return false
 	end
 
@@ -205,11 +212,7 @@ local function connectCheckpointTouches()
 		end
 	end
 
-	print(
-		"[SkipStageService]",
-		gateCount,
-		"stage gate part(s) — unlock with heat vision (F) only, not touch"
-	)
+	print("[SkipStageService]", gateCount, "stage gate part(s) — unlock with heat vision (F) only, not touch")
 end
 
 --- Print a live funnel showing how many players in this server have reached each stage.

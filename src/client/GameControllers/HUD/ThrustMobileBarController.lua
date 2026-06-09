@@ -19,7 +19,6 @@ local TweenService      = game:GetService("TweenService")
 local Knit          = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DataLib       = require(ReplicatedStorage.Shared.Utils.DataLib)
-local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local SupesMobileUI = require(ReplicatedStorage.Shared.Utils.SupesMobileUI)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
@@ -275,9 +274,7 @@ local function bindSupesButton(refs: Refs)
 	ensureButtonClickable(refs.baseButton)
 	currentRefs = refs
 
-	buttonTapConn = refs.baseButton.MouseButton1Down:Connect(function()
-		HudAnimations.buttonPress(refs.baseButton, onButtonTapped)
-	end)
+	buttonTapConn = refs.baseButton.MouseButton1Click:Connect(onButtonTapped)
 
 	syncFlightActiveFromAttribute()
 	local seedFill = getFillPct()
@@ -381,6 +378,10 @@ function ThrustMobileBarController:KnitStart()
 	end)
 
 	DataLib.OnThrustChanged(function()
+		refreshBarFromData()
+	end)
+
+	DataLib.OnChanged(function()
 		refreshBarFromData()
 	end)
 

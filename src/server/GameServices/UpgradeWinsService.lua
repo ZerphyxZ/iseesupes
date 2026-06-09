@@ -12,7 +12,7 @@ local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 
-export type UpgradeResultKind = "Unlocked" | "Equipped" | "NotEnoughWins" | "AvatarMissing" | "InvalidButton"
+export type UpgradeResultKind = "Unlocked" | "Equipped" | "NotEnoughWins" | "AvatarMissing" | "InvalidButton" | "PrerequisiteLocked"
 
 local UpgradeWinsService = Knit.CreateService({
 	Name = "UpgradeWinsService",
@@ -384,6 +384,7 @@ local function onUpgradeButtonTouched(button: Model, hit: BasePart)
 
 	local avatarId = meta.avatarId
 	local unlocked = isAvatarUnlocked(data, avatarId)
+	local buttonIndex = AvatarReplace.getButtonIndex(button)
 
 	if unlocked then
 		if button.Name == "Button1" then
@@ -396,6 +397,11 @@ local function onUpgradeButtonTouched(button: Model, hit: BasePart)
 		else
 			fireResult(player, "AvatarMissing", avatarId)
 		end
+		return
+	end
+
+	if buttonIndex and not UpgradeWinsConfigs.isPrerequisiteUnlocked(buttonIndex, getUnlockedAvatars(data)) then
+		fireResult(player, "PrerequisiteLocked", avatarId)
 		return
 	end
 

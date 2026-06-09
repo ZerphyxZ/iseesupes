@@ -2,6 +2,8 @@
 
 -- Shared landing helpers: walkable floor vs wall/obstacle contact.
 
+local StageCheckpointWorld = require(script.Parent.StageCheckpointWorld)
+
 local DoubleJumpLanding = {}
 
 local DEFAULT_WALKABLE_NORMAL_MIN_Y = 0.6
@@ -20,6 +22,41 @@ export type LandingProbe = {
 	onWalkableGround: boolean,
 	obstacleBlocked: boolean,
 }
+
+export type FlightProbeOptions = {
+	--- Stage gate folder — excluded from wall/obstacle cardinal rays (glass is not a crash wall).
+	ignoreWallProbeHitsIn: Instance?,
+	--- Skip walkable hits (e.g. checkpoint Spawn pads while Superman gliding).
+	ignoreWalkableInstance: ((Instance) -> boolean)?,
+}
+
+local function shouldIgnoreWalkableHit(hit: RaycastResult, options: FlightProbeOptions?): boolean
+	if not options or not options.ignoreWalkableInstance then
+		return false
+	end
+	return options.ignoreWalkableInstance(hit.Instance)
+end
+
+local function buildWallRayParams(baseParams: RaycastParams, options: FlightProbeOptions?): RaycastParams
+	if not options or not options.ignoreWallProbeHitsIn then
+		return baseParams
+	end
+
+	local excludes: { Instance } = {}
+	for _, inst in baseParams.FilterDescendantsInstances do
+		table.insert(excludes, inst)
+	end
+	table.insert(excludes, options.ignoreWallProbeHitsIn)
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = excludes
+	return params
+end
+
+local function isIgnorableFlightObstacleHit(hit: RaycastResult): boolean
+	return StageCheckpointWorld.isCheckpointHit(hit.Instance)
+end
 
 function DoubleJumpLanding.isGrounded(humanoid: Humanoid): boolean
 	return humanoid.FloorMaterial ~= Enum.Material.Air
@@ -70,7 +107,8 @@ function DoubleJumpLanding.getWalkableGroundHit(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	probeDistance: number?
+	probeDistance: number?,
+	options: FlightProbeOptions?
 ): RaycastResult?
 	local distance = probeDistance
 	if typeof(distance) ~= "number" or distance <= 0 then
@@ -82,6 +120,9 @@ function DoubleJumpLanding.getWalkableGroundHit(
 
 	local hit = DoubleJumpLanding.raycastDownFromRoot(root, distance, rayParams)
 	if hit and DoubleJumpLanding.isWalkableHit(hit, landingCfg) then
+		if shouldIgnoreWalkableHit(hit, options) then
+			return nil
+		end
 		return hit
 	end
 	return nil
@@ -91,9 +132,10 @@ function DoubleJumpLanding.isOnWalkableGround(
 	humanoid: Humanoid,
 	root: BasePart,
 	rayParams: RaycastParams,
-	landingCfg: { [string]: any }
+	landingCfg: { [string]: any },
+	options: FlightProbeOptions?
 ): boolean
-	local hit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg)
+	local hit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, nil, options)
 	if not hit then
 		return false
 	end
@@ -115,12 +157,14 @@ local function rayHitsNonWalkableObstacle(
 	direction: Vector3,
 	distance: number,
 	rayParams: RaycastParams,
-	landingCfg: { [string]: any }
+	landingCfg: { [string]: any },
+	options: FlightProbeOptions?
 ): boolean
 	if direction.Magnitude < 0.01 then
 		return false
 	end
-	local hit = workspace:Raycast(origin, direction.Unit * distance, rayParams)
+	local params = buildWallRayParams(rayParams, options)
+	local hit = workspace:Raycast(origin, direction.Unit * distance, params)
 	return hit ~= nil and not DoubleJumpLanding.isWalkableHit(hit, landingCfg)
 end
 
@@ -129,7 +173,8 @@ function DoubleJumpLanding.isBlockedByNearbyObstacle(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	moveDir: Vector3?
+	moveDir: Vector3?,
+	options: FlightProbeOptions?
 ): boolean
 	local distance = getWallProbeDistance(landingCfg)
 	local origin = root.Position + Vector3.new(0, 1, 0)
@@ -142,7 +187,7 @@ function DoubleJumpLanding.isBlockedByNearbyObstacle(
 	}
 	for _, dir in cardinals do
 		local flat = Vector3.new(dir.X, 0, dir.Z)
-		if rayHitsNonWalkableObstacle(origin, flat, distance, rayParams, landingCfg) then
+		if rayHitsNonWalkableObstacle(origin, flat, distance, rayParams, landingCfg, options) then
 			return true
 		end
 	end
@@ -150,7 +195,7 @@ function DoubleJumpLanding.isBlockedByNearbyObstacle(
 	local forward = moveDir
 	if forward and forward.Magnitude > 0.01 then
 		local flatMove = Vector3.new(forward.X, 0, forward.Z)
-		if rayHitsNonWalkableObstacle(origin, flatMove, distance + 1, rayParams, landingCfg) then
+		if rayHitsNonWalkableObstacle(origin, flatMove, distance + 1, rayParams, landingCfg, options) then
 			return true
 		end
 	end
@@ -158,7 +203,7 @@ function DoubleJumpLanding.isBlockedByNearbyObstacle(
 	local vel = root.AssemblyLinearVelocity
 	local flatVel = Vector3.new(vel.X, 0, vel.Z)
 	if flatVel.Magnitude > 8 then
-		if rayHitsNonWalkableObstacle(origin, flatVel, distance + 1, rayParams, landingCfg) then
+		if rayHitsNonWalkableObstacle(origin, flatVel, distance + 1, rayParams, landingCfg, options) then
 			return true
 		end
 	end
@@ -205,9 +250,10 @@ local function computeObstacleBlocked(
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
 	moveDir: Vector3?,
-	probe: LandingProbe
+	probe: LandingProbe,
+	options: FlightProbeOptions?
 ): boolean
-	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir) then
+	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir, options) then
 		return true
 	end
 
@@ -225,9 +271,11 @@ local function computeObstacleBlocked(
 	end
 	local nearHit = DoubleJumpLanding.raycastDownFromRoot(root, obstacleProbe, rayParams)
 	if nearHit and not DoubleJumpLanding.isWalkableHit(nearHit, landingCfg) then
-		local clearance = root.Position.Y - nearHit.Position.Y
-		if clearance <= DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg) then
-			return true
+		if not isIgnorableFlightObstacleHit(nearHit) then
+			local clearance = root.Position.Y - nearHit.Position.Y
+			if clearance <= DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg) then
+				return true
+			end
 		end
 	end
 
@@ -239,14 +287,15 @@ local function buildLandingProbeGround(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	probeDistance: number?
+	probeDistance: number?,
+	options: FlightProbeOptions?
 ): LandingProbe
 	local distance = probeDistance
 	if typeof(distance) ~= "number" or distance <= 0 then
 		distance = DoubleJumpLanding.getGlideProbeDistance(humanoid, landingCfg)
 	end
 
-	local walkableHit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, distance)
+	local walkableHit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, distance, options)
 	local triggerHeight = landingCfg.TriggerHeightAboveSurface or 6
 	local onWalkableGround = false
 	local isNearFloor = false
@@ -274,10 +323,11 @@ function DoubleJumpLanding.buildLandingProbe(
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
 	moveDir: Vector3?,
-	probeDistance: number?
+	probeDistance: number?,
+	options: FlightProbeOptions?
 ): LandingProbe
-	local probe = buildLandingProbeGround(humanoid, root, rayParams, landingCfg, probeDistance)
-	probe.obstacleBlocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, probe)
+	local probe = buildLandingProbeGround(humanoid, root, rayParams, landingCfg, probeDistance, options)
+	probe.obstacleBlocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, probe, options)
 	return probe
 end
 
@@ -292,7 +342,8 @@ function DoubleJumpLanding.refreshLandingProbe(
 	cachedProbe: LandingProbe?,
 	obstacleAt: number?,
 	obstacleBlocked: boolean?,
-	probeDistance: number?
+	probeDistance: number?,
+	options: FlightProbeOptions?
 ): (LandingProbe, number, number, boolean)
 	local groundInterval = DoubleJumpLanding.getLandingProbeInterval(landingCfg)
 	local obstacleInterval = DoubleJumpLanding.getObstacleProbeInterval(landingCfg)
@@ -312,15 +363,15 @@ function DoubleJumpLanding.refreshLandingProbe(
 
 	if not refreshGround and cachedProbe then
 		if refreshObstacle then
-			local blocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, cachedProbe)
+			local blocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, cachedProbe, options)
 			return withObstacle(cachedProbe, blocked), cacheAt :: number, now, blocked
 		end
 		return cachedProbe, cacheAt :: number, obstacleAt :: number, obstacleBlocked or cachedProbe.obstacleBlocked
 	end
 
-	local groundProbe = buildLandingProbeGround(humanoid, root, rayParams, landingCfg, probeDistance)
+	local groundProbe = buildLandingProbeGround(humanoid, root, rayParams, landingCfg, probeDistance, options)
 	if refreshObstacle then
-		local blocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, groundProbe)
+		local blocked = computeObstacleBlocked(humanoid, root, rayParams, landingCfg, moveDir, groundProbe, options)
 		return withObstacle(groundProbe, blocked), now, now, blocked
 	end
 
@@ -337,13 +388,14 @@ function DoubleJumpLanding.isNearWalkableSurface(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	moveDir: Vector3?
+	moveDir: Vector3?,
+	options: FlightProbeOptions?
 ): boolean
-	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir) then
+	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir, options) then
 		return false
 	end
 
-	if DoubleJumpLanding.isOnWalkableGround(humanoid, root, rayParams, landingCfg) then
+	if DoubleJumpLanding.isOnWalkableGround(humanoid, root, rayParams, landingCfg, options) then
 		return true
 	end
 
@@ -352,7 +404,7 @@ function DoubleJumpLanding.isNearWalkableSurface(
 		probe = DEFAULT_AIRBORNE_PROBE_DISTANCE
 	end
 
-	local hit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, probe)
+	local hit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, probe, options)
 	if not hit then
 		return false
 	end
@@ -367,9 +419,10 @@ function DoubleJumpLanding.hasObstacleContact(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	moveDir: Vector3?
+	moveDir: Vector3?,
+	options: FlightProbeOptions?
 ): boolean
-	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir) then
+	if DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir, options) then
 		return true
 	end
 
@@ -377,7 +430,7 @@ function DoubleJumpLanding.hasObstacleContact(
 		return false
 	end
 
-	if DoubleJumpLanding.isOnWalkableGround(humanoid, root, rayParams, landingCfg) then
+	if DoubleJumpLanding.isOnWalkableGround(humanoid, root, rayParams, landingCfg, options) then
 		return false
 	end
 
@@ -385,7 +438,7 @@ function DoubleJumpLanding.hasObstacleContact(
 	if typeof(airProbe) ~= "number" or airProbe <= 0 then
 		airProbe = DEFAULT_AIRBORNE_PROBE_DISTANCE
 	end
-	local farHit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, airProbe)
+	local farHit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, airProbe, options)
 	if farHit then
 		local clearance = root.Position.Y - farHit.Position.Y
 		if clearance > DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg) then
@@ -399,9 +452,11 @@ function DoubleJumpLanding.hasObstacleContact(
 	end
 	local nearHit = DoubleJumpLanding.raycastDownFromRoot(root, obstacleProbe, rayParams)
 	if nearHit and not DoubleJumpLanding.isWalkableHit(nearHit, landingCfg) then
-		local clearance = root.Position.Y - nearHit.Position.Y
-		if clearance <= DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg) then
-			return true
+		if not isIgnorableFlightObstacleHit(nearHit) then
+			local clearance = root.Position.Y - nearHit.Position.Y
+			if clearance <= DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg) then
+				return true
+			end
 		end
 	end
 
@@ -413,9 +468,10 @@ function DoubleJumpLanding.isGroundedForLanding(
 	root: BasePart,
 	rayParams: RaycastParams,
 	landingCfg: { [string]: any },
-	moveDir: Vector3?
+	moveDir: Vector3?,
+	options: FlightProbeOptions?
 ): boolean
-	return DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir)
+	return DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir, options)
 end
 
 function DoubleJumpLanding.getEffectiveHeightAbove(
@@ -454,11 +510,11 @@ function DoubleJumpLanding.shouldStartLeapDown(
 		hit = probe.walkableHit
 	end
 
-	if rayParams and moveDir and DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir) then
+	if rayParams and moveDir and DoubleJumpLanding.isBlockedByNearbyObstacle(root, rayParams, landingCfg, moveDir, nil) then
 		return false
 	end
 
-	if not probe and rayParams and DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir) then
+	if not probe and rayParams and DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir, nil) then
 		return true
 	end
 
@@ -488,7 +544,7 @@ function DoubleJumpLanding.shouldStartCancelLanding(
 		return false
 	end
 
-	if DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir) then
+	if DoubleJumpLanding.isNearWalkableSurface(humanoid, root, rayParams, landingCfg, moveDir, nil) then
 		return true
 	end
 

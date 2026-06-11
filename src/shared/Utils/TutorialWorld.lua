@@ -2,6 +2,7 @@
 
 local TutorialConfigs = require(script.Parent.Parent.Configs.TutorialConfigs)
 local MapWorld = require(script.Parent.MapWorld)
+local StageCheckpointWorld = require(script.Parent.StageCheckpointWorld)
 
 local TutorialWorld = {}
 
@@ -220,6 +221,12 @@ function TutorialWorld.getStage1TouchParts(): { BasePart }
 end
 
 function TutorialWorld.getStage1CheckpointTarget(): BasePart?
+	-- Prefer the melt gate (stable wall target); touch parts may be small/trigger-sized.
+	local gate = StageCheckpointWorld.getGatePart(1)
+	if gate then
+		return gate
+	end
+
 	local parts = TutorialWorld.getStage1TouchParts()
 	if #parts == 0 then
 		return nil

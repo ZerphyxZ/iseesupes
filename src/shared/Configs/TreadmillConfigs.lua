@@ -25,9 +25,12 @@ export type TreadmillGameplayConfig = {
 	RaycastBaseDistance: number,
 	RaycastHipHeightScale: number,
 	RaycastMaxDistance: number,
+	RaycastMaxHitDistance: number,
 	UseBoundsFallback: boolean,
 	BoundsFallbackHorizontalStuds: number,
 	BoundsFallbackVerticalStuds: number,
+	BoundsFallbackBelowStuds: number,
+	WalkSurfaceTopTolerance: number,
 	KickTeleportOffset: Vector3,
 	PointsPerTick: number,
 	--- Optional Speed XP per treadmill tick (0 = off; thrust refill is primary).
@@ -47,9 +50,17 @@ local TreadmillConfigs = {
 		RaycastBaseDistance = 3.5,
 		RaycastHipHeightScale = 1,
 		RaycastMaxDistance = 12,
+		--- Max downward hit distance to count a ray as "standing on" the belt.
+		RaycastMaxHitDistance = 6,
 		UseBoundsFallback = true,
-		BoundsFallbackHorizontalStuds = 6,
-		BoundsFallbackVerticalStuds = 4,
+		--- Extra studs beyond the walk-surface footprint (not the whole model bbox).
+		BoundsFallbackHorizontalStuds = 1.25,
+		--- HRP may sit up to HipHeight + this above the belt top.
+		BoundsFallbackVerticalStuds = 2.5,
+		--- Allow HRP slightly below belt top (avatar sink / animation).
+		BoundsFallbackBelowStuds = 0.5,
+		--- Collidable parts within this many studs of the highest top count as the belt.
+		WalkSurfaceTopTolerance = 1.25,
 		KickTeleportOffset = Vector3.new(0, 3, 0),
 		PointsPerTick = 1,
 		SpeedXpPerTick = 5,

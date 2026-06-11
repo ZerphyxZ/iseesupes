@@ -40,6 +40,7 @@ local stage1ProximityConn: RBXScriptConnection? = nil
 local stage1FlyUiShown = false
 local lastStage1FlyTriggerAt = -math.huge
 local laserHintBrokenConn: RBXScriptConnection? = nil
+local attachBeamToStage1Wall: () -> ()
 
 local STAGE1_GATE_NUM = 1
 
@@ -132,6 +133,25 @@ local function isStage1WallUnbroken(): boolean
 	return nextMeltGate == STAGE1_GATE_NUM
 end
 
+--- Foot beam should lead to the Stage 1 melt gate until the wall is broken.
+local function shouldBeamTargetStage1Wall(data: any): boolean
+	if not data or data.TutorialFlyIntroShown == true then
+		return false
+	end
+	if not hasReachedWallBreakStep(data) then
+		return false
+	end
+	return isStage1WallUnbroken()
+end
+
+local function resolveBeamStep(data: any): number
+	local step = getTutorialStep(data)
+	if shouldBeamTargetStage1Wall(data) then
+		return TutorialConfigs.Step.GoStage1
+	end
+	return step
+end
+
 local function showStage1FlyIntro()
 	destroyBeamVisuals()
 	if not TutorialFlyHint.showMainIntro() then
@@ -154,6 +174,8 @@ local function showStage1LaserHintUntilWallBroken(): boolean
 	if not TutorialLaserHint.show() then
 		return false
 	end
+
+	attachBeamToStage1Wall()
 
 	disconnectLaserHintBrokenListener()
 	local service = Knit.GetService("StageCheckpointService")
@@ -679,6 +701,17 @@ local function scheduleTargetRetry(step: number)
 	end)
 end
 
+attachBeamToStage1Wall = function()
+	local target = TutorialWorld.getStage1CheckpointTarget()
+	if not target then
+		target = TutorialWorld.waitForTarget(TutorialConfigs.Step.GoStage1, 8)
+	end
+	if target and getHrp() then
+		attachBeamToTarget(target, TutorialConfigs.Step.GoStage1, nil)
+		scheduleTargetRetry(TutorialConfigs.Step.GoStage1)
+	end
+end
+
 local function waitForThrustShopTouch(timeoutSeconds: number): BasePart?
 	local deadline = os.clock() + timeoutSeconds
 	local target = TutorialWorld.getThrustShopTouch()
@@ -964,15 +997,16 @@ local function syncTutorialFromData(data: any?)
 		return
 	end
 
-	-- From Level 2 (ClaimWins) onward the wall can be broken, so keep the laser/fly
-	-- lesson armed at Stage 1 while the beam points at the current step target.
+	-- From Level 2 (ClaimWins) onward the wall can be broken — beam leads to Stage 1
+	-- until the gate is melted, then resumes normal step targets (wins / upgrade).
 	if shouldOfferStage1FlyLesson(data) then
 		ensureStage1FlyListeners()
 	else
 		disconnectStage1Listeners()
 	end
-	showBeamForStep(step)
-	scheduleTargetRetry(step)
+	local beamStep = resolveBeamStep(data)
+	showBeamForStep(beamStep)
+	scheduleTargetRetry(beamStep)
 end
 
 function TutorialController:KnitStart()

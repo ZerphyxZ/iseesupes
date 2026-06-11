@@ -24,6 +24,10 @@ local SpeedConfigs = {
 	--- Must stay above max flight speed / 60fps (450/60 = 7.5) or flight XP stops at high level.
 	MaxCountedStudsPerFrame = 12,
 	SwimSpeedAttribute = "SwimSpeed",
+	--- Client HUD custom speed cap (integer studs/s). Nil / 0 = use full profile max.
+	CustomSpeedCapAttribute = "CustomSpeedCap",
+	--- Effective walk cap ÷ profile max (1 = full). Used to scale E-flight forward speed.
+	CustomSpeedRatioAttribute = "CustomSpeedRatio",
 	--- Icon on the +Speed burst when walking / gaining speed (EffectsSystem).
 	SpeedGainPopupImage = "rbxassetid://79786696302749",
 	--- Icon on the +Thrust burst when thrust refills (EffectsSystem).
@@ -246,6 +250,37 @@ function SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning: any, level: number)
 		pose.BankFollowRate = pose.BankFollowRate * math.sqrt(scale)
 	end
 
+	return tuning
+end
+
+--- Scales E-flight forward / steer speeds when Custom Speed HUD is below max.
+function SpeedConfigs.applyCustomSpeedRatioToDoubleJump(tuning: any, ratio: number): any
+	if ratio >= 0.999 or ratio <= 0 then
+		return tuning
+	end
+	local phases = tuning.Phases
+	if not phases then
+		return tuning
+	end
+	if phases.AfterTransition and typeof(phases.AfterTransition.ForwardSpeed) == "number" then
+		phases.AfterTransition.ForwardSpeed *= ratio
+	end
+	if phases.LeanUp and typeof(phases.LeanUp.ForwardSpeed) == "number" then
+		phases.LeanUp.ForwardSpeed *= ratio
+	end
+	local transit = phases.FlightTransit
+	if transit and typeof(transit.ForwardNudgeSpeed) == "number" then
+		transit.ForwardNudgeSpeed *= ratio
+	end
+	local steering = tuning.Steering
+	if steering then
+		if typeof(steering.HorizontalSpeed) == "number" then
+			steering.HorizontalSpeed *= ratio
+		end
+		if typeof(steering.KeyboardStrafeSpeed) == "number" then
+			steering.KeyboardStrafeSpeed *= ratio
+		end
+	end
 	return tuning
 end
 

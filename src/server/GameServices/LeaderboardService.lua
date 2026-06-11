@@ -8,6 +8,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserService = game:GetService("UserService")
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -28,6 +29,120 @@ local orderedDataStores: { [string]: OrderedDataStore } = {}
 local topUserCache: { [string]: number } = {}
 local sessionStartAt: { [Player]: number } = {}
 local lastOdsWritten: { [Player]: { [string]: number } } = {}
+local usernameCache: { [number]: string } = {}
+local pendingNameLabels: { [number]: { TextLabel } } = {}
+local usernameResolvePending: { [number]: boolean } = {}
+local usernameResolveRunning = false
+local refreshCoalesceThread: thread? = nil
+
+local DEBUG_LEADERBOARD = false
+
+local function lbPrint(...: any)
+	if DEBUG_LEADERBOARD then
+		print("[iseesupes][Leaderboard]", ...)
+	end
+end
+
+local function isValidUserId(userId: number?): boolean
+	return type(userId) == "number" and userId > 0
+end
+
+local function getCachedUsername(userId: number): string?
+	local inServer = Players:GetPlayerByUserId(userId)
+	if inServer then
+		usernameCache[userId] = inServer.Name
+		return inServer.Name
+	end
+	return usernameCache[userId]
+end
+
+local function fallbackUsername(userId: number): string
+	return "Player"
+end
+
+local function applyResolvedName(userId: number)
+	local name = getCachedUsername(userId) or fallbackUsername(userId)
+	local labels = pendingNameLabels[userId]
+	if not labels then
+		return
+	end
+	pendingNameLabels[userId] = nil
+	for _, label in labels do
+		if label.Parent then
+			label.Text = name
+		end
+	end
+end
+
+local function trackNameLabel(userId: number, label: TextLabel)
+	if not pendingNameLabels[userId] then
+		pendingNameLabels[userId] = {}
+	end
+	table.insert(pendingNameLabels[userId], label)
+end
+
+--- One global batch per tick — never blocks board render; retries on HTTP 429.
+local function processUsernameQueue()
+	if usernameResolveRunning then
+		return
+	end
+	usernameResolveRunning = true
+
+	task.spawn(function()
+		while true do
+			local missing: { number } = {}
+			for userId in usernameResolvePending do
+				if isValidUserId(userId) and not getCachedUsername(userId) then
+					table.insert(missing, userId)
+				end
+				usernameResolvePending[userId] = nil
+			end
+
+			if #missing == 0 then
+				break
+			end
+
+			lbPrint("resolveUsernames batch", #missing)
+
+			local ok, infos = pcall(function()
+				return UserService:GetUserInfosByUserIdsAsync(missing)
+			end)
+			if ok and type(infos) == "table" then
+				for _, info in infos do
+					if type(info.Id) == "number" and type(info.Username) == "string" and info.Username ~= "" then
+						usernameCache[info.Id] = info.Username
+						applyResolvedName(info.Id)
+					end
+				end
+			else
+				lbPrint("GetUserInfosByUserIdsAsync failed:", infos)
+				for _, userId in missing do
+					if not getCachedUsername(userId) then
+						usernameResolvePending[userId] = true
+					end
+				end
+				usernameResolveRunning = false
+				task.delay(8, processUsernameQueue)
+				return
+			end
+
+			task.wait(0.35)
+		end
+
+		usernameResolveRunning = false
+	end)
+end
+
+local function queueUsernameResolve(userIds: { number })
+	for _, userId in userIds do
+		if isValidUserId(userId) and not getCachedUsername(userId) then
+			usernameResolvePending[userId] = true
+		end
+	end
+	if next(usernameResolvePending) and not usernameResolveRunning then
+		processUsernameQueue()
+	end
+end
 
 local function shouldFlushPlayTime(boardKeys: { string }?): boolean
 	if boardKeys == nil then
@@ -146,6 +261,20 @@ local function clearDisplay(scrollingFrame: ScrollingFrame)
 	end
 end
 
+local function ensureListLayoutSortOrder(scrollingFrame: ScrollingFrame): UIListLayout
+	local listLayout = scrollingFrame:FindFirstChildOfClass("UIListLayout")
+	if not listLayout then
+		listLayout = Instance.new("UIListLayout")
+		listLayout.Name = "ListLayout"
+		listLayout.FillDirection = Enum.FillDirection.Vertical
+		listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		listLayout.Padding = UDim.new(0, 2)
+		listLayout.Parent = scrollingFrame
+	end
+	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	return listLayout
+end
+
 -- Studio layout: {Model}Leaderboard → Leaderboard → Board (Part) → SurfaceGui → ScrollingFrame.
 -- A sibling [UnionOperation] Board also has SurfaceGui (title only); FindFirstChildWhichIsA("SurfaceGui")
 -- often picks that one first, so ScrollingFrame lookup fails.
@@ -208,7 +337,7 @@ local function renderEntry(
 	userId: number,
 	playerName: string,
 	scoreText: string
-)
+): GuiObject?
 	local newEntry = entryTemplate:Clone()
 	newEntry.Name = "Entry_" .. tostring(rank)
 
@@ -217,11 +346,29 @@ local function renderEntry(
 	local scoreLabel = newEntry:FindFirstChild("ScoreLabel")
 	local imageLabel = newEntry:FindFirstChild("ImageLabel")
 
+	if not rankLabel or not rankLabel:IsA("TextLabel") then
+		lbPrint("renderEntry missing RankLabel rank", rank, "template", entryTemplate:GetFullName())
+	end
+	if not nameLabel or not nameLabel:IsA("TextLabel") then
+		lbPrint("renderEntry missing NameLabel rank", rank, "template", entryTemplate:GetFullName())
+	end
+	if not scoreLabel or not scoreLabel:IsA("TextLabel") then
+		lbPrint("renderEntry missing ScoreLabel rank", rank, "template", entryTemplate:GetFullName())
+	end
+
 	if rankLabel and rankLabel:IsA("TextLabel") then
 		rankLabel.Text = "#" .. tostring(rank)
 	end
 	if nameLabel and nameLabel:IsA("TextLabel") then
-		nameLabel.Text = playerName
+		local resolved = getCachedUsername(userId)
+		if resolved then
+			nameLabel.Text = resolved
+		elseif playerName ~= "" then
+			nameLabel.Text = playerName
+		else
+			nameLabel.Text = "..."
+			trackNameLabel(userId, nameLabel)
+		end
 	end
 	if scoreLabel and scoreLabel:IsA("TextLabel") then
 		scoreLabel.Text = scoreText
@@ -230,8 +377,10 @@ local function renderEntry(
 		imageLabel.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
 	end
 
+	newEntry.LayoutOrder = rank
 	newEntry.Parent = scrollingFrame
 	newEntry.Visible = true
+	return newEntry
 end
 
 local function getServerFallbackRows(config: LeaderboardConfigs.LeaderboardConfig): { { userId: number, name: string, score: number } }
@@ -291,34 +440,37 @@ end
 local lastDisplayRefreshAt: { [string]: number } = {}
 local DISPLAY_REFRESH_MIN_INTERVAL = 20
 
-function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.LeaderboardConfig)
+function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.LeaderboardConfig): { number }?
+	local boardKey = getBoardKey(config) or config.ModelName
 	local now = os.clock()
 	local last = lastDisplayRefreshAt[config.StoreName]
 	if last and now - last < DISPLAY_REFRESH_MIN_INTERVAL then
-		return
+		lbPrint("UpdateDisplay skipped (rate limit)", boardKey)
+		return nil
 	end
 	lastDisplayRefreshAt[config.StoreName] = now
 
 	local folder = getLeaderboardsFolder()
 	if not folder then
-		warn(
-			"[iseesupes] LeaderboardService: missing Workspace."
-				.. table.concat(LeaderboardConfigs.RootPath, ".")
-		)
-		return
+		warn("[iseesupes] LeaderboardService: missing Workspace." .. table.concat(LeaderboardConfigs.RootPath, "."))
+		return nil
 	end
 
 	local leaderboardModel = folder:FindFirstChild(config.ModelName)
 	if not leaderboardModel then
-		warn("[iseesupes] LeaderboardService: missing model", config.ModelName)
-		return
+		if config.ModelName ~= "StageLeaderboard" then
+			warn("[iseesupes] LeaderboardService: missing model", config.ModelName)
+		end
+		return nil
 	end
 
 	local scrollingFrame = resolveLeaderboardScrollingFrame(leaderboardModel)
 	if not scrollingFrame then
 		warn("[iseesupes] LeaderboardService: missing ScrollingFrame in", config.ModelName)
-		return
+		return nil
 	end
+
+	ensureListLayoutSortOrder(scrollingFrame)
 
 	local entryTemplate = ensureEntryTemplate(scrollingFrame)
 	if not entryTemplate then
@@ -327,12 +479,12 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 				.. table.concat(LeaderboardConfigs.TemplatePath, ".")
 				.. ")"
 		)
-		return
+		return nil
 	end
 
 	local orderedDataStore = getODS(config.StoreName)
 	if not orderedDataStore then
-		return
+		return nil
 	end
 
 	local getSuccess, pages = pcall(function()
@@ -341,7 +493,7 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 
 	if not getSuccess or not pages then
 		warn("[iseesupes] LeaderboardService: GetSortedAsync failed for", config.StoreName, pages)
-		return
+		return nil
 	end
 
 	local dataPage = pages:GetCurrentPage()
@@ -351,9 +503,21 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 		entryTemplate.Visible = false
 	end
 
-	local topEntry = dataPage[1]
-	if topEntry then
-		setTopUser(config, tonumber(topEntry.key))
+	local pageUserIds: { number } = {}
+
+	for _, entryData in dataPage do
+		local userId = tonumber(entryData.key)
+		if isValidUserId(userId) then
+			table.insert(pageUserIds, userId :: number)
+		end
+	end
+
+	for _, entryData in dataPage do
+		local topUserId = tonumber(entryData.key)
+		if isValidUserId(topUserId) then
+			setTopUser(config, topUserId)
+			break
+		end
 	end
 
 	if #dataPage == 0 then
@@ -371,37 +535,59 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 				config.ScoreFormatter(row.score)
 			)
 		end
-		return
+		return pageUserIds
 	end
 
-	for rank, entryData in ipairs(dataPage) do
+	local displayRank = 0
+	for _, entryData in ipairs(dataPage) do
 		local userId = tonumber(entryData.key)
 		local score = entryData.value
-		if not userId then
+		if not isValidUserId(userId) or type(score) ~= "number" then
 			continue
 		end
 
-		task.spawn(function()
-			local nameSuccess, playerName = pcall(function()
-				return Players:GetNameFromUserIdAsync(userId)
-			end)
-			if not nameSuccess or type(playerName) ~= "string" then
-				playerName = "Loading..."
-			end
-
-			if not scrollingFrame.Parent then
-				return
-			end
-
-			renderEntry(entryTemplate, scrollingFrame, rank, userId, playerName, config.ScoreFormatter(score))
-		end)
+		displayRank += 1
+		renderEntry(
+			entryTemplate,
+			scrollingFrame,
+			displayRank,
+			userId :: number,
+			"",
+			config.ScoreFormatter(score)
+		)
 	end
+
+	queueUsernameResolve(pageUserIds)
+	return pageUserIds
+end
+
+function LeaderboardService:_RefreshAllDisplaysNow()
+	local allUserIds: { number } = {}
+	local seen: { [number]: boolean } = {}
+
+	for _, config in LeaderboardConfigs.Boards do
+		local pageUserIds = self:UpdateDisplay(config)
+		if pageUserIds then
+			for _, userId in pageUserIds do
+				if not seen[userId] then
+					seen[userId] = true
+					table.insert(allUserIds, userId)
+				end
+			end
+		end
+	end
+
+	queueUsernameResolve(allUserIds)
 end
 
 function LeaderboardService:RefreshAllDisplays()
-	for _, config in LeaderboardConfigs.Boards do
-		self:UpdateDisplay(config)
+	if refreshCoalesceThread then
+		task.cancel(refreshCoalesceThread)
 	end
+	refreshCoalesceThread = task.delay(2, function()
+		refreshCoalesceThread = nil
+		self:_RefreshAllDisplaysNow()
+	end)
 end
 
 function LeaderboardService:SavePlayer(player: Player, boardKeys: { string }?)
@@ -437,11 +623,13 @@ function LeaderboardService:SavePlayer(player: Player, boardKeys: { string }?)
 		end
 		local ods = getODS(config.StoreName)
 		if ods then
-			local ok = pcall(function()
+			local ok, err = pcall(function()
 				ods:SetAsync(userKey, floored)
 			end)
 			if ok then
 				written[boardKey] = floored
+			else
+				warn("[iseesupes][Leaderboard] SavePlayer failed", player.Name, boardKey, err)
 			end
 		end
 	end

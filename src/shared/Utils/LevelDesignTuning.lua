@@ -488,7 +488,15 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 	}
 
 	local level = SpeedConfigs.GetPlayerLevel(player)
-	return SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning, level) :: DoubleJumpTuning
+	local tuning = SpeedConfigs.ApplyFlightScalingToDoubleJump(tuning, level) :: DoubleJumpTuning
+	local character = player.Character
+	if character then
+		local ratio = character:GetAttribute(SpeedConfigs.CustomSpeedRatioAttribute)
+		if typeof(ratio) == "number" then
+			tuning = SpeedConfigs.applyCustomSpeedRatioToDoubleJump(tuning, ratio) :: DoubleJumpTuning
+		end
+	end
+	return tuning
 end
 
 function LevelDesignTuning.getSpeedMultiplier(player: Player): number

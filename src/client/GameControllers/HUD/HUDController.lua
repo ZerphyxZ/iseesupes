@@ -9,12 +9,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
-local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
-local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 
@@ -41,25 +39,6 @@ local function getWinsFromData(data: any): number
 		return data.Wins
 	end
 	return 0
-end
-
-local function setCharacterSwimSpeed(player: Player, speed: number)
-	local character = player.Character
-	if character then
-		character:SetAttribute(SpeedConfigs.SwimSpeedAttribute, speed)
-	end
-end
-
-local function bindCharacterSwimSpeed(player: Player, getSpeed: () -> number)
-	local function apply()
-		setCharacterSwimSpeed(player, getSpeed())
-	end
-	player.CharacterAdded:Connect(function()
-		task.defer(apply)
-	end)
-	if player.Character then
-		apply()
-	end
 end
 
 local function setupWinsHUD(hud: Instance, player: Player)
@@ -156,13 +135,18 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 	local isMaxSpeedMode = true
 	local displayedSpeed = 0
 
+	local function formatSpeedText(speed: number): string
+		return tostring(math.max(0, math.floor(speed + 0.5)))
+	end
+
 	local function getMaxSpeed(): number
 		return CharacterMovementSpeed.getSpeedForData(player, DataLib.GetData())
 	end
 
-	local function applySwimSpeed(speed: number)
-		displayedSpeed = speed
-		setCharacterSwimSpeed(player, LevelDesignTuning.resolveSwimSpeed(player, speed))
+	local function applyCustomSpeed(baseSpeed: number)
+		displayedSpeed = math.max(0, math.floor(baseSpeed + 0.5))
+		CharacterMovementSpeed.setCustomSpeedCap(player, if isMaxSpeedMode then nil else displayedSpeed)
+		CharacterMovementSpeed.applyToPlayer(player, DataLib.GetData())
 	end
 
 	local function updateDisplay()
@@ -170,8 +154,8 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 		maxSpeedLabel.Text = "MAX: " .. NumberFormatter.Format(maxSpeed)
 
 		if isMaxSpeedMode then
-			enterSpeedBox.Text = tostring(maxSpeed)
-			applySwimSpeed(maxSpeed)
+			enterSpeedBox.Text = formatSpeedText(maxSpeed)
+			applyCustomSpeed(maxSpeed)
 		end
 
 		HudAnimations.pulse(maxSpeedLabel, 1.06, 0.2)
@@ -189,6 +173,7 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 		if not inputNum then
 			inputNum = maxSpeed
 		end
+		inputNum = math.floor(inputNum + 0.5)
 
 		if inputNum >= maxSpeed then
 			inputNum = maxSpeed
@@ -198,25 +183,25 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 			isMaxSpeedMode = false
 		end
 
-		enterSpeedBox.Text = tostring(inputNum)
-		if inputNum ~= displayedSpeed then
-			applySwimSpeed(inputNum)
+		enterSpeedBox.Text = formatSpeedText(inputNum)
+		local previous = displayedSpeed
+		applyCustomSpeed(inputNum)
+		if inputNum ~= previous then
 			HudAnimations.pulse(customSpeedFrame, nil, 0.22)
 		end
 	end)
 
-	local function resolveDisplayedSpeed(): number
-		local base = if isMaxSpeedMode then getMaxSpeed() else displayedSpeed
-		return LevelDesignTuning.resolveSwimSpeed(player, base)
-	end
-
-	bindCharacterSwimSpeed(player, resolveDisplayedSpeed)
+	player.CharacterAdded:Connect(function()
+		task.defer(function()
+			applyCustomSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
+		end)
+	end)
 
 	player:GetAttributeChangedSignal(LevelDesignConfigs.Speed.MultiplierAttribute):Connect(function()
-		applySwimSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
+		applyCustomSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
 	end)
 	player:GetAttributeChangedSignal(LevelDesignConfigs.Speed.OverrideAttribute):Connect(function()
-		applySwimSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
+		applyCustomSpeed(if isMaxSpeedMode then getMaxSpeed() else displayedSpeed)
 	end)
 
 	DataLib.OnChanged(updateDisplay)

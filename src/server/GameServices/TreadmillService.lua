@@ -55,6 +55,16 @@ local killTouchConns: { [Instance]: RBXScriptConnection } = {}
 local timeAccumulator = 0
 local debugMissLastAt: { [Player]: number } = {}
 
+type WalkSurface = {
+	minX: number,
+	maxX: number,
+	minZ: number,
+	maxZ: number,
+	topY: number,
+}
+
+local walkSurfaceCache: { [Model]: WalkSurface? } = {}
+
 local RAY_ORIGIN_PART_NAMES = { "HumanoidRootPart", "LeftFoot", "RightFoot", "Left Leg", "Right Leg" }
 
 -- [ INIT ] -------------------------------------------------------------------
@@ -102,6 +112,8 @@ local function indexStudioTreadmills()
 	if not treadmillsFolder then
 		return
 	end
+
+	table.clear(walkSurfaceCache)
 
 	for _, child in treadmillsFolder:GetChildren() do
 		if child:IsA("Model") then
@@ -207,7 +219,57 @@ local function raycastToTreadmill(
 	return model, tier, result.Distance
 end
 
-local function detectViaBounds(rootPart: BasePart): (Model?, TreadmillTier?)
+local function getWalkSurface(model: Model): WalkSurface?
+	local cached = walkSurfaceCache[model]
+	if cached then
+		return cached
+	end
+
+	local topTolerance = if type(GameplayCfg.WalkSurfaceTopTolerance) == "number"
+		then GameplayCfg.WalkSurfaceTopTolerance
+		else 1.25
+
+	local maxTop = -math.huge
+	for _, desc in model:GetDescendants() do
+		if desc:IsA("BasePart") and desc.CanCollide then
+			maxTop = math.max(maxTop, desc.Position.Y + desc.Size.Y / 2)
+		end
+	end
+	if maxTop == -math.huge then
+		walkSurfaceCache[model] = nil
+		return nil
+	end
+
+	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+	for _, desc in model:GetDescendants() do
+		if desc:IsA("BasePart") and desc.CanCollide then
+			local top = desc.Position.Y + desc.Size.Y / 2
+			if top >= maxTop - topTolerance then
+				minX = math.min(minX, desc.Position.X - desc.Size.X / 2)
+				maxX = math.max(maxX, desc.Position.X + desc.Size.X / 2)
+				minZ = math.min(minZ, desc.Position.Z - desc.Size.Z / 2)
+				maxZ = math.max(maxZ, desc.Position.Z + desc.Size.Z / 2)
+			end
+		end
+	end
+
+	if minX == math.huge then
+		walkSurfaceCache[model] = nil
+		return nil
+	end
+
+	local surface: WalkSurface = {
+		minX = minX,
+		maxX = maxX,
+		minZ = minZ,
+		maxZ = maxZ,
+		topY = maxTop,
+	}
+	walkSurfaceCache[model] = surface
+	return surface
+end
+
+local function detectViaBounds(rootPart: BasePart, humanoid: Humanoid): (Model?, TreadmillTier?)
 	if treadmillsFolder == nil or GameplayCfg.UseBoundsFallback == false then
 		return nil, nil
 	end
@@ -215,10 +277,13 @@ local function detectViaBounds(rootPart: BasePart): (Model?, TreadmillTier?)
 	local hrpPos = rootPart.Position
 	local horiz = if type(GameplayCfg.BoundsFallbackHorizontalStuds) == "number"
 		then GameplayCfg.BoundsFallbackHorizontalStuds
-		else 6
-	local vert = if type(GameplayCfg.BoundsFallbackVerticalStuds) == "number"
+		else 1.25
+	local vertAbove = if type(GameplayCfg.BoundsFallbackVerticalStuds) == "number"
 		then GameplayCfg.BoundsFallbackVerticalStuds
-		else 4
+		else 2.5
+	local vertBelow = if type(GameplayCfg.BoundsFallbackBelowStuds) == "number"
+		then GameplayCfg.BoundsFallbackBelowStuds
+		else 0.5
 
 	for _, child in treadmillsFolder:GetChildren() do
 		if not child:IsA("Model") then
@@ -229,14 +294,18 @@ local function detectViaBounds(rootPart: BasePart): (Model?, TreadmillTier?)
 			continue
 		end
 
-		local cf, size = child:GetBoundingBox()
-		local localPos = cf:PointToObjectSpace(hrpPos)
-		local half = size * 0.5
+		local surface = getWalkSurface(child)
+		if not surface then
+			continue
+		end
+
 		if
-			math.abs(localPos.X) <= half.X + horiz
-			and math.abs(localPos.Z) <= half.Z + horiz
-			and localPos.Y >= -half.Y - vert
-			and localPos.Y <= half.Y + vert
+			hrpPos.X >= surface.minX - horiz
+			and hrpPos.X <= surface.maxX + horiz
+			and hrpPos.Z >= surface.minZ - horiz
+			and hrpPos.Z <= surface.maxZ + horiz
+			and hrpPos.Y >= surface.topY - vertBelow
+			and hrpPos.Y <= surface.topY + humanoid.HipHeight + vertAbove
 		then
 			return child, tier
 		end
@@ -311,10 +380,15 @@ local function detectTreadmillUnderCharacter(
 	end
 
 	if bestModel and bestTier then
-		return bestModel, bestTier
+		local maxHit = if type(GameplayCfg.RaycastMaxHitDistance) == "number"
+			then GameplayCfg.RaycastMaxHitDistance
+			else 6
+		if bestDist <= maxHit then
+			return bestModel, bestTier
+		end
 	end
 
-	return detectViaBounds(rootPart)
+	return detectViaBounds(rootPart, humanoid)
 end
 
 local function fireActiveTreadmill(player: Player, tier: TreadmillTier?)

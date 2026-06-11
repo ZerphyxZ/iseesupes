@@ -74,7 +74,7 @@ local TutorialConfigs = {
 		[1] = "Train on the treadmill to level up!",
 		[2] = "Claim wins here (get 3 total)!",
 		[3] = "Unlock your first suit!",
-		[5] = "Head to Stage 1!",
+		[5] = "Head to Stage 1 — melt the wall with your laser!",
 	},
 
 	FlyIntro = {

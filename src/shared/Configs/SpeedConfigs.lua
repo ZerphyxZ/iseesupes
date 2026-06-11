@@ -5,19 +5,24 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 
-local FLIGHT_SCALE_FULL_AT_LEVEL = 4
-local WALK_AT_FLIGHT_REF = 8 + (FLIGHT_SCALE_FULL_AT_LEVEL - 1) * 3
 local LEGACY_AFTER_FORWARD = CharacterConfigs.DoubleJump.Phases.AfterTransition.ForwardSpeed
 
 local SpeedConfigs = {
 	StudsRequired = 8,
 	BaseXpCost = 300,
 	CostMultiplier = 1.3,
+	--- After this level, per-level XP cost grows by SoftCostMultiplier instead of
+	--- CostMultiplier. Stage gates end at L25; without this bend 1.3^N makes
+	--- L46 cost ~40M XP for one level and the late flight curve unreachable.
+	SoftCapLevel = 25,
+	SoftCostMultiplier = 1.1,
 	BaseWalkSpeed = 8,
-	SpeedPerLevel = 3,
 	RebirthPercentPerStep = 50,
 	SpeedGainPerStudBatch = 1,
 	AddSpeedMinInterval = 0.05,
+	--- Anti-teleport cap on per-frame distance counted for Speed XP (SpeedController).
+	--- Must stay above max flight speed / 60fps (450/60 = 7.5) or flight XP stops at high level.
+	MaxCountedStudsPerFrame = 12,
 	SwimSpeedAttribute = "SwimSpeed",
 	--- Icon on the +Speed burst when walking / gaining speed (EffectsSystem).
 	SpeedGainPopupImage = "rbxassetid://79786696302749",
@@ -30,8 +35,15 @@ function SpeedConfigs.GetExperienceForLevel(level: number): number
 		return 0
 	end
 	local total = 0
+	local step = SpeedConfigs.BaseXpCost
 	for i = 1, level - 1 do
-		total += math.floor(SpeedConfigs.BaseXpCost * (SpeedConfigs.CostMultiplier ^ (i - 1)))
+		if i > 1 then
+			local mult = if i <= SpeedConfigs.SoftCapLevel - 1
+				then SpeedConfigs.CostMultiplier
+				else SpeedConfigs.SoftCostMultiplier
+			step *= mult
+		end
+		total += math.floor(step)
 	end
 	return total
 end
@@ -48,9 +60,72 @@ function SpeedConfigs.GetLevelFromSpeed(speed: number): number
 	return level
 end
 
-function SpeedConfigs.GetSpeedFromLevel(level: number): number
+-- ──────────────────────────────────────────────────────────────────
+-- Level → speed curves (piecewise-linear anchors).
+-- Design: low, learnable speed while players discover the map; crazy speed
+-- arrives gradually at high levels. Tune by editing anchor rows only.
+-- ──────────────────────────────────────────────────────────────────
+
+export type CurveAnchor = { level: number, value: number }
+
+--- Walk / swim speed (Humanoid.WalkSpeed). Old formula (8 + 3/level) hit 59 at
+--- L18 — uncontrollable on obstacles. Slow growth, soft-capped late.
+SpeedConfigs.WalkSpeedCurve = {
+	{ level = 1, value = 8 },
+	{ level = 3, value = 11 },
+	{ level = 5, value = 14 },
+	{ level = 8, value = 18 },
+	{ level = 12, value = 23 },
+	{ level = 16, value = 27 },
+	{ level = 20, value = 31 },
+	{ level = 25, value = 35 },
+	{ level = 32, value = 40 },
+	{ level = 40, value = 46 },
+	{ level = 50, value = 52 },
+	{ level = 60, value = 58 },
+	{ level = 80, value = 67 },
+	{ level = 100, value = 75 },
+} :: { CurveAnchor }
+
+--- E-flight forward speed (studs/s). Old formula reached its full 4.48x walk
+--- multiplier at L4 and gave ~285 studs/s at L18. New curve: learn the map
+--- early, earn crazy speed late. Flat beyond the last anchor.
+SpeedConfigs.FlightSpeedCurve = {
+	{ level = 1, value = 50 },
+	{ level = 3, value = 62 },
+	{ level = 5, value = 75 },
+	{ level = 8, value = 88 },
+	{ level = 12, value = 102 },
+	{ level = 16, value = 115 },
+	{ level = 20, value = 130 },
+	{ level = 25, value = 150 },
+	{ level = 32, value = 180 },
+	{ level = 40, value = 215 },
+	{ level = 50, value = 260 },
+	{ level = 65, value = 320 },
+	{ level = 80, value = 380 },
+	{ level = 100, value = 450 },
+} :: { CurveAnchor }
+
+local function evalLevelCurve(curve: { CurveAnchor }, level: number): number
 	local lvl = math.max(1, math.floor(level))
-	return SpeedConfigs.BaseWalkSpeed + (lvl - 1) * SpeedConfigs.SpeedPerLevel
+	local first = curve[1]
+	if lvl <= first.level then
+		return first.value
+	end
+	for i = 2, #curve do
+		local a = curve[i - 1]
+		local b = curve[i]
+		if lvl <= b.level then
+			local t = (lvl - a.level) / (b.level - a.level)
+			return a.value + (b.value - a.value) * t
+		end
+	end
+	return curve[#curve].value
+end
+
+function SpeedConfigs.GetSpeedFromLevel(level: number): number
+	return evalLevelCurve(SpeedConfigs.WalkSpeedCurve, level)
 end
 
 -- Alias used by HUD swim cap
@@ -80,30 +155,27 @@ function SpeedConfigs.SyncLevelFromSpeed(data: any): (number, number)
 	return oldLevel, newLevel
 end
 
--- E-ability horizontal flight scales with Speed level (walk-linked); thrust fuel unchanged.
+-- E-ability horizontal flight follows FlightSpeedCurve (no longer walk-linked);
+-- steering / yaw rates still scale with the resulting speed in ApplyFlightScalingToDoubleJump.
 SpeedConfigs.Flight = {
-	MinWalkMultiplier = 1.15,
-	MaxWalkMultiplier = (LEGACY_AFTER_FORWARD / WALK_AT_FLIGHT_REF) * 1.12,
-	ScaleFullAtLevel = FLIGHT_SCALE_FULL_AT_LEVEL,
 	ReferenceAfterForward = LEGACY_AFTER_FORWARD,
-	--- Extra horizontal flight feel (1 = plan baseline). Tune here after playtest.
-	SpeedBoost = 1.08,
+	--- Global flight feel multiplier on top of FlightSpeedCurve (1 = curve as authored).
+	SpeedBoost = 1,
 }
 
+--- Compat: flight-to-walk ratio now derived from the two curves.
 function SpeedConfigs.GetFlightWalkMultiplier(level: number): number
-	local cfg = SpeedConfigs.Flight
-	local lvl = math.max(1, math.floor(level))
-	local t = 1
-	if cfg.ScaleFullAtLevel > 1 then
-		t = math.clamp((lvl - 1) / (cfg.ScaleFullAtLevel - 1), 0, 1)
+	local walk = SpeedConfigs.GetSpeedFromLevel(level)
+	if walk <= 0 then
+		return 1
 	end
-	return cfg.MinWalkMultiplier + (cfg.MaxWalkMultiplier - cfg.MinWalkMultiplier) * t
+	return SpeedConfigs.GetFlightForwardSpeed(level) / walk
 end
 
 function SpeedConfigs.GetFlightForwardSpeed(level: number): number
 	local cfg = SpeedConfigs.Flight
 	local boost = if typeof(cfg.SpeedBoost) == "number" and cfg.SpeedBoost > 0 then cfg.SpeedBoost else 1
-	return SpeedConfigs.GetSpeedFromLevel(level) * SpeedConfigs.GetFlightWalkMultiplier(level) * boost
+	return evalLevelCurve(SpeedConfigs.FlightSpeedCurve, level) * boost
 end
 
 function SpeedConfigs.GetPlayerLevel(player: Player): number
@@ -181,16 +253,29 @@ end
 -- Solar energy (heat vision) lives in HeatVisionConfigs.SolarEnergy — separate profile fields.
 local Thrust = {
 	BaseMaxFuel = 60,
+	--- Drain per second at L1 flight speed. Actual drain RISES with flight speed
+	--- (see GetFlightDrainPerSecond) so faster flight burns hotter — one tank
+	--- should never comfortably cover a full stage without thrust upgrades.
 	DrainPerSecond = 10,
+	--- Drain grows with (flightSpeed / L1 flightSpeed)^exponent. 0 = flat drain,
+	--- 1 = constant studs-per-fuel. 0.6 keeps range growing slowly with level
+	--- while time-per-tank shrinks → permanent "need more thrust" pressure.
+	DrainSpeedExponent = 0.6,
 	TreadmillRefillPerTick = 0,
+	--- Ground refill floor (per second). Intentionally flat across levels —
+	--- leveling speed must NOT erase thrust anxiety.
 	PassiveRefillRate = 7,
+	--- Bigger tanks refill proportionally (rate = max(floor, ThrustMax * this)),
+	--- so a full refill converges to ~20s regardless of upgrades.
+	PassiveRefillPercentOfMax = 0.05,
 	FlightRefillRate = 0,
 	MinFuelToStartFlight = 15,
 	EmptyDescentGrace = 0.6,
 	SpeedPointsToMaxFuelBonus = 1,
 	MaxFuelBonusFromProducts = 0,
 	ReplicateMinInterval = 0.25,
-	LeanUpSafetyMaxDuration = 45,
+	-- Safety net only; upgraded tanks can glide ~50s+, fuel is the real limiter.
+	LeanUpSafetyMaxDuration = 90,
 	-- Player attribute (Properties panel) to set max thrust fuel directly. 0 = use BaseMaxFuel.
 	PowerAttribute = "ThrustPower",
 	DefaultPower = 0,
@@ -294,5 +379,68 @@ function Thrust.ApplyPower(data: any, power: number?, refill: boolean?): boolean
 end
 
 SpeedConfigs.Thrust = Thrust
+
+-- ──────────────────────────────────────────────────────────────────
+-- Speed-Scaling System
+-- Higher Speed level → shorter cooldowns and faster flight, but ALSO faster
+-- thrust drain. Refill stays flat per level. Net effect: speed is the grind,
+-- thrust upgrades are the permanent chase ("always more thrust").
+-- ──────────────────────────────────────────────────────────────────
+
+--- Generic cooldown reducer. Returns base cooldown minus (level-1)*reduction,
+--- clamped between minCD and base.
+function SpeedConfigs.ScaledCooldown(base: number, level: number, reductionPerLevel: number, minCD: number): number
+	local lvl = math.max(1, math.floor(level))
+	return math.clamp(base - (lvl - 1) * reductionPerLevel, minCD, base)
+end
+
+--- Double-jump / flight cooldown: 5.0s at L1 → 0.8s at L85+.
+function SpeedConfigs.GetDoubleJumpCooldown(level: number): number
+	return SpeedConfigs.ScaledCooldown(5.0, level, 0.05, 0.8)
+end
+
+--- Long-jump cooldown: 1.0s at L1 → 0.2s at L41+.
+function SpeedConfigs.GetLongJumpCooldown(level: number): number
+	return SpeedConfigs.ScaledCooldown(1.0, level, 0.02, 0.2)
+end
+
+--- Super-jump cooldown: 1.5s at L1 → 0.4s at L74+.
+function SpeedConfigs.GetSuperJumpCooldown(level: number): number
+	return SpeedConfigs.ScaledCooldown(1.5, level, 0.015, 0.4)
+end
+
+--- Heat-vision / laser-beam post-depletion cooldown: 2.5s at L1 → 0.3s at L111+.
+function SpeedConfigs.GetHeatVisionCooldown(level: number): number
+	return SpeedConfigs.ScaledCooldown(2.5, level, 0.02, 0.3)
+end
+
+--- Thrust drain per second while flying. Scales UP with flight speed:
+--- drain = DrainPerSecond * (flightSpeed / L1 flightSpeed)^DrainSpeedExponent.
+--- L1 = 10/s (6.0s tank), L12 ≈ 15.3/s (3.9s), L25 ≈ 19.3/s (3.1s),
+--- L100 ≈ 37/s — a base 60 tank always feels too small. That is the point.
+function SpeedConfigs.GetFlightDrainPerSecond(level: number): number
+	local baseSpeed = evalLevelCurve(SpeedConfigs.FlightSpeedCurve, 1)
+	local speed = SpeedConfigs.GetFlightForwardSpeed(level)
+	if baseSpeed <= 0 or speed <= 0 then
+		return Thrust.DrainPerSecond
+	end
+	local exponent = Thrust.DrainSpeedExponent
+	if typeof(exponent) ~= "number" or exponent < 0 then
+		exponent = 0
+	end
+	return Thrust.DrainPerSecond * (speed / baseSpeed) ^ exponent
+end
+
+--- Passive thrust refill rate (on the ground, not flying). Flat per level —
+--- only a bigger tank (thrust upgrades) speeds up the absolute refill.
+function SpeedConfigs.GetPassiveRefillRate(level: number, thrustMax: number?): number
+	local floorRate = Thrust.PassiveRefillRate
+	local max = if typeof(thrustMax) == "number" and thrustMax > 0 then thrustMax else Thrust.BaseMaxFuel
+	local pct = Thrust.PassiveRefillPercentOfMax
+	if typeof(pct) ~= "number" or pct <= 0 then
+		return floorRate
+	end
+	return math.max(floorRate, max * pct)
+end
 
 return SpeedConfigs

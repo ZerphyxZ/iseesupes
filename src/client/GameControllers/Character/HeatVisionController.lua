@@ -21,6 +21,11 @@ local SJ_PHASE_ATTR = "SjAbilityPhase"
 
 local KEY_CODES: { [string]: Enum.KeyCode } = {
 	F = Enum.KeyCode.F,
+	ButtonX = Enum.KeyCode.ButtonX,
+	ButtonY = Enum.KeyCode.ButtonY,
+	ButtonB = Enum.KeyCode.ButtonB,
+	ButtonL1 = Enum.KeyCode.ButtonL1,
+	ButtonR1 = Enum.KeyCode.ButtonR1,
 }
 
 local HeatVisionController = Knit.CreateController({ Name = "HeatVisionController" })
@@ -63,6 +68,8 @@ local function notifyRejected(reason: string?)
 		NotificationManager.show("Fly to recharge solar energy for heat vision", "Info")
 	elseif reason == "active" then
 		return
+	elseif reason == "cooldown" then
+		NotificationManager.show("Laser beam recharging...", "Info")
 	elseif reason == "no_rig" then
 		NotificationManager.show("Heat vision assets missing", "Info")
 	elseif reason == "flying" then
@@ -278,8 +285,14 @@ local function bindAction()
 		return
 	end
 
+	local inputs: { Enum.KeyCode } = { keyCode }
+	local gamepadKey = KEY_CODES[HeatVisionConfigs.GamepadKey]
+	if gamepadKey then
+		table.insert(inputs, gamepadKey)
+	end
+
 	actionBound = true
-	ContextActionService:BindAction(HeatVisionConfigs.ActionName, onHeatVisionAction, false, keyCode)
+	ContextActionService:BindAction(HeatVisionConfigs.ActionName, onHeatVisionAction, false, table.unpack(inputs))
 end
 
 function HeatVisionController:KnitStart()

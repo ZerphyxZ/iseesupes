@@ -102,7 +102,12 @@ function RebirthController:KnitStart()
 		beforeSpeedLabel.Text = formatMult(currentMult)
 
 		afterLevelLabel.Text = "Level " .. NumberFormatter.Format(nextReqLevel)
-		afterSpeedLabel.Text = formatMult(nextMult)
+		local afterText = formatMult(nextMult)
+		local thrustPerk = RebirthConfigs.ThrustBonusPerRebirth
+		if typeof(thrustPerk) == "number" and thrustPerk > 0 then
+			afterText ..= " +" .. thrustPerk .. " Thrust"
+		end
+		afterSpeedLabel.Text = afterText
 
 		local progress = currentLevel / reqLevel
 		local displayLevel = math.min(currentLevel, reqLevel)

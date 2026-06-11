@@ -13,6 +13,7 @@ local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs
 local TutorialWorld = require(ReplicatedStorage.Shared.Utils.TutorialWorld)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local TutorialFlyHint = require(script.Parent.Parent.Parent.Modules.TutorialFlyHint)
+local TutorialLaserHint = require(script.Parent.Parent.Parent.Modules.TutorialLaserHint)
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
 
 local TutorialController = Knit.CreateController({ Name = "TutorialController" })
@@ -30,12 +31,21 @@ local retryThread: thread? = nil
 local activeStep = 0
 local thrustHintBeamUntil = 0
 local thrustHintTriggered = false
+--- Per-session: tiers whose "affordable" reminder beam has already shown.
+local affordableThrustHintTiers: { [number]: boolean } = {}
 local thrustShopIntroTriggered = false
 local thrustShopHighlight: Highlight? = nil
 local stage1TouchConns: { RBXScriptConnection } = {}
 local stage1ProximityConn: RBXScriptConnection? = nil
 local stage1FlyUiShown = false
 local lastStage1FlyTriggerAt = -math.huge
+local laserHintBrokenConn: RBXScriptConnection? = nil
+
+local STAGE1_GATE_NUM = 1
+
+local function isStage1HintActive(): boolean
+	return TutorialFlyHint.isActive() or TutorialLaserHint.isActive()
+end
 
 local function getTutorialStep(data: any): number
 	if not data or type(data.TutorialStep) ~= "number" then
@@ -51,10 +61,9 @@ local function isTutorialFullyComplete(data: any): boolean
 	return getTutorialStep(data) >= TutorialConfigs.Step.Complete
 end
 
-local function hasFinishedCoreTutorial(data: any): boolean
-	local wins = if type(data.Wins) == "number" then math.floor(data.Wins) else 0
-	return wins >= TutorialConfigs.MinWinsForUpgradeStep
-		or getTutorialStep(data) >= TutorialConfigs.Step.CoreDone
+--- Wall break is possible as soon as the treadmill step is done (Level 2 → ClaimWins step).
+local function hasReachedWallBreakStep(data: any): boolean
+	return getTutorialStep(data) >= TutorialConfigs.Step.ClaimWins
 end
 
 local function destroyBeamVisuals()
@@ -101,17 +110,7 @@ local function shouldOfferStage1FlyLesson(data: any): boolean
 	if not data or data.TutorialFlyIntroShown == true then
 		return false
 	end
-	if not hasFinishedCoreTutorial(data) then
-		return false
-	end
-	local step = getTutorialStep(data)
-	if step >= TutorialConfigs.Step.CoreDone and step < TutorialConfigs.Step.Complete then
-		return true
-	end
-	if step >= TutorialConfigs.Step.Complete then
-		return true
-	end
-	return false
+	return hasReachedWallBreakStep(data)
 end
 
 local function disconnectStage1Listeners()
@@ -125,8 +124,52 @@ local function disconnectStage1Listeners()
 	end
 end
 
+local function isStage1WallUnbroken(): boolean
+	local nextMeltGate: number? = nil
+	pcall(function()
+		nextMeltGate = Knit.GetController("StageCheckpointController"):GetNextMeltGateStage()
+	end)
+	return nextMeltGate == STAGE1_GATE_NUM
+end
+
+local function showStage1FlyIntro()
+	destroyBeamVisuals()
+	if not TutorialFlyHint.showMainIntro() then
+		stage1FlyUiShown = false
+		if TutorialConfigs.Debug then
+			warn("[iseesupes][Tutorial] Stage1 fly hint could not show (SupesMobile missing?)")
+		end
+	end
+end
+
+local function disconnectLaserHintBrokenListener()
+	if laserHintBrokenConn then
+		laserHintBrokenConn:Disconnect()
+		laserHintBrokenConn = nil
+	end
+end
+
+--- Laser hint stays up until the Stage 1 wall is melted, then the fly intro takes over.
+local function showStage1LaserHintUntilWallBroken(): boolean
+	if not TutorialLaserHint.show() then
+		return false
+	end
+
+	disconnectLaserHintBrokenListener()
+	local service = Knit.GetService("StageCheckpointService")
+	laserHintBrokenConn = service.CheckpointBroken:Connect(function(stageNum: number)
+		if stageNum ~= STAGE1_GATE_NUM then
+			return
+		end
+		disconnectLaserHintBrokenListener()
+		TutorialLaserHint.hide()
+		showStage1FlyIntro()
+	end)
+	return true
+end
+
 local function triggerStage1FlyLesson()
-	if stage1FlyUiShown or TutorialFlyHint.isActive() then
+	if stage1FlyUiShown or isStage1HintActive() then
 		return
 	end
 	local debounce = TutorialConfigs.Stage1TouchDebounceSeconds or 2
@@ -150,14 +193,14 @@ local function triggerStage1FlyLesson()
 
 	stage1FlyUiShown = true
 	disconnectStage1Listeners()
-	destroyBeamVisuals()
 
-	if not TutorialFlyHint.showMainIntro() then
-		stage1FlyUiShown = false
-		if TutorialConfigs.Debug then
-			warn("[iseesupes][Tutorial] Stage1 fly hint could not show (SupesMobile missing?)")
-		end
+	-- Wall still standing: hint the laser first (beam stays on the stage wall);
+	-- the fly intro shows after CheckpointBroken fires for Stage 1.
+	if isStage1WallUnbroken() and showStage1LaserHintUntilWallBroken() then
+		return
 	end
+
+	showStage1FlyIntro()
 end
 
 local function isLocalPlayerTouch(hit: Instance): boolean
@@ -202,7 +245,7 @@ local function startStage1ProximityCheck()
 		return
 	end
 	stage1ProximityConn = RunService.Heartbeat:Connect(function()
-		if stage1FlyUiShown or TutorialFlyHint.isActive() then
+		if stage1FlyUiShown or isStage1HintActive() then
 			return
 		end
 		local data = DataLib.GetData()
@@ -239,7 +282,7 @@ local function bindStage1TouchListener()
 end
 
 local function ensureStage1FlyListeners()
-	if stage1FlyUiShown or TutorialFlyHint.isActive() then
+	if stage1FlyUiShown or isStage1HintActive() then
 		return
 	end
 	local data = DataLib.GetData()
@@ -747,6 +790,9 @@ local function tryThrustShopHint(data: any)
 		return
 	end
 
+	-- The one-time hint covers pack 1; skip the recurring reminder this session.
+	affordableThrustHintTiers[1] = true
+
 	local introCfg = TutorialConfigs.ThrustShopIntro
 	local DataService = Knit.GetService("DataService")
 	pcall(function()
@@ -801,6 +847,61 @@ local function tryThrustShopHint(data: any)
 	end
 end
 
+--- Reminder beam when the first thrust pack is affordable. Only for players who
+--- never bought a pack (tier 0) and at most once per session — once they have
+--- upgraded, they know the shop and no more reminders show.
+local function tryThrustAffordableBeam(data: any)
+	if os.clock() < thrustHintBeamUntil then
+		return
+	end
+
+	local tier = if type(data.ThrustUpgradeTier) == "number" then math.floor(data.ThrustUpgradeTier) else 0
+	if tier > 0 then
+		return
+	end
+	local nextCfg = ThrustUpgradeConfigs.Tiers[1]
+	if not nextCfg then
+		return
+	end
+	if affordableThrustHintTiers[1] then
+		return
+	end
+
+	local wins = if type(data.Wins) == "number" then math.floor(data.Wins) else 0
+	if wins < nextCfg.WinCost then
+		return
+	end
+	affordableThrustHintTiers[1] = true
+
+	local introCfg = TutorialConfigs.ThrustShopIntro
+	local toast = "You have enough wins - upgrade thrust at the shop behind spawn!"
+	if introCfg and introCfg.PurchaseHintToast then
+		toast = introCfg.PurchaseHintToast
+	end
+	NotificationManager.show(toast, "Info")
+
+	local beamSeconds = 12
+	if introCfg and type(introCfg.AffordableBeamSeconds) == "number" then
+		beamSeconds = introCfg.AffordableBeamSeconds
+	end
+
+	local target = waitForThrustShopTouch(4)
+	if not target or not getHrp() then
+		return
+	end
+
+	thrustHintBeamUntil = os.clock() + beamSeconds
+	local beamMessage = "Upgrade thrust here!"
+	if introCfg and introCfg.BeamBillboardMessage then
+		beamMessage = introCfg.BeamBillboardMessage
+	end
+	attachBeamToTarget(target, 0, beamMessage)
+	task.delay(beamSeconds, function()
+		thrustHintBeamUntil = 0
+		destroyBeamVisuals()
+	end)
+end
+
 local function syncTutorialFromData(data: any?)
 	if not data then
 		return
@@ -818,6 +919,7 @@ local function syncTutorialFromData(data: any?)
 		destroyBeamVisuals()
 		activeStep = TutorialConfigs.Step.Complete
 		tryThrustShopHint(data)
+		tryThrustAffordableBeam(data)
 		TutorialFlyHint.startLowThrustWatcher()
 		return
 	end
@@ -837,7 +939,7 @@ local function syncTutorialFromData(data: any?)
 				DataService:AdvanceTutorialToGoStage1()
 			end)
 		end
-		if shouldOfferStage1FlyLesson(data) and not stage1FlyUiShown and not TutorialFlyHint.isActive() then
+		if shouldOfferStage1FlyLesson(data) and not stage1FlyUiShown and not isStage1HintActive() then
 			if data.TutorialThrustShopIntroShown == true then
 				showBeamForStep(TutorialConfigs.Step.GoStage1)
 				scheduleTargetRetry(TutorialConfigs.Step.GoStage1)
@@ -851,10 +953,10 @@ local function syncTutorialFromData(data: any?)
 	end
 
 	if step == TutorialConfigs.Step.GoStage1 then
-		if activeStep ~= TutorialConfigs.Step.GoStage1 and not TutorialFlyHint.isActive() then
+		if activeStep ~= TutorialConfigs.Step.GoStage1 and not isStage1HintActive() then
 			stage1FlyUiShown = false
 		end
-		if not stage1FlyUiShown and not TutorialFlyHint.isActive() then
+		if not stage1FlyUiShown and not isStage1HintActive() then
 			showBeamForStep(step)
 			scheduleTargetRetry(step)
 			bindStage1TouchListener()
@@ -862,7 +964,13 @@ local function syncTutorialFromData(data: any?)
 		return
 	end
 
-	disconnectStage1Listeners()
+	-- From Level 2 (ClaimWins) onward the wall can be broken, so keep the laser/fly
+	-- lesson armed at Stage 1 while the beam points at the current step target.
+	if shouldOfferStage1FlyLesson(data) then
+		ensureStage1FlyListeners()
+	else
+		disconnectStage1Listeners()
+	end
 	showBeamForStep(step)
 	scheduleTargetRetry(step)
 end
@@ -914,6 +1022,7 @@ function TutorialController:KnitStart()
 	end)
 
 	TutorialFlyHint.ensureHidden()
+	TutorialLaserHint.ensureHidden()
 	TutorialFlyHint.startLowThrustWatcher()
 
 	print("[iseesupes] TutorialController ready.")

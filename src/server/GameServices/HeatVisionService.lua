@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local HeatVisionRig = require(ReplicatedStorage.Shared.Utils.HeatVisionRig)
 local StageCheckpointDebug = require(ReplicatedStorage.Shared.Utils.StageCheckpointDebug)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
@@ -65,6 +66,7 @@ local HeatVisionService = Knit.CreateService({
 })
 
 local sessions: { [Player]: HeatVisionSession } = {}
+local cooldownEndsAt: { [Player]: number } = {}
 
 local aimMinInterval = 1 / math.max(HeatVisionConfigs.AimSendHz, 1)
 
@@ -117,6 +119,8 @@ local function drainSolarForBeam(player: Player, dt: number): boolean
 	if not DataService or not DataService.TryConsumeSolar then
 		return true
 	end
+	-- Solar drain stays flat: the laser must always feel scarce so players fly
+	-- (solar recharges in flight only) instead of out-leveling the resource.
 	local drain = HeatVisionConfigs.getSolarDrainPerSecond() * dt
 	if drain <= 0 then
 		return true
@@ -142,6 +146,8 @@ function HeatVisionService:_endAbility(player: Player)
 	HeatVisionRig.destroy(session.character)
 	sessions[player] = nil
 	clearAttributes(player)
+	local level = SpeedConfigs.GetPlayerLevel(player)
+	cooldownEndsAt[player] = os.clock() + SpeedConfigs.GetHeatVisionCooldown(level)
 	self.Client.AbilityEnded:Fire(player)
 end
 
@@ -173,6 +179,11 @@ function HeatVisionService:_tryStart(player: Player): (boolean, string?)
 
 	if sessions[player] then
 		return false, "active"
+	end
+
+	local endsAt = cooldownEndsAt[player]
+	if endsAt and os.clock() < endsAt then
+		return false, "cooldown"
 	end
 
 	if isPlayerFlying(player) then
@@ -312,6 +323,7 @@ function HeatVisionService:KnitStart()
 			HeatVisionRig.destroy(session.character)
 		end
 		sessions[player] = nil
+		cooldownEndsAt[player] = nil
 	end)
 end
 

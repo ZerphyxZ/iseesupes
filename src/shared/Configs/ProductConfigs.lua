@@ -96,8 +96,12 @@ function ProductConfigs.GetProductById(productId: number): DeveloperProduct?
 end
 
 ProductConfigs.Gamepasses = {
-	VIP = { Id = 0, Key = "VIP" } :: Gamepass,
+	--- VIP: +25% Speed XP (movement + treadmill) and 16h offline-reward cap (vs 8h).
+	VIP = { Id = 1873684674, Key = "VIP" } :: Gamepass,
 	DoubleCoins = { Id = 0, Key = "DoubleCoins" } :: Gamepass,
+	--- Permanent 2x Speed XP from movement + treadmills — the genre's top seller.
+	--- Stacks with VIP (2 * 1.25 = 2.5x for owners of both).
+	DoubleSpeed = { Id = 1873936619, Key = "DoubleSpeed" } :: Gamepass,
 }
 
 -- Map.Treadmills paid tiers (developer products; permanent unlock)

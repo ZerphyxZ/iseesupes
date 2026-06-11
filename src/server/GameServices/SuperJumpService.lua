@@ -8,6 +8,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 local Features = CharacterConfigs.Features
 local SjCfg = CharacterConfigs.SuperJump
@@ -393,7 +394,8 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 	end
 
 	local tuning = LevelDesignTuning.getSuperJump(player)
-	cooldownEndsAt[player] = os.clock() + tuning.Cooldown
+	local level = SpeedConfigs.GetPlayerLevel(player)
+	cooldownEndsAt[player] = os.clock() + SpeedConfigs.GetSuperJumpCooldown(level)
 
 	if RunService:IsStudio() then
 		print("[iseesupes] Super Jump using server tuning:", LevelDesignTuning.formatActiveTuning(player))

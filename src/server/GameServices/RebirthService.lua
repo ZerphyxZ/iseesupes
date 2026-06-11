@@ -5,6 +5,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
 local LeaderstatsSync = require(script.Parent.Parent.Modules.LeaderstatsSync)
 
 local DataService: any = nil
@@ -53,6 +55,13 @@ function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean?,
 		data.Level = 1
 		data.Speed = 0
 	end
+
+	-- Rebirth perk: permanently bigger thrust tank, granted full (feels like a reward,
+	-- and softens the re-grind right after losing stage access).
+	local newMax = SpeedConfigs.Thrust.BaseMaxFuel
+		+ ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
+		+ RebirthConfigs.GetThrustBonus(data.Rebirths)
+	DataService:ApplyUpgradedMax(player, newMax)
 
 	DataService:Replicate(player)
 	DataService:NotifyLeaderboards(player, { "Rebirths", "Speed" })

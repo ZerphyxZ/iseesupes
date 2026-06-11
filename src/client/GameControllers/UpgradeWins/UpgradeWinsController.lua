@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AvatarReplace = require(ReplicatedStorage.Shared.Utils.AvatarReplace)
@@ -114,6 +115,16 @@ function UpgradeWinsController:KnitStart()
 	local UpgradeWinsService = Knit.GetService("UpgradeWinsService")
 	local player = Players.LocalPlayer
 
+	-- Workspace/Sounds/Morph — plays locally on avatar unlock/equip (transformation feedback).
+	local morphSound: Sound? = nil
+	do
+		local soundsFolder = Workspace:FindFirstChild("Sounds")
+		local snd = soundsFolder and soundsFolder:FindFirstChild("Morph")
+		if snd and snd:IsA("Sound") then
+			morphSound = snd
+		end
+	end
+
 	-- Full character swap fires CharacterAdded; refresh camera + cape rig here.
 	player.CharacterAdded:Connect(function(character)
 		resetSteerAfterMorph()
@@ -140,6 +151,9 @@ function UpgradeWinsController:KnitStart()
 
 	UpgradeWinsService.UpgradeResult:Connect(function(kind: string, avatarId: string)
 		if kind == "Unlocked" or kind == "Equipped" then
+			if morphSound then
+				morphSound:Play()
+			end
 			resetSteerAfterMorph()
 			-- Full character swap also fires CharacterAdded (handled above).
 			-- This block is redundant safety for any edge case where the swap doesn't fire it.

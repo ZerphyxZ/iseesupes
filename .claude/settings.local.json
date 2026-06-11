@@ -13,7 +13,10 @@
       "Bash(git checkout *)",
       "mcp__Roblox_Studio__script_search",
       "mcp__Roblox_Studio__inspect_instance",
-      "mcp__Roblox_Studio__script_grep"
+      "mcp__Roblox_Studio__script_grep",
+      "Bash(Get-ChildItem -Recurse -Path src -Filter \"*.lua\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)"
     ]
   }
 }

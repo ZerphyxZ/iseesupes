@@ -107,6 +107,11 @@ local PHASE = {
 
 local KEY_CODES: { [string]: Enum.KeyCode } = {
 	E = Enum.KeyCode.E,
+	ButtonY = Enum.KeyCode.ButtonY,
+	ButtonX = Enum.KeyCode.ButtonX,
+	ButtonB = Enum.KeyCode.ButtonB,
+	ButtonL1 = Enum.KeyCode.ButtonL1,
+	ButtonR1 = Enum.KeyCode.ButtonR1,
 }
 
 local PHASE_ATTR = "DjAbilityPhase"
@@ -2031,8 +2036,14 @@ local function bindAction()
 		return
 	end
 
+	local inputs: { Enum.KeyCode } = { keyCode }
+	local gamepadKey = KEY_CODES[DjCfg.GamepadKey]
+	if gamepadKey then
+		table.insert(inputs, gamepadKey)
+	end
+
 	actionBound = true
-	ContextActionService:BindAction(DjCfg.ActionName, onDoubleJumpAction, false, keyCode)
+	ContextActionService:BindAction(DjCfg.ActionName, onDoubleJumpAction, false, table.unpack(inputs))
 end
 
 function DoubleJumpController:KnitStart()
@@ -2112,6 +2123,13 @@ function DoubleJumpController:KnitStart()
 	end)
 
 	DoubleJumpService.AbilityEnded:Connect(onAbilityEnded)
+
+	-- Kryptonite stage: server wiped our thrust the moment we took off.
+	DoubleJumpService.KryptoniteDrained:Connect(function()
+		local kryptonite = DjCfg.Kryptonite
+		local message = (kryptonite and kryptonite.Message) or "Kryptonite! Flight is drained — jump!"
+		NotificationManager.show(message, "Error")
+	end)
 
 	-- Server sets ForceStandUp=true before teleporting player to lobby after a win claim.
 	-- Calling onAbilityEnded() here cancels flight, sets PlatformStand=false, and stops all

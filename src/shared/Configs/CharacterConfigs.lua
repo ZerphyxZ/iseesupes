@@ -46,6 +46,42 @@ local CharacterConfigs = {
 	DoubleJump = {
 		ActionName = "SupesDoubleJump",
 		Key = "E",
+		--- Console/controller button for fly (same action as Key).
+		GamepadKey = "ButtonY",
+		--- Kryptonite stages: starting flight instantly drains ALL thrust (jump-only stages).
+		Kryptonite = {
+			Enabled = true,
+			Stages = { [8] = true } :: { [number]: boolean },
+			Message = "Kryptonite! Your flight power is drained — jump through this stage!",
+			--- Stage 8 Krypts platforms fade while stood on, then drop the player through.
+			--- Purely client-side: each player sees/feels only their own platform state.
+			FadePlatforms = {
+				Enabled = true,
+				StageModelName = "Stage8",
+				FolderName = "Krypts",
+				ModelName = "KryptoModels",
+				--- Seconds standing on a platform before it lets the player fall through.
+				FadeDuration = 2.5,
+				--- Seconds for a partially faded platform to fade back after stepping off.
+				RecoverDuration = 1.2,
+				--- Seconds before a fallen-through platform turns solid again.
+				RestoreDelay = 2.0,
+				--- Don't fade fully transparent; keep a ghost outline so players can retry.
+				MaxTransparency = 0.92,
+				--- Downward ray length from character root to detect the platform under foot.
+				StandRayLength = 8,
+				--- With a tiny StreamingEnabled radius, pull Krypts geometry around the player.
+				RequestStreamAround = true,
+				StreamRequestInterval = 2.0,
+				--- Rough Stage 8 Krypts course bounds (from map authoring).
+				StreamBounds = {
+					CenterX = -221810,
+					RadiusX = 250,
+					MinZ = 6600,
+					MaxZ = 7800,
+				},
+			},
+		},
 		Cooldown = 5,
 		--- Must fly at least this long before E / UI / Space can cancel thrust.
 		CancelMinActiveTime = 1.25,
@@ -89,19 +125,20 @@ local CharacterConfigs = {
 			TurnSpeedReference = 65,
 			TurnBankWeight = 0.92,
 			InputBankWeight = 0.28,
-			CameraBankBlend = 0.5,
-			CameraYawRateForFullBank = 2.2,
-			CameraYawRateMin = 0.6,
-			CameraYawRateMinAxis = 0.28,
-			CameraHeadingDegreesForFullBank = 48,
+			CameraBankBlend = 0.4,
+			--- Higher = need a faster mouse spin for full bank (less sensitive).
+			CameraYawRateForFullBank = 3.2,
+			CameraYawRateMin = 1.0,
+			CameraYawRateMinAxis = 0.16,
+			CameraHeadingDegreesForFullBank = 60,
 			--- Launch: forward-lean first, gentle climb, then ease to superman pitch during rise.
 			LaunchClimbStartDegrees = 8,
 			LaunchClimbEndDegrees = 17,
 			LaunchBodyPitch = -72,
 			LaunchPitchLerp = 5,
-			CameraPitchRateForFullAxis = 1.75,
-			CameraPitchRateMin = 0.55,
-			CameraPitchRateMinAxis = 0.25,
+			CameraPitchRateForFullAxis = 2.3,
+			CameraPitchRateMin = 0.8,
+			CameraPitchRateMinAxis = 0.18,
 			CameraPitchVelocityBlend = 0.35,
 		},
 
@@ -169,8 +206,9 @@ local CharacterConfigs = {
 			DescentHorizontalBlend = 0.35,
 			SteerMoveThreshold = 0.1,
 			SteerSmoothRate = 6,
-			CameraSteerSmoothRate = 4.5,
-			SteerAxisSmoothRate = 9,
+			--- Lower = flight direction follows the camera more gently (less mouse sensitivity).
+			CameraSteerSmoothRate = 3,
+			SteerAxisSmoothRate = 7,
 			-- LeanUp A/D: snap axis + high yaw so hold time = turn amount (no camera fight).
 			UseSlowKeyboardYawOnLeanUp = true,
 			KeyboardYawDegreesPerSecond = 115,

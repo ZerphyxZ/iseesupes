@@ -63,7 +63,8 @@ local FriendStandConfigs: FriendStandConfig = {
 	FaceTurnSmoothness = 10,
 	FaceUpdateInterval = 0.2,
 	RunAnimFolderName = "SupesAnimations",
-	RunAnimName = "RunAnimation",
+	--- Showcase avatars (FriendStand + leaderboard top stands) play this looped animation.
+	RunAnimName = "IdleAnimation",
 	RigReadyTimeout = 8,
 	StandResolveTimeout = 120,
 	ParentDisplayToWorkspace = false,

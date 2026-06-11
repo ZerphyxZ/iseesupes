@@ -89,6 +89,22 @@ local TutorialConfigs = {
 		HeartbeatPeriodSeconds = 0.9,
 		LabelPC = "Press E to Fly",
 		LabelMobile = "Press Supes to Fly",
+		LabelGamepad = "Press Y to Fly",
+	},
+
+	LaserIntro = {
+		Enabled = true,
+		--- Studio layout under StarterGui (cloned to PlayerGui). Script only enables/disables.
+		ScreenGuiName = "TutorialLaserHintGui",
+		CalloutName = "FlyCallout",
+		ArrowName = "FlyArrow",
+		ArrowBobPixels = 14,
+		ArrowBobPeriodSeconds = 0.65,
+		HeartbeatPeakScale = 1.14,
+		HeartbeatPeriodSeconds = 0.9,
+		LabelPC = "Press F — melt the wall with your Laser",
+		LabelMobile = "Press Vision — melt the wall with your Laser",
+		LabelGamepad = "Press X — melt the wall with your Laser",
 	},
 
 	LowThrustFlyHint = {
@@ -115,6 +131,8 @@ local TutorialConfigs = {
 		HighlightOutlineTransparency = 0.2,
 		PurchaseHintToast = "You have enough wins — upgrade thrust at the shop behind spawn!",
 		PurchaseHintBeamSeconds = 5,
+		--- Recurring reminder beam whenever the next thrust pack becomes affordable.
+		AffordableBeamSeconds = 12,
 	},
 }
 

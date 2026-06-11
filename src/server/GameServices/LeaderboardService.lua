@@ -17,10 +17,15 @@ local DataService: any = nil
 
 local LeaderboardService = Knit.CreateService({
 	Name = "LeaderboardService",
-	Client = {},
+	Client = {
+		--- ({ [boardKey]: topUserId }) — fired when any board's #1 player changes.
+		TopUsersChanged = Knit.CreateSignal(),
+	},
 })
 
 local orderedDataStores: { [string]: OrderedDataStore } = {}
+--- boardKey → userId of the current #1 player (for showcase stands).
+local topUserCache: { [string]: number } = {}
 local sessionStartAt: { [Player]: number } = {}
 local lastOdsWritten: { [Player]: { [string]: number } } = {}
 
@@ -255,7 +260,45 @@ local function getServerFallbackRows(config: LeaderboardConfigs.LeaderboardConfi
 	return rows
 end
 
+local function getBoardKey(config: LeaderboardConfigs.LeaderboardConfig): string?
+	for key, cfg in LeaderboardConfigs.Boards do
+		if cfg == config then
+			return key
+		end
+	end
+	return nil
+end
+
+local function setTopUser(config: LeaderboardConfigs.LeaderboardConfig, userId: number?)
+	local boardKey = getBoardKey(config)
+	if not boardKey or not userId or userId <= 0 then
+		return
+	end
+	if topUserCache[boardKey] == userId then
+		return
+	end
+	topUserCache[boardKey] = userId
+	LeaderboardService.Client.TopUsersChanged:FireAll(topUserCache)
+end
+
+function LeaderboardService.Client:GetTopUsers(_player: Player): { [string]: number }
+	return topUserCache
+end
+
+--- With 10+ players claiming wins, per-claim refreshes blow the OrderedDataStore
+--- read budget (GetSortedAsync). One refresh per board per interval is plenty —
+--- boards are ambient UI, not realtime.
+local lastDisplayRefreshAt: { [string]: number } = {}
+local DISPLAY_REFRESH_MIN_INTERVAL = 20
+
 function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.LeaderboardConfig)
+	local now = os.clock()
+	local last = lastDisplayRefreshAt[config.StoreName]
+	if last and now - last < DISPLAY_REFRESH_MIN_INTERVAL then
+		return
+	end
+	lastDisplayRefreshAt[config.StoreName] = now
+
 	local folder = getLeaderboardsFolder()
 	if not folder then
 		warn(
@@ -308,8 +351,16 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 		entryTemplate.Visible = false
 	end
 
+	local topEntry = dataPage[1]
+	if topEntry then
+		setTopUser(config, tonumber(topEntry.key))
+	end
+
 	if #dataPage == 0 then
 		local fallbackRows = getServerFallbackRows(config)
+		if fallbackRows[1] then
+			setTopUser(config, fallbackRows[1].userId)
+		end
 		for rank, row in ipairs(fallbackRows) do
 			renderEntry(
 				entryTemplate,

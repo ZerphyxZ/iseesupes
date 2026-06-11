@@ -252,17 +252,9 @@ local function resetSessionGatesForPlayer(player: Player)
 		StageCheckpointCollision.applyToCharacter(player, character)
 	end
 
-	for _, stageNum in StageCheckpointWorld.getAllGateStageNumbers() do
-		local gatePart = StageCheckpointWorld.getGatePart(stageNum)
-		local req = StageCheckpointWorld.getCachedRequirement(stageNum)
-		if gatePart then
-			StageCheckpointWorld.setGateInteractionEnabled(gatePart, true)
-		end
-		if gatePart and req and StageCheckpointWorld.hasGateUi(gatePart) then
-			StageCheckpointWorld.ensureXpOverlayEnabled(gatePart)
-			StageCheckpointWorld.applyGateUi(gatePart, req, 1, "ServerSessionReset")
-		end
-	end
+	-- Gate bar/visuals are per-player and restored client-side via SessionGatesReset
+	-- (restoreAllLocalGateDefaults). Writing the shared SurfaceGui here would
+	-- replicate this player's reset to every other client.
 
 	refreshHeatVisionGateExcludes(player)
 	logNextSessionGate(player)
@@ -383,11 +375,9 @@ function StageCheckpointService:breakGate(player: Player, stageNum: number, rayR
 	))
 	markBroken(player, stageNum)
 
-	local gatePart = StageCheckpointWorld.getGatePart(stageNum)
-	local req = StageCheckpointWorld.getCachedRequirement(stageNum)
-	if gatePart and req and StageCheckpointWorld.hasGateUi(gatePart) then
-		StageCheckpointWorld.applyGateUi(gatePart, req, 0, "ServerBreakGate")
-	end
+	-- Gate bar/visuals are per-player: never write the shared SurfaceGui from the
+	-- server (it replicates to everyone). The breaking player's client updates it
+	-- via CheckpointHpChanged / CheckpointBroken below.
 
 	if SkipStageService and SkipStageService.AdvanceStageForPlayer then
 		SkipStageService:AdvanceStageForPlayer(player, stageNum)

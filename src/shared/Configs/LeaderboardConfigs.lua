@@ -36,6 +36,16 @@ local function profileInt(data: any, key: string): number?
 	return nil
 end
 
+--- Workspace.Map stand models that showcase the #1 player of a board (idle anim avatar).
+LeaderboardConfigs.TopStands = {
+	TimeStand = "Time",
+	SpeedStand = "Speed",
+	WinsStand = "Wins",
+	RebirthStand = "Rebirths",
+} :: { [string]: string }
+
+LeaderboardConfigs.TopStandResolveTimeout = 120
+
 LeaderboardConfigs.Boards = {
 	Speed = {
 		StoreName = "GlobalSpeed_v2",

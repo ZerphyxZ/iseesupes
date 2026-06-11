@@ -160,11 +160,16 @@ function SpeedController:KnitStart()
 	local newSpeedLabel = levelUpFrame:WaitForChild("NewSpeed") :: TextLabel
 
 	local levelUpSound: Sound? = nil
+	local winClaimSound: Sound? = nil
 	local soundsFolder = Workspace:FindFirstChild("Sounds")
 	if soundsFolder then
 		local snd = soundsFolder:FindFirstChild("LevelUp")
 		if snd and snd:IsA("Sound") then
 			levelUpSound = snd
+		end
+		local winSnd = soundsFolder:FindFirstChild("WinClaim")
+		if winSnd and winSnd:IsA("Sound") then
+			winClaimSound = winSnd
 		end
 	end
 
@@ -220,14 +225,19 @@ function SpeedController:KnitStart()
 			local gain = currentWins - lastWinValue
 			if gain > 0 then
 				EffectsSystem.ShowWinPopUp(gain)
+				if winClaimSound then
+					winClaimSound:Play()
+				end
 			end
 		end
 		lastWinValue = currentWins
 	end
 
 	local function showLevelUp(oldLevel: number, newLevel: number)
-		local oldSpeed = SpeedConfigs.GetSpeedFromLevel(oldLevel)
-		local newSpeed = SpeedConfigs.GetSpeedFromLevel(newLevel)
+		-- Show flight speed: it rises every level (walk speed can flat-line between
+		-- curve anchors), and it is the speed players actually feel.
+		local oldSpeed = math.floor(SpeedConfigs.GetFlightForwardSpeed(oldLevel) + 0.5)
+		local newSpeed = math.floor(SpeedConfigs.GetFlightForwardSpeed(newLevel) + 0.5)
 
 		newLevelLabel.Text = "Level "
 			.. NumberFormatter.Format(oldLevel)
@@ -285,7 +295,8 @@ function SpeedController:KnitStart()
 				currentPosition.Z - lastPosition.Z
 			)
 			local distance = flatDelta.Magnitude
-			if distance > 0 and distance < 5 then
+			local maxStep = SpeedConfigs.MaxCountedStudsPerFrame or 12
+			if distance > 0 and distance < maxStep then
 				accumulatedDistance += distance
 			end
 

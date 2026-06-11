@@ -38,6 +38,15 @@ export type PlayerData = {
 	TutorialThrustShopIntroShown: boolean,
 	TutorialFlyIntroShown: boolean,
 	TutorialLowThrustFlyHintShown: boolean,
+	--- Daily login streak + offline rewards (LoginRewardService)
+	StreakDay: number,
+	StreakTotal: number,
+	StreakLastClaimDay: number,
+	LastSeenAt: number,
+	--- Limited-time Starter Pack purchased (StarterPackConfigs)
+	OwnedStarterPack: boolean,
+	--- Highest onboarding funnel step logged to Analytics (FunnelAnalyticsService)
+	OnboardingStepLogged: number,
 }
 
 -- Pure data only — passed to ProfileService (no functions, no nil values).
@@ -74,6 +83,12 @@ local Data: PlayerData = {
 	TutorialThrustShopIntroShown = false,
 	TutorialFlyIntroShown = false,
 	TutorialLowThrustFlyHintShown = false,
+	StreakDay = 0,
+	StreakTotal = 0,
+	StreakLastClaimDay = 0,
+	LastSeenAt = 0,
+	OwnedStarterPack = false,
+	OnboardingStepLogged = 0,
 }
 
 local ProfileTemplate = {}

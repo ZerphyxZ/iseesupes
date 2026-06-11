@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
 
@@ -40,14 +41,9 @@ local function grantTier(player: Player, tier: number): string
 	data.ThrustUpgradePurchases = data.ThrustUpgradePurchases or {}
 	data.ThrustUpgradePurchases[tier] = (data.ThrustUpgradePurchases[tier] or 0) + 1
 
-	-- Recompute total fuel bonus from all purchases
-	local totalBonus = 0
-	for i, cfg in pairs(ThrustUpgradeConfigs.Tiers) do
-		local count = data.ThrustUpgradePurchases[i] or 0
-		totalBonus = totalBonus + (cfg.FuelBonus or 0) * count
-	end
-
-	local newMax = ThrustConfigs.BaseMaxFuel + totalBonus
+	local totalBonus = ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
+	local rebirthBonus = RebirthConfigs.GetThrustBonus(data.Rebirths)
+	local newMax = ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus
 	data.ThrustUpgradeTier = math.max(getCurrentTier(data), tier)
 	DataService:ApplyUpgradedMax(player, newMax)
 	DataService:ForceSave(player)
@@ -63,6 +59,17 @@ local function grantTier(player: Player, tier: number): string
 		newMax
 	)
 	return "Success"
+end
+
+--- Grant a tier without spending Wins or Robux (Starter Pack bundle, promos).
+function ThrustUpgradeService:GrantFreeTier(player: Player, tier: number): boolean
+	local result = grantTier(player, tier)
+	if result == "Success" then
+		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "Success", tier)
+		return true
+	end
+	warn("[iseesupes] ThrustUpgradeService: free tier grant failed:", player.Name, tier, result)
+	return false
 end
 
 function ThrustUpgradeService:GrantTierFromProduct(player: Player, productId: number): boolean

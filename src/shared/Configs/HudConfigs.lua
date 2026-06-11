@@ -18,13 +18,14 @@ local HudConfigs = {
 	CloseButtonNames = { "Close", "X", "CloseButton", "Exit" },
 
 	--- Frames under GUI.Frames that are not HUD-toggled (e.g. level-up popup).
-	ExcludeFromNavigator = { "LevelUp", "Notifications", "ThrustBoosts" },
+	ExcludeFromNavigator = { "LevelUp", "Notifications", "ThrustBoosts", "DailyStreak", "OfflineReward" },
 
 	--- HUD buttons that open a full-screen / panel under GUI.Frames
 	FrameLinks = {
 		{ ButtonPath = { "Left", "Trails" }, FrameName = "Trails" },
 		{ ButtonPath = { "Left", "Rebirth" }, FrameName = "Rebirth" },
 		{ ButtonPath = { "Left", "Rewards" }, FrameName = "Rewards" },
+		{ ButtonPath = { "Left", "Shop" }, FrameName = "PassShop" },
 	} :: { HudFrameLink },
 
 	--- Right HUD: developer product keys (ProductConfigs.DeveloperProducts)
@@ -46,6 +47,15 @@ local HudConfigs = {
 		},
 		SkipAttribute = "HudSkipButtonFx",
 		BoundAttribute = "_HudButtonFxBound",
+	},
+
+	--- Slow continuous rotation of "Shine" ImageLabels inside these HUD buttons (ShineSpinController).
+	ShineSpin = {
+		DegreesPerSecond = 30,
+		ShineName = "Shine",
+		ButtonNames = { "RainbowCarpet", "StarterPack" },
+		--- Rescan PlayerGui for (re)spawned shine labels this often.
+		RescanSeconds = 5,
 	},
 
 	--- Global GuiButton hover / click SFX (UIButtonEffectsController — all PlayerGui buttons).

@@ -38,6 +38,7 @@ local TrailConfigs = {
 			WinCost = 50,
 			ProductId = 3602184828, -- Developer Product: Superman Trail
 			SpeedBoost = 1.5,
+			Image = "rbxassetid://120995773891656",
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 30, 30)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(30, 80, 220)),
@@ -50,6 +51,7 @@ local TrailConfigs = {
 			WinCost = 500,
 			ProductId = 3602184962, -- Developer Product: Kryptonite Trail
 			SpeedBoost = 1.5,
+			Image = "rbxassetid://75031648687157",
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 200, 80)),
 				ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 255, 120)),
@@ -61,6 +63,7 @@ local TrailConfigs = {
 			WinCost = 800,
 			ProductId = 3602185251, -- Developer Product: Arctic Trail
 			SpeedBoost = 1.5,
+			Image = "rbxassetid://70542207066635",
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 220, 255)),
 				ColorSequenceKeypoint.new(1, Color3.fromRGB(240, 250, 255)),
@@ -72,6 +75,7 @@ local TrailConfigs = {
 			WinCost = 1200,
 			ProductId = 3602185055, -- Developer Product: Solar Trail
 			SpeedBoost = 2,
+			Image = "rbxassetid://100582612862019",
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
 				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 240, 100)),

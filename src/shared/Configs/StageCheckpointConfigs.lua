@@ -3,25 +3,32 @@
 -- Heat-vision damage on StageCheckpoints metal melt gates (Speed XP gated).
 
 local StageCheckpointConfigs = {
-	Debug = true,
+	Debug = false,
 	FolderName = "StageCheckpoints",
 	RequirementAttribute = "MinSpeedXp",
 	FirstGateStage = 1,
 	MaxGateStage = 9,
 	-- Fallback when a gate has no configured requirement (gate 1 only).
-	DefaultMinSpeedXp = 75,
+	DefaultMinSpeedXp = 150,
 
 	--- Min total Speed XP to melt each gate (overrides Studio labels for balance).
+	--- Aligned to XP curve: Level N needs ~1000*(1.3^(N-1)-1) total XP.
+	--- Entry levels: S1≈L1, S2≈L5, S3≈L7, S4≈L9, S5≈L12, S6≈L15, S7≈L17, S8≈L22, S9≈L25.
+	--- Measured gate→gate lengths (Map Start/End parts, studs):
+	--- S1 640, S2 645, S3 793, S4 1409, S5 953, S6 2411, S7 1871,
+	--- S8 1180 (vertical climb tower), S9 1479 (final stretch to win room).
+	--- Flight speed at entry (FlightSpeedCurve): 50/75/84/95/102/112/118/139/150 —
+	--- one thrust tank covers ~45-70% of the current stage without upgrades.
 	GateSpeedRequirements = {
-		[1] = 75,
-		[2] = 250,
-		[3] = 600,
-		[4] = 1000,
-		[5] = 1600,
-		[6] = 2300,
-		[7] = 3250,
-		[8] = 4500,
-		[9] = 6200,
+		[1] = 150,
+		[2] = 1800,
+		[3] = 3800,
+		[4] = 7000,
+		[5] = 16000,
+		[6] = 35000,
+		[7] = 70000,
+		[8] = 250000,
+		[9] = 540000,
 	},
 
 	MaxHp = 100,

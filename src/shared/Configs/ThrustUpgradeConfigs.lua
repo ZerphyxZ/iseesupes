@@ -12,10 +12,13 @@ export type ThrustUpgradeTier = {
 }
 
 local ThrustUpgradeConfigs = {
+	-- Tuned against measured stage lengths: one tank should cover ~45-70% of the
+	-- player's current stage, with each pack a felt spike the NEXT stage re-humbles.
+	-- Win pacing: pack 1 ≈ stage 3-4, pack 2 ≈ stage 5-6, pack 3 ≈ stage 7-8.
 	Tiers = {
-		[1] = { WinCost = 30,  FuelBonus = 50,  ProductId = 3602350603 }, -- Thrust Pack 1 (19 R$)
-		[2] = { WinCost = 80,  FuelBonus = 100, ProductId = 3602350672 }, -- Thrust Pack 2 (39 R$)
-		[3] = { WinCost = 300, FuelBonus = 150, ProductId = 3602350745 }, -- Thrust Pack 3 (109 R$)
+		[1] = { WinCost = 30,  FuelBonus = 40,  ProductId = 3602350603 }, -- Thrust Pack 1 (19 R$)
+		[2] = { WinCost = 80,  FuelBonus = 80,  ProductId = 3602350672 }, -- Thrust Pack 2 (39 R$)
+		[3] = { WinCost = 300, FuelBonus = 160, ProductId = 3602350745 }, -- Thrust Pack 3 (109 R$)
 	} :: { [number]: ThrustUpgradeTier },
 
 	-- Workspace paths
@@ -51,6 +54,22 @@ function ThrustUpgradeConfigs.GetTotalBonusForTier(tier: number): number
 	local total = 0
 	for i = 1, math.min(tier, 3) do
 		total += ThrustUpgradeConfigs.Tiers[i].FuelBonus
+	end
+	return total
+end
+
+--- Total fuel bonus from all recorded pack purchases (repeatable buys included).
+function ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data: any): number
+	local purchases = data and data.ThrustUpgradePurchases
+	if type(purchases) ~= "table" then
+		return 0
+	end
+	local total = 0
+	for tier, cfg in ThrustUpgradeConfigs.Tiers do
+		local count = purchases[tier]
+		if type(count) == "number" and count > 0 then
+			total += (cfg.FuelBonus or 0) * math.floor(count)
+		end
 	end
 	return total
 end

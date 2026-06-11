@@ -3,11 +3,13 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AuraShopConfigs = require(ReplicatedStorage.Shared.Configs.AuraShopConfigs)
 local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
+local StarterPackConfigs = require(ReplicatedStorage.Shared.Configs.StarterPackConfigs)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
@@ -116,6 +118,48 @@ function MonetizationService:PlayerOwnsGamepass(player: Player, key: string): bo
 	return cache ~= nil and cache[cfg.Id] == true
 end
 
+--- Like PlayerOwnsGamepass but fills a cold cache with a Marketplace call (yields).
+--- Use for one-shot decisions made right after join (e.g. VIP offline-reward cap).
+function MonetizationService:PlayerOwnsGamepassYielding(player: Player, key: string): boolean
+	local cfg = getGamepassByKey(key)
+	if not cfg or cfg.Id == 0 then
+		return false
+	end
+	local uid = player.UserId
+	local cache = gpCache[uid]
+	if cache and cache[cfg.Id] ~= nil then
+		return cache[cfg.Id] == true
+	end
+	local ok, owned = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, uid, cfg.Id)
+	if ok then
+		if not gpCache[uid] then
+			gpCache[uid] = {}
+		end
+		gpCache[uid][cfg.Id] = owned == true
+		return owned == true
+	end
+	return false
+end
+
+--- Combined Speed XP multiplier from owned gamepasses (movement + treadmill XP).
+--- DoubleSpeed x2, VIP x1.25 — both owned = x2.5.
+--- Studio balance testing: pass creators own their passes automatically, which
+--- skews pacing feel — set the DisablePassBoosts attribute on your Player
+--- (Properties → Attributes, Studio only) to test at a true 1x.
+function MonetizationService:GetXpMultiplier(player: Player): number
+	if RunService:IsStudio() and player:GetAttribute("DisablePassBoosts") == true then
+		return 1
+	end
+	local mult = 1
+	if self:PlayerOwnsGamepass(player, "DoubleSpeed") then
+		mult *= 2
+	end
+	if self:PlayerOwnsGamepass(player, "VIP") then
+		mult *= 1.25
+	end
+	return mult
+end
+
 function MonetizationService:PlayerOwnsDoubleWins(player: Player): boolean
 	local profile = DataService and DataService:GetProfile(player)
 	if not profile then
@@ -166,6 +210,35 @@ function MonetizationService:KnitStart()
 			end
 			warn("[iseesupes][GodSpeedAura] grant failed for", player.Name)
 			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		if info.ProductId == StarterPackConfigs.ProductId and StarterPackConfigs.ProductId ~= 0 then
+			local data = profile.Data
+			if data[StarterPackConfigs.OwnedFlag] == true then
+				print("[iseesupes][StarterPack] already owned:", player.Name)
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+
+			local grants = StarterPackConfigs.Grants
+			if grants.ThrustPackTier and grants.ThrustPackTier > 0 and ThrustUpgradeService then
+				ThrustUpgradeService:GrantFreeTier(player, grants.ThrustPackTier)
+			end
+			if grants.SpeedXp and grants.SpeedXp > 0 then
+				data.Speed = (data.Speed or 0) + grants.SpeedXp
+				SpeedConfigs.SyncLevelFromSpeed(data)
+			end
+			if grants.Wins and grants.Wins > 0 then
+				DataService:AddWins(player, grants.Wins)
+			end
+			if grants.GodSpeedRun == true and GodSpeedAuraService then
+				GodSpeedAuraService:GrantRunBuff(player)
+			end
+
+			data[StarterPackConfigs.OwnedFlag] = true
+			DataService:Replicate(player)
+			DataService:ForceSave(player)
+			print("[iseesupes][StarterPack] granted to", player.Name)
+			return Enum.ProductPurchaseDecision.PurchaseGranted
 		end
 
 		local auraOffer = AuraShopConfigs.GetOfferByProductId(info.ProductId)

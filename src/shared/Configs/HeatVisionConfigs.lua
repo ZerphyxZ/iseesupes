@@ -5,6 +5,8 @@
 local HeatVisionConfigs = {
 	ActionName = "SupesHeatVision",
 	Key = "F",
+	--- Console/controller button for the laser (same action as Key).
+	GamepadKey = "ButtonX",
 	MaxRange = 175,
 	--- Gate melt damage only applies when the player is this close to the hit point (blocks lobby sniping).
 	CheckpointDamageMaxRange = 90,

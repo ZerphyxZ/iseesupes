@@ -99,6 +99,50 @@ function FunnelAnalyticsService:syncStagesFromProfile(player: Player)
 	FunnelAnalyticsService:recordStageReached(player, maxStage)
 end
 
+local function logOnboardingStep(player: Player, stepNum: number)
+	local cfg = FunnelAnalyticsConfigs.Onboarding
+	local stepName = (cfg.Steps and cfg.Steps[stepNum]) or ("Step " .. tostring(stepNum))
+
+	if FunnelAnalyticsConfigs.DebugPrint == true then
+		print("[iseesupes][Onboarding]", player.Name, "step", stepNum, stepName)
+	end
+
+	if not shouldSendToRoblox() then
+		return
+	end
+
+	local ok, err = pcall(function()
+		AnalyticsService:LogOnboardingFunnelStepEvent(player, stepNum, stepName)
+	end)
+	if not ok and FunnelAnalyticsConfigs.DebugPrint == true then
+		warn("[iseesupes][Onboarding] LogOnboardingFunnelStepEvent failed:", err)
+	end
+end
+
+--- Derives the onboarding step from profile data and logs any unlogged steps.
+--- Called from DataService:Replicate — integer compares only, so the hot path
+--- stays cheap; actual logging happens at most 7 times per player lifetime.
+function FunnelAnalyticsService:syncOnboardingFromData(player: Player, data: any)
+	local cfg = FunnelAnalyticsConfigs.Onboarding
+	if not cfg or cfg.Enabled ~= true then
+		return
+	end
+	if not player.Parent then
+		return
+	end
+
+	local target = FunnelAnalyticsConfigs.DeriveOnboardingStep(data)
+	local logged = if type(data.OnboardingStepLogged) == "number" then data.OnboardingStepLogged else 0
+	if target <= logged then
+		return
+	end
+
+	for stepNum = logged + 1, target do
+		logOnboardingStep(player, stepNum)
+	end
+	data.OnboardingStepLogged = target
+end
+
 function FunnelAnalyticsService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	print("[iseesupes] FunnelAnalyticsService ready (funnel:", FunnelAnalyticsConfigs.FunnelName, ")")

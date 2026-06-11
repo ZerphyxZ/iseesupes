@@ -15,6 +15,7 @@ local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterM
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
+local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
@@ -226,6 +227,15 @@ local function migrateFlyTutorialStep(data: any)
 	migrateFlyTutorialFlags(data)
 	local step = data.TutorialStep
 	if data.TutorialFlyIntroShown == true then
+		-- Fly intro can be seen early (wall break unlocks at Level 2), so do not
+		-- fast-forward players still doing the core tutorial, and let CoreDone
+		-- play the thrust shop intro before completing.
+		if step < TutorialConfigs.Step.CoreDone then
+			return
+		end
+		if step == TutorialConfigs.Step.CoreDone and data.TutorialThrustShopIntroShown ~= true then
+			return
+		end
 		if step < TutorialConfigs.Step.Complete then
 			data.TutorialStep = TutorialConfigs.Step.Complete
 		end
@@ -304,6 +314,8 @@ local function evaluateTutorialStep(data: any): boolean
 	return changed
 end
 
+local funnelService: any = nil
+
 local function replicateData(player: Player, profile: any)
 	ThrustConfigs.EnsureFuelDefaults(profile.Data)
 	HeatVisionConfigs.ensureSolarDefaults(profile.Data)
@@ -311,6 +323,9 @@ local function replicateData(player: Player, profile: any)
 	evaluateTutorialStep(profile.Data)
 	LeaderstatsSync.Apply(player, profile.Data)
 	applyMovementSpeed(player, profile)
+	if funnelService then
+		funnelService:syncOnboardingFromData(player, profile.Data)
+	end
 	DataService.Client.DataReplicated:Fire(player, profile.Data)
 	DataService.Client.SolarChanged:Fire(player, profile.Data.SolarCurrent, profile.Data.SolarMax)
 end
@@ -539,6 +554,20 @@ function DataService:TryConsumeThrust(player: Player, amount: number): boolean
 		replicateThrust(player)
 	end
 	return true
+end
+
+--- Kryptonite stages: wipe all thrust instantly (flight dies right after takeoff).
+function DataService:DrainThrust(player: Player)
+	local data = self:GetData(player)
+	if not data then
+		return
+	end
+	ThrustConfigs.EnsureFuelDefaults(data)
+	if data.ThrustCurrent <= 0 then
+		return
+	end
+	data.ThrustCurrent = 0
+	replicateThrust(player)
 end
 
 function DataService:CanStartFlight(player: Player): boolean
@@ -802,24 +831,16 @@ local function applyProfileMigrations(profile: any)
 	TrailConfigs.EnsureDefaultTrail(profile.Data)
 
 	local data = profile.Data
-	local totalBonus = 0
-	local purchases = data.ThrustUpgradePurchases
-	if type(purchases) == "table" then
-		for tier, cfg in ThrustUpgradeConfigs.Tiers do
-			local count = purchases[tier] or 0
-			if type(count) == "number" and count > 0 then
-				totalBonus += (cfg.FuelBonus or 0) * math.floor(count)
-			end
-		end
-	end
+	local totalBonus = ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
 	if totalBonus <= 0 then
 		local savedTier = data.ThrustUpgradeTier
 		if type(savedTier) == "number" and savedTier > 0 then
 			totalBonus = ThrustUpgradeConfigs.GetTotalBonusForTier(savedTier)
 		end
 	end
-	if totalBonus > 0 then
-		data.ThrustMax = ThrustConfigs.BaseMaxFuel + totalBonus
+	local rebirthBonus = RebirthConfigs.GetThrustBonus(data.Rebirths)
+	if totalBonus > 0 or rebirthBonus > 0 then
+		data.ThrustMax = ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus
 	end
 
 	ThrustConfigs.RefillToMax(profile.Data)
@@ -1208,11 +1229,6 @@ function DataService.Client:SyncThrustPower(player: Player, power: number)
 end
 
 local function tickThrustRefill(dt: number)
-	local rate = ThrustConfigs.PassiveRefillRate
-	if not rate or rate <= 0 then
-		return
-	end
-
 	for _, player in Players:GetPlayers() do
 		local djPhase = player:GetAttribute("DjAbilityPhase")
 		local sjPhase = player:GetAttribute("SjAbilityPhase")
@@ -1231,6 +1247,7 @@ local function tickThrustRefill(dt: number)
 			continue
 		end
 
+		local rate = SpeedConfigs.GetPassiveRefillRate(SpeedConfigs.GetPlayerLevel(player), data.ThrustMax)
 		local wasBelowMax = data.ThrustCurrent < data.ThrustMax
 		data.ThrustCurrent = math.min(data.ThrustMax, data.ThrustCurrent + rate * dt)
 
@@ -1245,11 +1262,6 @@ local function tickThrustRefill(dt: number)
 end
 
 local function tickSolarRefill(dt: number)
-	local rate = HeatVisionConfigs.getSolarFlightRefillRate()
-	if rate <= 0 then
-		return
-	end
-
 	for _, player in Players:GetPlayers() do
 		local djPhase = player:GetAttribute("DjAbilityPhase")
 		local sjPhase = player:GetAttribute("SjAbilityPhase")
@@ -1268,6 +1280,7 @@ local function tickSolarRefill(dt: number)
 			continue
 		end
 
+		local rate = HeatVisionConfigs.getSolarFlightRefillRate()
 		local wasBelowMax = data.SolarCurrent < data.SolarMax
 		data.SolarCurrent = math.min(data.SolarMax, data.SolarCurrent + rate * dt)
 
@@ -1282,6 +1295,10 @@ local function tickSolarRefill(dt: number)
 end
 
 function DataService:KnitStart()
+	pcall(function()
+		funnelService = Knit.GetService("FunnelAnalyticsService")
+	end)
+
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	for _, player in Players:GetPlayers() do

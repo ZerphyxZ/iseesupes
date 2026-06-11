@@ -8,6 +8,7 @@ local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAur
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 local DataService: any = nil
+local MonetizationService: any = nil
 
 local SpeedService = Knit.CreateService({
 	Name = "SpeedService",
@@ -47,6 +48,10 @@ function SpeedService:AddSpeed(player: Player): boolean
 	local gain = (SpeedConfigs.SpeedGainPerStudBatch + stepBonus)
 		* SpeedConfigs.GetRebirthGainMultiplier(getRebirths(data))
 
+	if MonetizationService then
+		gain *= MonetizationService:GetXpMultiplier(player)
+	end
+
 	if player:GetAttribute(GodSpeedAuraConfigs.ActiveAttribute) == true then
 		local mult = player:GetAttribute(GodSpeedAuraConfigs.SpeedGainMultiplierAttribute)
 		if typeof(mult) == "number" and mult > 1 then
@@ -76,6 +81,7 @@ end
 
 function SpeedService:KnitStart()
 	DataService = Knit.GetService("DataService")
+	MonetizationService = Knit.GetService("MonetizationService")
 
 	Players.PlayerRemoving:Connect(function(player)
 		lastAddAt[player] = nil

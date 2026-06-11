@@ -43,8 +43,15 @@ local function isMobile(): boolean
 	return UserInputService.TouchEnabled
 end
 
+local function isGamepad(): boolean
+	return UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled
+end
+
 local function getLabelText(): string
 	local cfg = getFlyIntroCfg()
+	if isGamepad() then
+		return cfg.LabelGamepad or "Press Y to Fly"
+	end
 	if isMobile() then
 		return cfg.LabelMobile or "Press Supes to Fly"
 	end

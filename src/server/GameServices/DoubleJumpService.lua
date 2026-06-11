@@ -11,6 +11,7 @@ local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJum
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
+local StageCheckpointProgress = require(ReplicatedStorage.Shared.Utils.StageCheckpointProgress)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -169,6 +170,7 @@ local DoubleJumpService = Knit.CreateService({
 		PhaseChanged = Knit.CreateSignal(),
 		AbilityEnded = Knit.CreateSignal(),
 		Rejected = Knit.CreateSignal(),
+		KryptoniteDrained = Knit.CreateSignal(),
 	},
 })
 
@@ -196,7 +198,8 @@ local function applyThrustCooldownOnEnd(player: Player, session: AbilitySession)
 		cooldownEndsAt[player] = nil
 		return
 	end
-	cooldownEndsAt[player] = os.clock() + session.tuning.Cooldown
+	local level = SpeedConfigs.GetPlayerLevel(player)
+	cooldownEndsAt[player] = os.clock() + SpeedConfigs.GetDoubleJumpCooldown(level)
 end
 local heartbeatConn: RBXScriptConnection? = nil
 local DataService: any = nil
@@ -990,7 +993,8 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 
 	if phaseConsumesThrust(phase) and not onWalkableGround and DataService then
-		local drain = ThrustConfigs.DrainPerSecond * dt
+		local level = SpeedConfigs.GetPlayerLevel(session.player)
+		local drain = SpeedConfigs.GetFlightDrainPerSecond(level) * dt
 		if not DataService:TryConsumeThrust(session.player, drain) then
 			self:_onThrustEmpty(session)
 			return
@@ -1371,6 +1375,20 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 end
 
+--- Returns true when the player stands on a Kryptonite stage (flight is sapped there).
+function DoubleJumpService:_isOnKryptoniteStage(player: Player): boolean
+	local cfg = DjCfg.Kryptonite
+	if not cfg or cfg.Enabled ~= true then
+		return false
+	end
+	local data = DataService and DataService:GetData(player)
+	if not data then
+		return false
+	end
+	local stage = StageCheckpointProgress.getEffectiveStage(data)
+	return cfg.Stages[stage] == true
+end
+
 function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 	if not Features.UseDoubleJump then
 		return false, "disabled"
@@ -1481,6 +1499,13 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 
 	player:SetAttribute(PHASE_ATTR, PHASE.FlightTransit)
 	self.Client.PhaseChanged:Fire(player, PHASE.FlightTransit)
+
+	-- Kryptonite stage: let the takeoff begin, then sap all thrust so flight dies instantly.
+	if self:_isOnKryptoniteStage(player) then
+		DataService:DrainThrust(player)
+		self.Client.KryptoniteDrained:Fire(player)
+	end
+
 	return true, nil
 end
 

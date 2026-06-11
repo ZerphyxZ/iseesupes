@@ -37,6 +37,7 @@ local kickSpawnPart: BasePart? = nil
 
 local DataService: any = nil
 local DoubleJumpService: any = nil
+local MonetizationService: any = nil
 local SuperJumpService: any = nil
 
 local KillPartConfigs = {
@@ -363,8 +364,15 @@ local function awardTreadmillTick(player: Player, tier: TreadmillTier)
 			if type(data.Speed) ~= "number" then
 				data.Speed = 0
 			end
-			data.Speed += speedXp * mult
 			local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+			-- Rebirth multiplier applies to treadmill XP too — without this,
+			-- rebirthing does nothing for the main grind and feels worthless.
+			local rebirths = if type(data.Rebirths) == "number" then data.Rebirths else 0
+			local gain = speedXp * mult * SpeedConfigs.GetRebirthGainMultiplier(rebirths)
+			if MonetizationService then
+				gain *= MonetizationService:GetXpMultiplier(player)
+			end
+			data.Speed += gain
 			SpeedConfigs.SyncLevelFromSpeed(data)
 			DataService:Replicate(player)
 		end
@@ -691,6 +699,7 @@ end
 
 function TreadmillService:KnitStart()
 	DataService = Knit.GetService("DataService")
+	pcall(function() MonetizationService = Knit.GetService("MonetizationService") end)
 	pcall(function() DoubleJumpService = Knit.GetService("DoubleJumpService") end)
 	pcall(function() SuperJumpService = Knit.GetService("SuperJumpService") end)
 

@@ -74,6 +74,7 @@ function SupermanLaunchFeedback.playLaunchBurst(
 		vfxTier: SupermanVfxConfigs.BreakTier?,
 		soundNames: { string }?,
 		soundFolders: { { string } }?,
+		skipParticles: boolean?,
 	}?
 )
 	local hrp = character:FindFirstChild("HumanoidRootPart")
@@ -87,6 +88,10 @@ function SupermanLaunchFeedback.playLaunchBurst(
 		else { sounds.QuickWhoosh, "Quick Whoosh", "Woosh" }
 
 	playWhoosh(hrp, soundNames, options and options.soundFolders)
+
+	if options and options.skipParticles == true then
+		return
+	end
 
 	local tier: SupermanVfxConfigs.BreakTier = if options and options.vfxTier
 		then options.vfxTier

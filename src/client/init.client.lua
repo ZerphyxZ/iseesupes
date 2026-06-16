@@ -3,6 +3,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local KnitPackageFolder = ReplicatedStorage.Packages:WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
 
 local function loadFolder(folder: Instance?)
@@ -27,7 +28,7 @@ end
 
 Knit.Start()
 	:andThen(function()
-		print("[iseesupes] Client started.")
+		StudioLog.print("ReadyMessages", "[iseesupes] Client started.")
 	end)
 	:catch(function(err)
 		warn("[iseesupes] Client Knit failed:", tostring(err))

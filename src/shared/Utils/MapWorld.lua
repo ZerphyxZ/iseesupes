@@ -16,7 +16,10 @@ function MapWorld.findChildInMap(childName: string): Instance?
 	if not map then
 		return nil
 	end
-	return map:FindFirstChild(childName)
+	-- Prefer a direct child (fast, unambiguous). Fall back to a recursive search so a
+	-- top-level folder accidentally nested one level deep (e.g. dragged into Lobby in
+	-- the Explorer) still resolves instead of silently breaking the feature.
+	return map:FindFirstChild(childName) or map:FindFirstChild(childName, true)
 end
 
 function MapWorld.walkPathFromWorkspace(segments: { string }): Instance?

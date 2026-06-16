@@ -160,14 +160,6 @@ function MonetizationService:GetXpMultiplier(player: Player): number
 	return mult
 end
 
-function MonetizationService:PlayerOwnsDoubleWins(player: Player): boolean
-	local profile = DataService and DataService:GetProfile(player)
-	if not profile then
-		return false
-	end
-	return profile.Data.OwnedDoubleWins == true
-end
-
 function MonetizationService.Client:GetGamepassSnapshot(player: Player): { [string]: boolean }
 	local snapshot: { [string]: boolean } = {}
 	for _, pass in ProductConfigs.Gamepasses do
@@ -301,18 +293,13 @@ function MonetizationService:KnitStart()
 		local product = getProductById(info.ProductId)
 		if product then
 			if product.GrantDoubleWins == true then
-				local data = profile.Data
-				if data.OwnedDoubleWins == true then
-					print("[iseesupes] DoubleWins already owned:", player.Name)
+				-- Repeatable per-stage purchase: grant exactly the touched button's
+				-- WinAmount. No permanent "owned" flag — the player can buy double
+				-- again at each stage's button.
+				if GiveDoubleWinsService and GiveDoubleWinsService:FulfillPurchase(player) then
 					return Enum.ProductPurchaseDecision.PurchaseGranted
 				end
-				data.OwnedDoubleWins = true
-				DataService:Replicate(player)
-				if GiveDoubleWinsService then
-					GiveDoubleWinsService:FulfillPurchase(player)
-				end
-				print("[iseesupes] Granted 2x Wins to", player.Name)
-				return Enum.ProductPurchaseDecision.PurchaseGranted
+				return Enum.ProductPurchaseDecision.NotProcessedYet
 			end
 
 			if product.GrantBoost == true then

@@ -3,6 +3,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
@@ -336,9 +337,9 @@ end
 -- FRAME OPEN / CLOSE
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local function openShop()
+local function openShop(): boolean
 	if not thrustBoostsFrame or isFrameOpen or isFrameBusy then
-		return
+		return false
 	end
 
 	unblockStrengthClicks(thrustBoostsFrame)
@@ -351,6 +352,7 @@ local function openShop()
 	HudAnimations.openFrameY(thrustBoostsFrame, HudConfigs.OpenDuration, function()
 		isFrameBusy = false
 	end)
+	return true
 end
 
 local function closeShop()
@@ -394,19 +396,50 @@ local function tryOpenShopFromPad()
 	if now - lastTouchTime < ThrustUpgradeConfigs.TouchDebounce then
 		return
 	end
-	lastTouchTime = now
 
 	local DataService = Knit.GetService("DataService")
 	if cachedData == nil then
 		cachedData = DataService:RequestData()
 	end
-	openShop()
+	if openShop() then
+		lastTouchTime = now
+	end
 end
 
-local function startShopPadWatcher(touchPart: BasePart)
-	touchPart.CanTouch = true
+local function resolveShopZoneParts(uTouch: Instance): { BasePart }
+	local parts = TouchZone.collectNamedParts(uTouch, ThrustUpgradeConfigs.TouchZonePartNames)
+	if #parts == 0 then
+		local touchPart = uTouch:FindFirstChild(ThrustUpgradeConfigs.TouchPartName, true)
+		if touchPart and touchPart:IsA("BasePart") then
+			table.insert(parts, touchPart)
+		end
+	end
+	if #parts == 0 then
+		local largest = TouchZone.pickLargestBasePart(uTouch)
+		if largest then
+			table.insert(parts, largest)
+		end
+	end
+	return parts
+end
 
-	local wasInZone = false
+local shopPadBound = false
+
+local function bindShopPad(zoneParts: { BasePart })
+	if shopPadBound then
+		return
+	end
+	shopPadBound = true
+
+	for _, touchPart in zoneParts do
+		touchPart.CanTouch = true
+		touchPart.Touched:Connect(function(hit: BasePart)
+			if TouchZone.getPlayerFromCharacterPart(hit) ~= player then
+				return
+			end
+			tryOpenShopFromPad()
+		end)
+	end
 
 	RunService.Heartbeat:Connect(function()
 		local character = player.Character
@@ -414,7 +447,6 @@ local function startShopPadWatcher(touchPart: BasePart)
 			if isFrameOpen then
 				closeShop()
 			end
-			wasInZone = false
 			return
 		end
 
@@ -423,18 +455,36 @@ local function startShopPadWatcher(touchPart: BasePart)
 			return
 		end
 
-		local inZone = TouchZone.isRootInPartZone(root, touchPart, getTouchZoneOptions())
+		local inZone = TouchZone.isRootInAnyPartZone(root, zoneParts, getTouchZoneOptions())
 
 		if isFrameOpen then
 			if not inZone then
 				closeShop()
 			end
-		elseif inZone and not wasInZone then
+		elseif inZone then
 			tryOpenShopFromPad()
 		end
-
-		wasInZone = inZone
 	end)
+end
+
+local function tryBindShopPad(): boolean
+	local shopFolder = MapWorld.findChildInMap(ThrustUpgradeConfigs.FolderName)
+	if not shopFolder then
+		return false
+	end
+
+	local uTouch = shopFolder:FindFirstChild(ThrustUpgradeConfigs.TouchModelName)
+	if not uTouch then
+		return false
+	end
+
+	local zoneParts = resolveShopZoneParts(uTouch)
+	if #zoneParts == 0 then
+		return false
+	end
+
+	bindShopPad(zoneParts)
+	return true
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -534,37 +584,22 @@ function ThrustController:KnitStart()
 			NotificationManager.show("Already owned.", "Info")
 		elseif result == "MustBuyPrevious" then
 			NotificationManager.show("Buy the previous tier first.", "Info")
+		elseif result == "MaxThrustReached" then
+			NotificationManager.show("Thrust tank is fully maxed!", "Info")
 		end
 	end)
 
-	-- Find touch part in workspace
-	local shopFolder = MapWorld.findChildInMap(ThrustUpgradeConfigs.FolderName)
-	if not shopFolder then
-		warn("[iseesupes] ThrustController: Workspace.Map." .. ThrustUpgradeConfigs.FolderName .. " not found")
-		return
+	if not tryBindShopPad() then
+		task.spawn(function()
+			for _ = 1, 60 do
+				if tryBindShopPad() then
+					return
+				end
+				task.wait(1)
+			end
+			warn("[iseesupes] ThrustController: UpgradeShop pad not found after retry")
+		end)
 	end
-
-	local uTouch = shopFolder:FindFirstChild(ThrustUpgradeConfigs.TouchModelName)
-	if not uTouch then
-		warn("[iseesupes] ThrustController: UTouch model not found")
-		return
-	end
-
-	local touchPart = uTouch:FindFirstChild(ThrustUpgradeConfigs.TouchPartName, true) :: BasePart?
-	if not touchPart or not touchPart:IsA("BasePart") then
-		warn("[iseesupes] ThrustController: Touch part not found in UTouch")
-		return
-	end
-
-	-- .Touched backup (instant when physics overlap works).
-	touchPart.Touched:Connect(function(hit: BasePart)
-		if TouchZone.getPlayerFromCharacterPart(hit) ~= player then
-			return
-		end
-		tryOpenShopFromPad()
-	end)
-
-	startShopPadWatcher(touchPart)
 
 	-- Apply row visibility before first open (Robux rows, prices).
 	task.defer(function()
@@ -578,7 +613,7 @@ function ThrustController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] ThrustController ready.")
+	StudioLog.ready("ThrustController")
 end
 
 return ThrustController

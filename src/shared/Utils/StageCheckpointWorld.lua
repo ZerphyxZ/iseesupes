@@ -67,6 +67,48 @@ function StageCheckpointWorld.getGatePart(stageNum: number): BasePart?
 	return child:FindFirstChildWhichIsA("BasePart", true)
 end
 
+--- Walk up from an instance to the ancestor Stage model named exactly "Stage<N>"
+--- (Workspace.Map.Stage2, .Stage3, …) and return N. Used to map hazard parts
+--- (e.g. HealthRed zones) to the stage they sit in, regardless of nesting.
+function StageCheckpointWorld.resolveStageFromAncestor(inst: Instance): number?
+	local node: Instance? = inst
+	while node and node ~= workspace do
+		local n = string.match(node.Name, "^Stage(%d+)$")
+		if n then
+			return tonumber(n)
+		end
+		node = node.Parent
+	end
+	return nil
+end
+
+export type StreamBounds = {
+	CenterX: number,
+	RadiusX: number,
+	MinZ: number,
+	MaxZ: number,
+}
+
+function StageCheckpointWorld.isPositionInStreamBounds(pos: Vector3, bounds: StreamBounds): boolean
+	if math.abs(pos.X - bounds.CenterX) > bounds.RadiusX then
+		return false
+	end
+	if pos.Z < bounds.MinZ or pos.Z > bounds.MaxZ then
+		return false
+	end
+	return true
+end
+
+--- Map stage from world geometry under the player (not profile progress).
+function StageCheckpointWorld.resolvePhysicalStageFromRoot(root: BasePart, rayParams: RaycastParams): number?
+	local origin = root.Position + Vector3.new(0, 2, 0)
+	local hit = workspace:Raycast(origin, Vector3.new(0, -130, 0), rayParams)
+	if not hit then
+		return nil
+	end
+	return StageCheckpointWorld.resolveStageFromAncestor(hit.Instance)
+end
+
 function StageCheckpointWorld.getCheckpointFromHit(part: Instance): (number?, BasePart?)
 	local folder = StageCheckpointWorld.getFolder()
 	if not folder then
@@ -216,9 +258,11 @@ function StageCheckpointWorld.formatRequirementText(requirement: number): string
 end
 
 function StageCheckpointWorld.applyGateUi(gatePart: BasePart, requirement: number, hp01: number, logContext: string?)
-	local reqLabel = StageCheckpointWorld.getRequirementLabel(gatePart)
-	if reqLabel then
-		reqLabel.Text = StageCheckpointWorld.formatRequirementText(requirement)
+	if StageCheckpointConfigs.ShowGateXpUi then
+		local reqLabel = StageCheckpointWorld.getRequirementLabel(gatePart)
+		if reqLabel then
+			reqLabel.Text = StageCheckpointWorld.formatRequirementText(requirement)
+		end
 	end
 	local progress = StageCheckpointWorld.getBarProgressFrame(gatePart)
 	local clamped = math.clamp(hp01, 0, 1)
@@ -268,11 +312,32 @@ end
 
 function StageCheckpointWorld.setGateInteractionEnabled(gatePart: BasePart, enabled: boolean)
 	gatePart.CanQuery = enabled
-	gatePart.CanCollide = enabled
+	gatePart.CanCollide = if StageCheckpointConfigs.GateCanCollide then enabled else false
 	gatePart.CanTouch = false
 end
 
+local function applyGateCanCollideToEntry(stageEntry: Instance)
+	if StageCheckpointConfigs.GateCanCollide then
+		return
+	end
+	local function apply(part: BasePart)
+		part.CanTouch = false
+		part.CanCollide = false
+	end
+	if stageEntry:IsA("BasePart") then
+		apply(stageEntry)
+	end
+	for _, desc in stageEntry:GetDescendants() do
+		if desc:IsA("BasePart") then
+			apply(desc :: BasePart)
+		end
+	end
+end
+
 function StageCheckpointWorld.setXpOverlayEnabled(gatePart: BasePart, enabled: boolean)
+	if not StageCheckpointConfigs.ShowGateXpUi then
+		return
+	end
 	local xp = gatePart:FindFirstChild(StageCheckpointConfigs.UiPaths.SurfaceGui)
 	if xp and xp:IsA("SurfaceGui") then
 		xp.Enabled = enabled
@@ -358,6 +423,8 @@ function StageCheckpointWorld.prepareGateParts(): { [number]: BasePart }
 			continue
 		end
 
+		applyGateCanCollideToEntry(child)
+
 		for _, desc in child:GetDescendants() do
 			if desc:IsA("BasePart") then
 				desc.CanTouch = false
@@ -393,7 +460,9 @@ function StageCheckpointWorld.prepareGateParts(): { [number]: BasePart }
 			warn("[StageCheckpointWorld] Missing Requirement on stage", stageNum)
 		end
 
-		gatePart.CanCollide = true
+		if StageCheckpointConfigs.GateCanCollide then
+			gatePart.CanCollide = true
+		end
 		prepared[stageNum] = gatePart
 		StageCheckpointDebug.logAlways(string.format(
 			"Prepared gate stage=%d req=%s CanQuery=%s CanCollide=%s group=%s label=%s progress=%s",

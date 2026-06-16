@@ -6,9 +6,11 @@
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
 local SupermanVfxConfigs = require(ReplicatedStorage.Shared.Configs.SupermanVfxConfigs)
 local SupermanGroundVfx = require(script.Parent.Parent.Parent.Modules.SupermanGroundVfx)
 
@@ -85,6 +87,9 @@ end
 -- ── Impact detection ──────────────────────────────────────────────────────────
 
 local function tryImpact(hitPart: BasePart)
+	if ClientPerformance.shouldReduceSupermanVfx() then
+		return
+	end
 	if not abilityActive then
 		return
 	end
@@ -184,7 +189,7 @@ function FlightImpactController:KnitStart()
 		setupCharacter(player.Character)
 	end
 
-	print("[iseesupes] FlightImpactController ready.")
+	StudioLog.ready("FlightImpactController")
 end
 
 return FlightImpactController

@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
@@ -58,9 +59,11 @@ function RebirthService:PerformRebirth(player: Player, skipLevelCheck: boolean?,
 
 	-- Rebirth perk: permanently bigger thrust tank, granted full (feels like a reward,
 	-- and softens the re-grind right after losing stage access).
-	local newMax = SpeedConfigs.Thrust.BaseMaxFuel
-		+ ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
-		+ RebirthConfigs.GetThrustBonus(data.Rebirths)
+	local newMax = SpeedConfigs.Thrust.ClampMax(
+		SpeedConfigs.Thrust.BaseMaxFuel
+			+ ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
+			+ RebirthConfigs.GetThrustBonus(data.Rebirths)
+	)
 	DataService:ApplyUpgradedMax(player, newMax)
 
 	DataService:Replicate(player)
@@ -106,7 +109,7 @@ function RebirthService:KnitStart()
 	end
 	Players.PlayerAdded:Connect(onPlayerAdded)
 
-	print("[iseesupes] RebirthService ready.")
+	StudioLog.ready("RebirthService")
 end
 
 return RebirthService

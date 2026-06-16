@@ -8,6 +8,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local UserService = game:GetService("UserService")
 local Workspace = game:GetService("Workspace")
 
@@ -191,7 +192,9 @@ local function getLeaderboardsFolder(): Folder?
 	local bestFolder: Folder? = nil
 	local bestCount = -1
 
-	for _, child in map:GetChildren() do
+	-- GetDescendants (not GetChildren) so a Leaderboards folder still resolves if it
+	-- gets nested deeper (e.g. accidentally dragged into Lobby) instead of breaking.
+	for _, child in map:GetDescendants() do
 		if not child:IsA("Folder") or child.Name ~= "Leaderboards" then
 			continue
 		end
@@ -706,7 +709,7 @@ function LeaderboardService:KnitStart()
 		task.wait(2)
 	end)
 
-	print("[iseesupes] LeaderboardService ready.")
+	StudioLog.ready("LeaderboardService")
 end
 
 return LeaderboardService

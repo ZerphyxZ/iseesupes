@@ -3,11 +3,13 @@
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local HumanoidLocomotion = require(ReplicatedStorage.Shared.Utils.HumanoidLocomotion)
+local PerfWatch = require(ReplicatedStorage.Shared.Utils.PerfWatch)
 
 local Anim = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
@@ -446,6 +448,15 @@ local function tryCustomJump(character: Model)
 	end
 end
 
+--- Applies the normal jump without re-running jump interceptors (long-jump deferred tap).
+function CharacterController:ApplyNormalJump()
+	local character = player.Character
+	if not character then
+		return
+	end
+	tryCustomJump(character)
+end
+
 local function handleJumpPress()
 	local now = os.clock()
 	if now - lastJumpPressAt < 0.05 then
@@ -700,6 +711,34 @@ function setupCharacter(character: Model): boolean
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = { character }
 
+	-- Decouple jump distance from walk speed: cap horizontal air velocity to a fixed
+	-- value so a basic jump always travels the same distance no matter how fast you run
+	-- (keeps the pillar stages consistent as walk speed scales high). Long-jump arcs
+	-- (LongJumpArcActive) and flight (abilityBlocking, returned above) set their own
+	-- velocity and are left alone.
+	local function clampJumpHorizontal(root: BasePart)
+		-- Cap horizontal air speed so jump / long-jump DISTANCE is independent of walk
+		-- speed. Roblox air-control otherwise accelerates air velocity toward the (now very
+		-- high) walk speed, stretching the arc. During a long jump, cap to its own forward
+		-- power so it keeps its design distance; otherwise cap to the fixed basic-jump speed.
+		local arcAttr = CharacterConfigs.LongJump.ArcActiveAttribute or "LongJumpArcActive"
+		local cap: number
+		if player:GetAttribute(arcAttr) == true then
+			cap = CharacterConfigs.LongJump.ForwardPower or 110
+		else
+			cap = JumpCfg.JumpHorizontalSpeed
+		end
+		if not cap or cap <= 0 then
+			return
+		end
+		local vel = root.AssemblyLinearVelocity
+		local mag = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+		if mag > cap then
+			local s = cap / mag
+			root.AssemblyLinearVelocity = Vector3.new(vel.X * s, vel.Y, vel.Z * s)
+		end
+	end
+
 	state.heartbeatConn = RunService.Heartbeat:Connect(function()
 		if humanoid.Health <= 0 then
 			return
@@ -717,18 +756,32 @@ function setupCharacter(character: Model): boolean
 		end
 
 		if Features.UseBasicJumpAnims and state.mode == "fall" then
+			local ljCfg = CharacterConfigs.LongJump
+			local arcAttr = ljCfg.ArcActiveAttribute or "LongJumpArcActive"
+
+			-- Cap horizontal air speed every frame, INCLUDING during the long-jump arc
+			-- (capped to the long-jump's own power), so high walk speed can't stretch it.
 			local root = getRootPart(character)
+			if root then
+				clampJumpHorizontal(root)
+			end
+
+			if player:GetAttribute(arcAttr) == true then
+				return
+			end
 			if root and not state.landingPlayed then
 				local fallDuration = os.clock() - state.airTime
 				if fallDuration >= JumpCfg.MinFallTime then
-					local hit = workspace:Raycast(
-						root.Position,
-						Vector3.new(0, -JumpCfg.LandingRayDistance, 0),
-						rayParams
-					)
-					if hit and root.AssemblyLinearVelocity.Y < 0 then
-						enterLanding(state)
-					end
+					PerfWatch.measure("CharacterController.fallRaycast", function()
+						local hit = workspace:Raycast(
+							root.Position,
+							Vector3.new(0, -JumpCfg.LandingRayDistance, 0),
+							rayParams
+						)
+						if hit and root.AssemblyLinearVelocity.Y < 0 then
+							enterLanding(state)
+						end
+					end)
 				end
 			end
 
@@ -748,6 +801,7 @@ function setupCharacter(character: Model): boolean
 		if Features.UseBasicJumpAnims and state.mode == "jump" then
 			local root = getRootPart(character)
 			if root then
+				clampJumpHorizontal(root)
 				markLeftGroundIfNeeded(state, root)
 
 				if canEnterFall(state, root) then
@@ -818,7 +872,7 @@ function CharacterController:KnitStart()
 		setupCharacter(player.Character)
 	end
 
-	print("[iseesupes] CharacterController ready.")
+	StudioLog.ready("CharacterController")
 end
 
 return CharacterController

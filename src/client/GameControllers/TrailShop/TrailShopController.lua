@@ -7,6 +7,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
@@ -297,7 +298,7 @@ function TrailShopController:_start()
 	task.defer(ensurePopulated)
 	task.delay(0.5, ensurePopulated)
 
-	print("[iseesupes] TrailShopController ready.")
+	StudioLog.ready("TrailShopController")
 end
 
 return TrailShopController

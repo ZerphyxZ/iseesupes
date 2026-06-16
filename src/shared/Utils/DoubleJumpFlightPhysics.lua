@@ -19,12 +19,14 @@ export type FlightState = {
 	clientSteerPitchAxis: number,
 	clientSteerDirection: Vector3?,
 	lastBankHeadingYaw: number?,
+	takeoffGroundBoostApplied: boolean?,
 }
 
 export type TickContext = {
 	phase: string,
 	phaseElapsed: number,
 	phaseStartedAt: number,
+	abilityStartedAt: number?,
 	startPosition: Vector3,
 	rayParams: RaycastParams,
 	humanoid: Humanoid,
@@ -44,6 +46,62 @@ local PHASE = {
 local DoubleJumpFlightPhysics = {
 	PHASE = PHASE,
 }
+
+local DjCfg = CharacterConfigs.DoubleJump
+
+local function isInTakeoffGrace(tuning: DjTuning, abilityStartedAt: number?): boolean
+	if not abilityStartedAt then
+		return false
+	end
+	local grace = tuning.TakeoffGraceSeconds or DjCfg.TakeoffGraceSeconds or 1.2
+	return os.clock() - abilityStartedAt < grace
+end
+
+function DoubleJumpFlightPhysics.isAfterTransitionReady(
+	cfg: any,
+	heightGain: number,
+	phaseElapsed: number
+): boolean
+	local minHeight = cfg.TakeoffMinHeightAboveStart or 6
+	local failsafeDuration = cfg.TakeoffFailsafeDuration or 1.4
+	local failsafeMinHeight = cfg.TakeoffFailsafeMinHeight or 2
+	local minElapsed = phaseElapsed >= (cfg.MinDuration or 0)
+	local ready = heightGain >= minHeight
+		or (phaseElapsed >= failsafeDuration and heightGain >= failsafeMinHeight)
+	return ready and minElapsed
+end
+
+local function maybeApplyTakeoffGroundBoost(
+	root: BasePart,
+	state: FlightState,
+	ctx: TickContext,
+	tuning: DjTuning,
+	vel: Vector3
+): Vector3
+	if state.takeoffGroundBoostApplied then
+		return vel
+	end
+	if not isInTakeoffGrace(tuning, ctx.abilityStartedAt) then
+		return vel
+	end
+	if ctx.phase ~= PHASE.FlightTransit and ctx.phase ~= PHASE.AfterTransition then
+		return vel
+	end
+	local landingCfg = tuning.Phases.DownSupes
+	local onGround = DoubleJumpLanding.isOnWalkableGround(
+		ctx.humanoid,
+		root,
+		ctx.rayParams,
+		landingCfg,
+		nil
+	)
+	if not onGround then
+		return vel
+	end
+	state.takeoffGroundBoostApplied = true
+	local boost = tuning.TakeoffGroundBoost or DjCfg.TakeoffGroundBoost or 32
+	return vel + Vector3.new(0, boost, 0)
+end
 
 local function flatUnit(vector: Vector3): Vector3
 	local flat = Vector3.new(vector.X, 0, vector.Z)
@@ -541,6 +599,7 @@ function DoubleJumpFlightPhysics.tickPhase(
 				nudge
 			)
 		end
+		vel = maybeApplyTakeoffGroundBoost(root, state, ctx, tuning, vel)
 		DoubleJumpFlightPhysics.updateBankRoll(state, dt, tuning, isSteeringEnabled(tuning))
 		DoubleJumpFlightPhysics.applyFlightYawRollAndVelocity(
 			root,
@@ -570,6 +629,7 @@ function DoubleJumpFlightPhysics.tickPhase(
 			local aim = DoubleJumpFlightPhysics.getFlightDirectionWithPitch(state, tuning, phase, steerDirection)
 			vel = unit3D(vel.Unit:Lerp(aim, pitchBlend)) * vel.Magnitude
 		end
+		vel = maybeApplyTakeoffGroundBoost(root, state, ctx, tuning, vel)
 		DoubleJumpFlightPhysics.updateBankRoll(state, dt, tuning, isSteeringEnabled(tuning))
 		DoubleJumpFlightPhysics.applyFlightYawRollAndVelocity(
 			root,

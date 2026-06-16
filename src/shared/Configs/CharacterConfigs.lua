@@ -14,7 +14,7 @@ local CharacterConfigs = {
 		UseCapeVfx = true,
 		UseSuperJump = false,
 		UseLongJump = true,
-		UseHeatVision = true,
+		UseHeatVision = false,
 		ForceRunOnTreadmill = true,
 	},
 
@@ -35,6 +35,12 @@ local CharacterConfigs = {
 
 	BasicJump = {
 		JumpVelocity = 80,
+		--- Horizontal air-speed cap (studs/s) so a jump's DISTANCE is independent of walk
+		--- speed — it always travels ~JumpHorizontalSpeed × 0.82 studs no matter how fast
+		--- you run. Lets walk speed scale high while the S8/S9 pillar jumps stay consistent.
+		--- (CharacterController clamps horizontal velocity to this while airborne from a
+		--- basic jump; long-jumps and flight set their own speed and are not capped.)
+		JumpHorizontalSpeed = 34,
 		LandingRayDistance = 4,
 		MinFallTime = 0.15,
 		MinJumpAirTime = 0.05,
@@ -82,17 +88,35 @@ local CharacterConfigs = {
 				},
 			},
 		},
-		Cooldown = 5,
+		Cooldown = 1,
 		--- Must fly at least this long before E / UI / Space can cancel thrust.
 		CancelMinActiveTime = 1.25,
 		--- Cancel within this many seconds after start → no cooldown on landing (after MinActiveTime).
 		CancelCooldownGrace = 2.5,
 		MaxAbilityDuration = 7,
 		Debug = false,
+		--- Grace after E press: skip collision/hard-ground end and block client grounded landing.
+		TakeoffGraceSeconds = 1.2,
+		--- One-shot upward velocity when still on walkable floor during early takeoff.
+		TakeoffGroundBoost = 32,
 
 		Network = {
 			ClientOwnsFlightPhysics = true,
 			SteerSendHz = 15,
+		},
+
+		--- Applied on touch-only clients for smoother camera-steer flight (less twitchy bank/pitch).
+		Mobile = {
+			Steering = {
+				CameraSteerSmoothRate = 5,
+				SteerSmoothRate = 5,
+				SteerAxisSmoothRate = 5,
+				DirectionLerp = 4,
+				CameraYawRateForFullBank = 4.8,
+				CameraYawRateMin = 0.45,
+				CameraYawRateMinAxis = 0.12,
+				CameraPitchRateForFullAxis = 2.8,
+			},
 		},
 
 		AnimFolder = "DoubleJump",
@@ -113,7 +137,7 @@ local CharacterConfigs = {
 			TransitStartPitch = 0,
 			TransitEndPitch = -35,
 			TransitPitchLerp = 8,
-			TransitLaunchClimbDegrees = 5,
+			TransitLaunchClimbDegrees = 12,
 			FlightPitch = -85,
 			PitchLerp = 10,
 			UprightPitch = 0,
@@ -144,13 +168,17 @@ local CharacterConfigs = {
 
 		Phases = {
 			FlightTransit = {
-				Duration = 0.35,
-				ForwardNudgeSpeed = 10,
+				Duration = 0.45,
+				ForwardNudgeSpeed = 24,
 			},
 			AfterTransition = {
 				RiseSpeed = 28,
 				ForwardSpeed = 68,
 				TargetHeightAboveStart = 16,
+				--- Min height gain before LeanUp (primary gate; MaxDuration is failsafe-only).
+				TakeoffMinHeightAboveStart = 6,
+				TakeoffFailsafeDuration = 1.4,
+				TakeoffFailsafeMinHeight = 2,
 				MaxDuration = 0.9,
 				MinDuration = 0.35,
 				RequiresHold = true,
@@ -184,7 +212,9 @@ local CharacterConfigs = {
 				MaxDuration = 2.5,
 				WalkableNormalMinY = 0.6,
 				GroundProbeDistance = 8,
-				GroundClearanceTolerance = 1.25,
+				GroundClearanceTolerance = 0.35,
+				--- Feet-above-surface before glide counts as near ground (LeanUp / hard-ground). Much tighter than landing trigger.
+				FlightNearGroundHeight = 1.25,
 				AirborneProbeDistance = 64,
 				ObstacleProbeDistance = 4,
 				WallProbeDistance = 5,
@@ -237,12 +267,31 @@ local CharacterConfigs = {
 	},
 
 	LongJump = {
+		--- One jump press = long jump; never defer to basic short hop.
+		SingleTapInput = true,
+		--- Legacy (unused when SingleTapInput): double-tap / hold timing.
 		DoubleTapWindow = 0.35,
-		--- Hold jump (Space or TouchGui JumpButton) this long to long jump (release also counts on mobile).
 		HoldThreshold = 0.18,
 		ForwardPower = 110,
 		UpPower = 95,
 		Cooldown = 1.0,
+		--- After a ground long jump, allow N extra full-strength long jumps in the air (single Jump press).
+		--- Total cycle = 1 ground + MaxAirLongJumps air (HUD shows used/2 when MaxAirLongJumps = 1).
+		AirLongJumpEnabled = true,
+		--- Air long jumps granted only after a ground long jump; refill ONLY on landing.
+		MaxAirLongJumps = 1,
+		--- After both jumps in a cycle are spent, this many seconds must pass before they refill, AND the
+		--- player must be back on the ground. Drives the "Recharging Xs" HUD countdown.
+		ExhaustCooldown = 1.0,
+		--- Player attribute while airborne from a long jump (suppresses speed XP during arc).
+		ArcActiveAttribute = "LongJumpArcActive",
+		SuppressSpeedXpDuringArc = true,
+		--- Raycast ground check (fixes high-speed FloorMaterial flicker at ~245 walk).
+		UseRaycastGroundCheck = true,
+		GroundProbeDistance = 6,
+		GroundClearanceTolerance = 1.5,
+		--- Allow ground long jump briefly after leaving floor (high walk speed).
+		CoyoteTimeSeconds = 0.12,
 		-- SupesAnimations / SuperJump / LeanUp (same asset as SuperJump ability)
 		AnimFolder = "SuperJump",
 		LeanUpAnim = "LeanUp",
@@ -257,6 +306,7 @@ local CharacterConfigs = {
 			{ "Shared", "Assets", "GlideVfxSounds" },
 		},
 		LaunchVfxTier = "LongJumpLaunch",
+		LaunchVfxTierAir = "LongJumpLaunchAir",
 	},
 
 	SuperJump = {

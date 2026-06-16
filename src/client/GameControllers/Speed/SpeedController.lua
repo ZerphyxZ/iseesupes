@@ -5,12 +5,15 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
+local HudConfigs = require(ReplicatedStorage.Shared.Configs.HudConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
@@ -112,13 +115,20 @@ function SpeedController:KnitStart()
 	if thrustBarFrame then
 		thrustProgress = thrustBarFrame:WaitForChild("Progress") :: Frame
 		thrustLevelLabel = thrustBarFrame:WaitForChild("Level") :: TextLabel
-		thrustReqLabel = thrustBarFrame:WaitForChild("Requirement") :: TextLabel
+		thrustReqLabel = thrustBarFrame:FindFirstChild("Requirement") :: TextLabel?
+		if thrustReqLabel then
+			if HudConfigs.UpdateThrustBarRequirementLabel then
+				thrustReqLabel.Visible = true
+			else
+				thrustReqLabel.Visible = false
+			end
+		end
 	else
 		warn("[iseesupes] SpeedController: missing HUD/Bottom/List/Thrust or SpeedPoints.")
 	end
 
 	local function updateThrustUI()
-		if not thrustProgress or not thrustLevelLabel or not thrustReqLabel then
+		if not thrustProgress or not thrustLevelLabel then
 			return
 		end
 
@@ -133,9 +143,11 @@ function SpeedController:KnitStart()
 		lastThrustValue = current
 
 		thrustLevelLabel.Text = "Thrust"
-		thrustReqLabel.Text = NumberFormatter.Format(math.floor(current))
-			.. "/"
-			.. NumberFormatter.Format(math.floor(max))
+		if thrustReqLabel and HudConfigs.UpdateThrustBarRequirementLabel then
+			thrustReqLabel.Text = NumberFormatter.Format(math.floor(current))
+				.. "/"
+				.. NumberFormatter.Format(math.floor(max))
+		end
 
 		local percent = if max > 0 then current / max else 0
 		percent = math.clamp(percent, 0, 1)
@@ -145,7 +157,10 @@ function SpeedController:KnitStart()
 
 	local progressFrame = barFrame:WaitForChild("Progress") :: Frame
 	local levelLabel = barFrame:WaitForChild("Level") :: TextLabel
-	local reqLabel = barFrame:WaitForChild("Requirement") :: TextLabel
+	local reqLabel: TextLabel? = barFrame:FindFirstChild("Requirement") :: TextLabel?
+	if reqLabel and not HudConfigs.UpdateLevelBarRequirementLabel then
+		reqLabel.Visible = false
+	end
 	local totalSpeedLabel = barFrame:WaitForChild("TotalSpeed") :: TextLabel
 	local rebirthBoostLabel = barFrame:WaitForChild("RebirthBoost") :: TextLabel
 
@@ -173,11 +188,68 @@ function SpeedController:KnitStart()
 		end
 	end
 
-	local originalLevelUpPos = levelUpFrame.Position
+	local studioLevelUpPos = levelUpFrame.Position
+	local originalLevelUpPos = studioLevelUpPos
 	local hiddenLevelUpPos =
 		UDim2.new(1.5, 0, originalLevelUpPos.Y.Scale, originalLevelUpPos.Y.Offset)
+
+	local function resolveLevelUpVisiblePosition(): UDim2
+		local parent = levelUpFrame.Parent
+		if not parent or not parent:IsA("GuiObject") then
+			return studioLevelUpPos
+		end
+		local parentGui = parent :: GuiObject
+		local parentH = parentGui.AbsoluteSize.Y
+		if parentH <= 0 then
+			return studioLevelUpPos
+		end
+
+		local layout = HudConfigs.LevelUp
+		local gapPx = if layout and typeof(layout.GapBelowJumpCounterPx) == "number"
+			then layout.GapBelowJumpCounterPx
+			else 10
+
+		local jumpCounter = parent:FindFirstChild("JumpCounter")
+		if jumpCounter and jumpCounter:IsA("GuiObject") then
+			local jc = jumpCounter :: GuiObject
+			local bottom = jc.AbsolutePosition.Y + jc.AbsoluteSize.Y
+			local yScale = (bottom + gapPx - parentGui.AbsolutePosition.Y) / parentH
+			return UDim2.new(studioLevelUpPos.X.Scale, studioLevelUpPos.X.Offset, yScale, studioLevelUpPos.Y.Offset)
+		end
+
+		local extraScale = if layout and typeof(layout.FallbackYOffsetScale) == "number"
+			then layout.FallbackYOffsetScale
+			else 0.05
+		return UDim2.new(
+			studioLevelUpPos.X.Scale,
+			studioLevelUpPos.X.Offset,
+			studioLevelUpPos.Y.Scale + extraScale,
+			studioLevelUpPos.Y.Offset
+		)
+	end
+
+	local function refreshLevelUpAnchors()
+		originalLevelUpPos = resolveLevelUpVisiblePosition()
+		hiddenLevelUpPos = UDim2.new(1.5, 0, originalLevelUpPos.Y.Scale, originalLevelUpPos.Y.Offset)
+		if not levelUpFrame.Visible then
+			levelUpFrame.Position = hiddenLevelUpPos
+		end
+	end
+
 	levelUpFrame.Position = hiddenLevelUpPos
 	levelUpFrame.Visible = false
+
+	task.defer(function()
+		local deadline = os.clock() + 8
+		while os.clock() < deadline do
+			local parent = levelUpFrame.Parent
+			if parent and parent:FindFirstChild("JumpCounter") then
+				break
+			end
+			task.wait(0.1)
+		end
+		refreshLevelUpAnchors()
+	end)
 
 	local accumulatedDistance = 0
 	local lastPosition: Vector3? = nil
@@ -204,9 +276,11 @@ function SpeedController:KnitStart()
 		currentProgressXP = math.clamp(currentProgressXP, 0, xpNeededThisLevel)
 
 		levelLabel.Text = "Level " .. NumberFormatter.Format(currentLevel)
-		reqLabel.Text = NumberFormatter.Format(math.floor(currentProgressXP))
-			.. "/"
-			.. NumberFormatter.Format(xpNeededThisLevel)
+		if reqLabel and HudConfigs.UpdateLevelBarRequirementLabel then
+			reqLabel.Text = NumberFormatter.Format(math.floor(currentProgressXP))
+				.. "/"
+				.. NumberFormatter.Format(xpNeededThisLevel)
+		end
 		totalSpeedLabel.Text = "Total Speed: " .. NumberFormatter.Format(math.floor(currentSpeed))
 
 		local boostPercent = SpeedConfigs.GetRebirthBoostPercent(currentRebirths)
@@ -255,6 +329,7 @@ function SpeedController:KnitStart()
 		levelUpDismissId += 1
 		local dismissId = levelUpDismissId
 
+		refreshLevelUpAnchors()
 		levelUpFrame.Visible = true
 		local tweenIn = TweenService:Create(levelUpFrame, TWEEN_INFO_LEVEL, { Position = originalLevelUpPos })
 		tweenIn:Play()
@@ -288,6 +363,13 @@ function SpeedController:KnitStart()
 		end
 
 		local currentPosition = rootPart.Position
+		local ljCfg = CharacterConfigs.LongJump
+		if ljCfg.SuppressSpeedXpDuringArc ~= false
+			and player:GetAttribute(ljCfg.ArcActiveAttribute or "LongJumpArcActive") == true
+		then
+			lastPosition = currentPosition
+			return
+		end
 		if lastPosition then
 			local flatDelta = Vector3.new(
 				currentPosition.X - lastPosition.X,
@@ -323,6 +405,7 @@ function SpeedController:KnitStart()
 	end)
 
 	DataLib.OnChanged(function()
+		lastThrustValue = nil
 		updateUI()
 		updateWinsPopups()
 		updateThrustUI()
@@ -347,7 +430,7 @@ function SpeedController:KnitStart()
 	local TreadmillService = Knit.GetService("TreadmillService")
 	TreadmillService.ActiveTreadmillChanged:Connect(updateThrustUI)
 
-	print("[iseesupes] SpeedController ready.")
+	StudioLog.ready("SpeedController")
 end
 
 return SpeedController

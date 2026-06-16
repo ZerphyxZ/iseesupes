@@ -7,6 +7,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local LoginRewardConfigs = require(ReplicatedStorage.Shared.Configs.LoginRewardConfigs)
@@ -93,7 +94,8 @@ function LoginRewardService.Client:ClaimStreak(player: Player): boolean
 	end
 	DataService:ForceSave(player)
 
-	print(
+	StudioLog.print(
+		"Gameplay",
 		"[iseesupes] LoginRewardService: streak claim",
 		player.Name,
 		"day",
@@ -124,7 +126,7 @@ function LoginRewardService.Client:ClaimOffline(player: Player): boolean
 	grantSpeedXp(player, data, pending.xp)
 	DataService:ForceSave(player)
 
-	print("[iseesupes] LoginRewardService: offline claim", player.Name, "xp", pending.xp)
+	StudioLog.print("Gameplay", "[iseesupes] LoginRewardService: offline claim", player.Name, "xp", pending.xp)
 	pushState(player)
 	return true
 end
@@ -212,7 +214,7 @@ function LoginRewardService:KnitStart()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 
-	print("[iseesupes] LoginRewardService ready.")
+	StudioLog.ready("LoginRewardService")
 end
 
 return LoginRewardService

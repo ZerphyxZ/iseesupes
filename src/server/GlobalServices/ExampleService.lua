@@ -1,6 +1,7 @@
 --!strict
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local Knit = require(ReplicatedStorage.Packages.Knit)
 
 local ExampleService = Knit.CreateService({
@@ -9,7 +10,7 @@ local ExampleService = Knit.CreateService({
 })
 
 function ExampleService:KnitStart()
-	print("[iseesupes] ExampleService ready.")
+	StudioLog.ready("ExampleService")
 end
 
 return ExampleService

@@ -22,6 +22,7 @@ local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgr
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 local HeatVisionConfigs = require(ReplicatedStorage.Shared.Configs.HeatVisionConfigs)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 assert(
 	ThrustConfigs,
 	"[iseesupes] SpeedConfigs.Thrust missing — run `rojo serve` and connect the Rojo plugin, then Play again."
@@ -30,6 +31,7 @@ assert(
 local LeaderboardConfigs = require(ReplicatedStorage.Shared.Configs.LeaderboardConfigs)
 local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
 local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
+local TutorialFlightAssist = require(ReplicatedStorage.Shared.Utils.TutorialFlightAssist)
 
 -- Bump when you need a fresh ProfileStore namespace (e.g. testing saves from scratch).
 local DATA_VERSION = "iseesupes_v99"
@@ -53,8 +55,15 @@ local lastSolarReplicateAt: { [Player]: number } = {}
 local lobbySpawnPart: BasePart? = nil
 local orderedStoreCache: { [string]: OrderedDataStore? } = {}
 local pendingLeaderboardSave: { [Player]: thread } = {}
+local tutorialFlightAssistActive: { [Player]: boolean } = {}
 local pendingSaveStartedAt: { [Player]: number } = {}
 local lastLeaderboardScores: { [Player]: { [string]: number } } = {}
+
+local DJ_PHASE_ATTR = "DjAbilityPhase"
+local SJ_PHASE_ATTR = "SjAbilityPhase"
+
+local doubleJumpService: any = nil
+local superJumpService: any = nil
 
 local LEADERBOARD_SAVE_DEBOUNCE = 20
 local LEADERBOARD_SAVE_MAX_WAIT = 45
@@ -236,17 +245,13 @@ local function migrateFlyTutorialStep(data: any)
 		if step == TutorialConfigs.Step.CoreDone and data.TutorialThrustShopIntroShown ~= true then
 			return
 		end
-		if step < TutorialConfigs.Step.Complete then
-			data.TutorialStep = TutorialConfigs.Step.Complete
-		end
 		return
 	end
 	if step >= TutorialConfigs.Step.Complete then
-		data.TutorialStep = TutorialConfigs.Step.GoStage1
+		if data.TutorialThrustShopIntroShown ~= true then
+			data.TutorialStep = TutorialConfigs.Step.GoStage1
+		end
 		return
-	end
-	if step == TutorialConfigs.Step.CoreDone and data.TutorialThrustShopIntroShown == true then
-		data.TutorialStep = TutorialConfigs.Step.GoStage1
 	end
 end
 
@@ -316,6 +321,34 @@ end
 
 local funnelService: any = nil
 
+local function hasTutorialInfiniteThrust(player: Player): boolean
+	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
+	local assist = TutorialConfigs.FlightAssist
+	if not assist or assist.Enabled == false or assist.InfiniteThrust ~= true then
+		return false
+	end
+	return TutorialFlightAssist.isActiveForPlayer(player)
+end
+
+local function syncTutorialFlightAssist(player: Player, data: any)
+	local attr = TutorialFlightAssist.getAttributeName()
+	local shouldAssist = TutorialFlightAssist.isActiveForData(data)
+	local wasActive = tutorialFlightAssistActive[player] == true
+
+	if shouldAssist then
+		player:SetAttribute(attr, true)
+		if not wasActive and TutorialConfigs.FlightAssist.RefillThrustOnStepEnter == true then
+			DataService:RefillThrustToMax(player)
+		end
+	else
+		player:SetAttribute(attr, nil)
+	end
+
+	tutorialFlightAssistActive[player] = shouldAssist
+end
+
 local function replicateData(player: Player, profile: any)
 	ThrustConfigs.EnsureFuelDefaults(profile.Data)
 	HeatVisionConfigs.ensureSolarDefaults(profile.Data)
@@ -326,6 +359,7 @@ local function replicateData(player: Player, profile: any)
 	if funnelService then
 		funnelService:syncOnboardingFromData(player, profile.Data)
 	end
+	syncTutorialFlightAssist(player, profile.Data)
 	DataService.Client.DataReplicated:Fire(player, profile.Data)
 	DataService.Client.SolarChanged:Fire(player, profile.Data.SolarCurrent, profile.Data.SolarMax)
 end
@@ -345,6 +379,9 @@ local function countUnlockedAvatars(data: any): number
 end
 
 local function logProfileJoinDiagnostics(player: Player, profile: any, odsRestoreRan: boolean, odsRestoredAny: boolean)
+	if not StudioLog.isEnabled("ProfileJoin") then
+		return
+	end
 	local data = profile.Data
 	print(
 		"[iseesupes] Profile join:",
@@ -466,6 +503,54 @@ local function applyThrustPower(player: Player, refill: boolean)
 	replicateThrust(player)
 end
 
+local function isPlayerGrounded(player: Player): boolean
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return false
+	end
+	return humanoid.FloorMaterial ~= Enum.Material.Air
+end
+
+local function hasActiveFlightSession(player: Player): boolean
+	if doubleJumpService and doubleJumpService.HasActiveSession and doubleJumpService:HasActiveSession(player) then
+		return true
+	end
+	if superJumpService and superJumpService.HasActiveSession and superJumpService:HasActiveSession(player) then
+		return true
+	end
+	return false
+end
+
+local function clearOrphanAbilityPhases(player: Player)
+	if hasActiveFlightSession(player) then
+		return
+	end
+	if player:GetAttribute(DJ_PHASE_ATTR) ~= nil then
+		player:SetAttribute(DJ_PHASE_ATTR, nil)
+	end
+	if player:GetAttribute(SJ_PHASE_ATTR) ~= nil then
+		player:SetAttribute(SJ_PHASE_ATTR, nil)
+	end
+end
+
+--- Ground safety: bump thrust to min-start when grounded and depleted.
+local function ensureGroundFlyableThrust(player: Player, data: any): boolean
+	ThrustConfigs.EnsureFuelDefaults(data)
+	local minStart = ThrustConfigs.GetEffectiveMinFuelToStart(data.ThrustMax)
+	if data.ThrustCurrent >= minStart then
+		return false
+	end
+	if not isPlayerGrounded(player) then
+		return false
+	end
+	data.ThrustCurrent = minStart
+	return true
+end
+
 -- Creates the ThrustPower attribute (so it shows in the Properties panel) and
 -- keeps max fuel synced when it is edited live.
 local function setupThrustPowerAttribute(player: Player)
@@ -475,10 +560,8 @@ local function setupThrustPowerAttribute(player: Player)
 	end
 
 	local attr = ThrustConfigs.PowerAttribute
-	if typeof(player:GetAttribute(attr)) ~= "number" then
-		ThrustConfigs.EnsureFuelDefaults(data)
-		player:SetAttribute(attr, data.ThrustMax)
-	end
+	ThrustConfigs.EnsureFuelDefaults(data)
+	player:SetAttribute(attr, data.ThrustMax)
 
 	applyThrustPower(player, true)
 
@@ -533,6 +616,9 @@ function DataService:TryConsumeThrust(player: Player, amount: number): boolean
 	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
 		return true
 	end
+	if hasTutorialInfiniteThrust(player) then
+		return true
+	end
 
 	local data = self:GetData(player)
 	if not data then
@@ -572,6 +658,9 @@ end
 
 function DataService:CanStartFlight(player: Player): boolean
 	if player:GetAttribute(GodSpeedAuraConfigs.InfiniteThrustAttribute) == true then
+		return true
+	end
+	if hasTutorialInfiniteThrust(player) then
 		return true
 	end
 	local current, max = self:GetFuel(player)
@@ -737,7 +826,9 @@ function DataService:TeleportToLobby(player: Player)
 	end)
 	pcall(function()
 		local sj = Knit.GetService("SuperJumpService")
-		if sj and sj._endAbility then
+		if sj and sj.ForceEndForLobby then
+			sj:ForceEndForLobby(player)
+		elseif sj and sj._endAbility then
 			sj:_endAbility(player)
 		end
 	end)
@@ -839,14 +930,19 @@ local function applyProfileMigrations(profile: any)
 		end
 	end
 	local rebirthBonus = RebirthConfigs.GetThrustBonus(data.Rebirths)
-	if totalBonus > 0 or rebirthBonus > 0 then
-		data.ThrustMax = ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus
-	end
+	data.ThrustMax = ThrustConfigs.ClampMax(ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus)
 
 	ThrustConfigs.RefillToMax(profile.Data)
 	HeatVisionConfigs.refillSolarToMax(profile.Data)
 	SpeedConfigs.SyncLevelFromSpeed(profile.Data)
 	RewardTiming.ensureAnchor(profile.Data)
+	if type(data.StarterPackAnchorTime) ~= "number" then
+		if type(data.RewardsAnchorTime) == "number" then
+			data.StarterPackAnchorTime = data.RewardsAnchorTime
+		else
+			data.StarterPackAnchorTime = os.time()
+		end
+	end
 	migrateTutorialStep(profile.Data)
 	evaluateTutorialStep(profile.Data)
 	if type(profile.Data.TutorialThrustShopIntroShown) ~= "boolean" then
@@ -902,11 +998,36 @@ local function waitForActiveProfileRelease(player: Player, timeoutSeconds: numbe
 end
 
 local function finishStudioReset(player: Player, profile: any)
+	profile.Data.ThrustUpgradePurchases = nil
+	profile.Data.ThrustUpgradeTier = 0
+
+	applyProfileMigrations(profile)
+
+	-- ThrustPower lives on the Player and survives profile wipe; stale values override profile max.
+	player:SetAttribute(ThrustConfigs.PowerAttribute, profile.Data.ThrustMax)
+
+	setupThrustPowerAttribute(player)
+	ThrustConfigs.RefillToMax(profile.Data)
+	HeatVisionConfigs.refillSolarToMax(profile.Data)
+	replicateThrust(player)
+
+	pcall(function()
+		Knit.GetService("DoubleJumpService"):ForceEndForLobby(player)
+	end)
+	pcall(function()
+		local sj = Knit.GetService("SuperJumpService")
+		if sj and sj.ForceEndForLobby then
+			sj:ForceEndForLobby(player)
+		end
+	end)
+	ensureGroundFlyableThrust(player, profile.Data)
+	replicateThrust(player)
+
 	clearGlobalLeaderboardScores(player)
 	lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
 	replicateData(player, profile)
 	syncLeaderboards(player)
-	print("[iseesupes] Studio profile reset for", player.Name, "→", ProfileTemplate.describeStats(profile.Data))
+	StudioLog.print("ProfileJoin", "[iseesupes] Studio profile reset for", player.Name, "→", ProfileTemplate.describeStats(profile.Data))
 end
 
 local function onPlayerAdded(player: Player)
@@ -926,7 +1047,7 @@ local function onPlayerAdded(player: Player)
 	end
 
 	assignActiveProfile(player, profile)
-	print("[iseesupes] Profile loaded for", player.Name)
+	StudioLog.print("ProfileJoin", "[iseesupes] Profile loaded for", player.Name)
 
 	player.CharacterAdded:Connect(function()
 		task.defer(function()
@@ -964,6 +1085,7 @@ local function onPlayerRemoving(player: Player)
 	pendingSaveStartedAt[player] = nil
 	lastLeaderboardScores[player] = nil
 	studioProfileReloading[player] = nil
+	tutorialFlightAssistActive[player] = nil
 end
 
 function DataService:GetProfile(player: Player): any?
@@ -1001,7 +1123,10 @@ function DataService:AdvanceTutorialToGoStage1(player: Player): boolean
 	if type(data.TutorialStep) ~= "number" then
 		migrateTutorialStep(data)
 	end
-	if data.TutorialStep ~= TutorialConfigs.Step.CoreDone then
+	if data.TutorialStep >= TutorialConfigs.Step.GoStage1 then
+		return false
+	end
+	if data.TutorialStep < TutorialConfigs.Step.ClaimWins then
 		return false
 	end
 	data.TutorialStep = TutorialConfigs.Step.GoStage1
@@ -1027,6 +1152,23 @@ function DataService:AdvanceTutorialComplete(player: Player): boolean
 	return true
 end
 
+function DataService:AdvanceTutorialCompleteFromCoreDone(player: Player): boolean
+	local profile = profiles[player]
+	if not profile then
+		return false
+	end
+	local data = profile.Data
+	if type(data.TutorialStep) ~= "number" then
+		migrateTutorialStep(data)
+	end
+	if data.TutorialStep ~= TutorialConfigs.Step.CoreDone then
+		return false
+	end
+	data.TutorialStep = TutorialConfigs.Step.Complete
+	replicateData(player, profile)
+	return true
+end
+
 function DataService:MarkTutorialFlyIntroShown(player: Player): boolean
 	local profile = profiles[player]
 	if not profile then
@@ -1037,9 +1179,23 @@ function DataService:MarkTutorialFlyIntroShown(player: Player): boolean
 		return false
 	end
 	data.TutorialFlyIntroShown = true
-	if data.TutorialStep == TutorialConfigs.Step.GoStage1 then
-		data.TutorialStep = TutorialConfigs.Step.Complete
+	replicateData(player, profile)
+	return true
+end
+
+--- Player setting: persist AutoFly on/off so it sticks across sessions. The default (ON)
+--- lives in ProfileTemplate; the client seeds its AutoFly attribute from this on join.
+function DataService:SetAutoFlyEnabled(player: Player, enabled: boolean): boolean
+	local profile = profiles[player]
+	if not profile then
+		return false
 	end
+	local value = enabled == true
+	local data = profile.Data
+	if data.AutoFlyEnabled == value then
+		return false
+	end
+	data.AutoFlyEnabled = value
 	replicateData(player, profile)
 	return true
 end
@@ -1141,12 +1297,20 @@ function DataService.Client:AdvanceTutorialComplete(player: Player)
 	DataService:AdvanceTutorialComplete(player)
 end
 
+function DataService.Client:AdvanceTutorialCompleteFromCoreDone(player: Player)
+	DataService:AdvanceTutorialCompleteFromCoreDone(player)
+end
+
 function DataService.Client:MarkTutorialFlyIntroShown(player: Player)
 	DataService:MarkTutorialFlyIntroShown(player)
 end
 
 function DataService.Client:MarkTutorialLowThrustFlyHintShown(player: Player)
 	DataService:MarkTutorialLowThrustFlyHintShown(player)
+end
+
+function DataService.Client:SetAutoFlyEnabled(player: Player, enabled: boolean)
+	DataService:SetAutoFlyEnabled(player, enabled == true)
 end
 
 --- Studio only: reset profile to defaults, zero global leaderboard entries, replicate HUD, refresh boards.
@@ -1230,19 +1394,34 @@ end
 
 local function tickThrustRefill(dt: number)
 	for _, player in Players:GetPlayers() do
-		local djPhase = player:GetAttribute("DjAbilityPhase")
-		local sjPhase = player:GetAttribute("SjAbilityPhase")
-		if ThrustConfigs.IsInFlightRefillPhase(djPhase, sjPhase) then
-			continue
-		end
-
 		local profile = profiles[player]
 		if not profile then
 			continue
 		end
 
+		clearOrphanAbilityPhases(player)
+
+		local djPhase = player:GetAttribute(DJ_PHASE_ATTR)
+		local sjPhase = player:GetAttribute(SJ_PHASE_ATTR)
+		if ThrustConfigs.IsInFlightRefillPhase(djPhase, sjPhase) and hasActiveFlightSession(player) then
+			continue
+		end
+
 		local data = profile.Data
 		ThrustConfigs.EnsureFuelDefaults(data)
+
+		if ensureGroundFlyableThrust(player, data) then
+			lastThrustReplicateAt[player] = os.clock()
+			replicateThrustOnly(player, profile)
+			continue
+		end
+
+		if data.ThrustCurrent <= 0 then
+			data.ThrustCurrent = ThrustConfigs.GetEffectiveMinFuelToStart(data.ThrustMax)
+			lastThrustReplicateAt[player] = os.clock()
+			replicateThrustOnly(player, profile)
+			continue
+		end
 		if data.ThrustCurrent >= data.ThrustMax then
 			continue
 		end
@@ -1263,8 +1442,8 @@ end
 
 local function tickSolarRefill(dt: number)
 	for _, player in Players:GetPlayers() do
-		local djPhase = player:GetAttribute("DjAbilityPhase")
-		local sjPhase = player:GetAttribute("SjAbilityPhase")
+		local djPhase = player:GetAttribute(DJ_PHASE_ATTR)
+		local sjPhase = player:GetAttribute(SJ_PHASE_ATTR)
 		if not ThrustConfigs.IsInFlightRefillPhase(djPhase, sjPhase) then
 			continue
 		end
@@ -1298,6 +1477,12 @@ function DataService:KnitStart()
 	pcall(function()
 		funnelService = Knit.GetService("FunnelAnalyticsService")
 	end)
+	pcall(function()
+		doubleJumpService = Knit.GetService("DoubleJumpService")
+	end)
+	pcall(function()
+		superJumpService = Knit.GetService("SuperJumpService")
+	end)
 
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
@@ -1313,9 +1498,27 @@ function DataService:KnitStart()
 	task.spawn(function()
 		while true do
 			task.wait(15)
+			local list = {}
 			for _, profile in profiles do
-				ProfileTemplate.sanitizeForStore(profile.Data)
+				table.insert(list, profile)
 			end
+			if #list == 0 then
+				continue
+			end
+			local index = 1
+			local conn: RBXScriptConnection?
+			conn = RunService.Heartbeat:Connect(function()
+				if not conn then
+					return
+				end
+				if index > #list then
+					conn:Disconnect()
+					conn = nil
+					return
+				end
+				ProfileTemplate.sanitizeForStore(list[index].Data)
+				index += 1
+			end)
 		end
 	end)
 end

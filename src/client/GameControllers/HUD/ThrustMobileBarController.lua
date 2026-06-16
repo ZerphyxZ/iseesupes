@@ -13,6 +13,7 @@
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 
@@ -364,6 +365,7 @@ function ThrustMobileBarController:KnitStart()
 		syncFlightActiveFromAttribute()
 		task.defer(function()
 			tryAttachSupesMobile(playerGui)
+			refreshBarFromData()
 		end)
 	end
 
@@ -404,7 +406,7 @@ function ThrustMobileBarController:KnitStart()
 		applyFill(refs :: Refs, fill)
 	end)
 
-	print("[iseesupes] ThrustMobileBarController ready.")
+	StudioLog.ready("ThrustMobileBarController")
 end
 
 return ThrustMobileBarController

@@ -6,9 +6,11 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
+local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local NumberFormatter = require(ReplicatedStorage.Shared.Utils.NumberFormatter)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
@@ -63,22 +65,22 @@ local function setupWinsHUD(hud: Instance, player: Player)
 		lastWins = wins
 	end
 
-	moreButton.MouseButton1Click:Connect(function()
-		local product = ProductConfigs.GetProductByKey("DoubleWins")
-		if not product or product.Id == 0 then
-			NotificationManager.show("2x Wins is not configured yet.", "Error")
-			return
-		end
-		local data = DataLib.GetData()
-		if data and data.OwnedDoubleWins == true then
-			NotificationManager.show("You already have 2x Wins!", "Info")
-			return
-		end
-		MarketplaceService:PromptProductPurchase(player, product.Id)
-	end)
+	-- "More" is the TROPHY icon shown to the left of the wins count (LayoutOrder 0). It used
+	-- to also open the 2x Wins upsell, which is gone now (double wins are bought per-stage
+	-- from the Map.GiveDounleWins buttons). Hiding it is what made the trophy disappear next
+	-- to the number — so keep the trophy visible, just strip its button behaviour so it's a
+	-- plain icon. (The number's label is fixed-width, so big win counts never push it off.)
+	moreButton.Visible = true
+	moreButton.Active = false
+	moreButton.AutoButtonColor = false
+	moreButton.Interactable = false
 
 	DataLib.OnChanged(updateWinsText)
-	updateWinsText()
+	-- Only paint immediately if data is already here; otherwise OnChanged fires it on
+	-- first replication. Avoids a "0 Wins" flash before the profile loads.
+	if DataLib.IsLoaded() then
+		updateWinsText()
+	end
 end
 
 local function setupSpeedShopHUD(hud: Instance, player: Player)
@@ -149,9 +151,23 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 		CharacterMovementSpeed.applyToPlayer(player, DataLib.GetData())
 	end
 
+	local function formatMaxSpeedLabel(maxSpeed: number): string
+		local level = getLevelFromData(DataLib.GetData())
+		local nextLevel = level + 1
+		local nextWalk = math.floor(SpeedConfigs.GetSpeedFromLevel(nextLevel) + 0.5)
+		local nextFly = math.floor(SpeedConfigs.GetFlightForwardSpeed(nextLevel) + 0.5)
+		return string.format(
+			"MAX: %s · L%d → %d walk / %d fly",
+			NumberFormatter.Format(maxSpeed),
+			nextLevel,
+			nextWalk,
+			nextFly
+		)
+	end
+
 	local function updateDisplay()
 		local maxSpeed = getMaxSpeed()
-		maxSpeedLabel.Text = "MAX: " .. NumberFormatter.Format(maxSpeed)
+		maxSpeedLabel.Text = formatMaxSpeedLabel(maxSpeed)
 
 		if isMaxSpeedMode then
 			enterSpeedBox.Text = formatSpeedText(maxSpeed)
@@ -205,7 +221,11 @@ local function setupCustomSpeedHUD(hud: Instance, player: Player)
 	end)
 
 	DataLib.OnChanged(updateDisplay)
-	updateDisplay()
+	-- Wait for real data before computing/applying speed; OnChanged paints it on first
+	-- replication. Prevents a wrong max-speed label and a wrong WalkSpeed cap at join.
+	if DataLib.IsLoaded() then
+		updateDisplay()
+	end
 end
 
 local function findFirstSpeedPeakTier(): ProductConfigs.SpeedPeakTier?
@@ -413,7 +433,7 @@ function HUDController:KnitStart()
 	task.spawn(setupCustomSpeedHUD, hud, player)
 	task.spawn(setupSpeedPeakHUD, hud, player)
 
-	print("[iseesupes] HUDController ready.")
+	StudioLog.ready("HUDController")
 end
 
 return HUDController

@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local TrailConfigs = require(ReplicatedStorage.Shared.Configs.TrailConfigs)
@@ -138,7 +139,7 @@ function TrailService:KnitStart()
 	end
 	Players.PlayerAdded:Connect(onPlayerAdded)
 
-	print("[iseesupes] TrailService ready.")
+	StudioLog.ready("TrailService")
 end
 
 return TrailService

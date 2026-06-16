@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
@@ -40,14 +41,6 @@ local function getProductId(): number
 	return 0
 end
 
-local function playerOwnsDoubleWins(player: Player): boolean
-	local profile = DataService and DataService:GetProfile(player)
-	if not profile then
-		return false
-	end
-	return profile.Data.OwnedDoubleWins == true
-end
-
 local function findWinAmountLabel(root: Instance): TextLabel?
 	for _, desc in root:GetDescendants() do
 		if desc:IsA("TextLabel") and desc.Name == GiveDoubleWinsConfigs.WinAmountLabelName then
@@ -58,11 +51,10 @@ local function findWinAmountLabel(root: Instance): TextLabel?
 end
 
 local function resolveWinAmount(button: Model): number?
-	local attr = button:GetAttribute(GiveDoubleWinsConfigs.WinAmountAttribute)
-	if typeof(attr) == "number" and attr > 0 then
-		return math.floor(attr)
-	end
-
+	-- The on-screen WinAmount label is the source of truth for the payout. These
+	-- Robux buttons are authored at 2x the free button beside them, so the label
+	-- IS the amount to grant. A stale WinAmount *attribute* (legacy values like
+	-- 1/4/8...) must never override it — that was the "got fewer wins" bug.
 	local touch = button:FindFirstChild(GiveDoubleWinsConfigs.TouchPartName)
 	if touch then
 		local label = findWinAmountLabel(touch)
@@ -76,30 +68,18 @@ local function resolveWinAmount(button: Model): number?
 
 	local fallbackLabel = findWinAmountLabel(button)
 	if fallbackLabel then
-		return WinAmountParser.parse(fallbackLabel.Text)
+		local parsed = WinAmountParser.parse(fallbackLabel.Text)
+		if parsed then
+			return parsed
+		end
+	end
+
+	local attr = button:GetAttribute(GiveDoubleWinsConfigs.WinAmountAttribute)
+	if typeof(attr) == "number" and attr > 0 then
+		return math.floor(attr)
 	end
 
 	return nil
-end
-
-local function formatWinLabel(amount: number): string
-	return string.format("+%d Win", amount)
-end
-
-local function updateButtonWinLabel(button: Model?, grantAmount: number)
-	if not button then
-		return
-	end
-	button:SetAttribute(GiveDoubleWinsConfigs.WinAmountAttribute, grantAmount)
-	local touch = button:FindFirstChild(GiveDoubleWinsConfigs.TouchPartName)
-	local label = if touch then findWinAmountLabel(touch) else nil
-	if not label then
-		label = findWinAmountLabel(button)
-	end
-	if label then
-		label.Text = formatWinLabel(grantAmount)
-	end
-	buttonWinAmounts[button] = grantAmount
 end
 
 local function returnPlayerToLobby(player: Player)
@@ -114,12 +94,13 @@ end
 --- Called from MonetizationService after DoubleWins developer product receipt.
 function GiveDoubleWinsService:FulfillPurchase(player: Player): boolean
 	local pending = pendingPurchase[player]
-	local baseAmount = if pending then pending.baseAmount else GiveDoubleWinsConfigs.DefaultGrantWins
-	if baseAmount < 1 then
-		baseAmount = GiveDoubleWinsConfigs.DefaultGrantWins
+	-- Grant exactly the wins shown on the button's WinAmount label. These buttons
+	-- are authored at 2x the free button next to them, so the label IS the final
+	-- payout — do NOT multiply again here.
+	local grant = if pending then pending.baseAmount else GiveDoubleWinsConfigs.DefaultGrantWins
+	if grant < 1 then
+		grant = GiveDoubleWinsConfigs.DefaultGrantWins
 	end
-
-	local grant = baseAmount * 2
 	pendingPurchase[player] = nil
 
 	if not DataService or not DataService:AddWins(player, grant) then
@@ -127,11 +108,10 @@ function GiveDoubleWinsService:FulfillPurchase(player: Player): boolean
 		return false
 	end
 
-	updateButtonWinLabel(if pending then pending.button else nil, grant)
 	returnPlayerToLobby(player)
 
 	GiveDoubleWinsService.Client.PurchaseGranted:Fire(player, grant)
-	print("[iseesupes][GiveDoubleWins] granted", grant, "wins to", player.Name, "(base", baseAmount, "x2)")
+	print("[iseesupes][GiveDoubleWins] granted", grant, "wins to", player.Name)
 	return true
 end
 
@@ -180,16 +160,6 @@ local function bindButtonTouch(button: Model, touch: BasePart)
 				return
 			end
 			lastTouchAt[player] = now
-
-			if playerOwnsDoubleWins(player) then
-				GiveDoubleWinsService.Client.RequestProductPrompt:Fire(
-					player,
-					0,
-					GiveDoubleWinsConfigs.DisplayName,
-					true
-				)
-				return
-			end
 
 			local baseAmount = buttonWinAmounts[button] or GiveDoubleWinsConfigs.DefaultGrantWins
 			pendingPurchase[player] = {
@@ -282,7 +252,7 @@ function GiveDoubleWinsService:KnitStart()
 		pendingPurchase[player] = nil
 	end)
 
-	print("[iseesupes] GiveDoubleWinsService ready.")
+	StudioLog.ready("GiveDoubleWinsService")
 end
 
 return GiveDoubleWinsService

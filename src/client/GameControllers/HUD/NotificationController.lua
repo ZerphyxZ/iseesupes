@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local TweenService = game:GetService("TweenService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -15,7 +16,8 @@ local NotificationController = Knit.CreateController({ Name = "NotificationContr
 local TOAST_LIFETIME = 2.8
 local MAX_TOASTS = 5
 local DEBOUNCE_SEC = 0.35
-local SKIP_GAP_SCALE = 0.035
+-- Sits below Skip Stage AND below the JumpCounter label (which uses 0.035).
+local SKIP_GAP_SCALE = 0.072
 
 local toastContainer: Frame? = nil
 local listLayout: UIListLayout? = nil
@@ -23,6 +25,7 @@ local activeToasts: { Frame } = {}
 
 local lastMessage = ""
 local lastShownAt = -math.huge
+local lastCooldownRejectAt = -math.huge
 
 local COLORS = {
 	Success = {
@@ -144,6 +147,14 @@ local function showToast(message: string, kind: string?)
 end
 
 local function showReject(reason: string, detail: number?)
+	if reason == "cooldown" then
+		local now = os.clock()
+		local debounce = NotificationConfigs.CooldownToastDebounceSeconds or 10
+		if now - lastCooldownRejectAt < debounce then
+			return
+		end
+		lastCooldownRejectAt = now
+	end
 	local message = NotificationConfigs.GetMessage(reason, detail)
 	local kind = NotificationConfigs.GetKind(reason)
 	NotificationManager.show(message, kind)
@@ -189,7 +200,7 @@ function NotificationController:KnitStart()
 		showReject(reason, detail)
 	end)
 
-	print("[iseesupes] NotificationController ready (below Skip Stage).")
+	StudioLog.ready("NotificationController", "(below Skip Stage)")
 end
 
 return NotificationController

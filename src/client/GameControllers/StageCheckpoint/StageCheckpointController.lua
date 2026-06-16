@@ -1,6 +1,7 @@
 --!strict
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 
@@ -604,7 +605,7 @@ function StageCheckpointController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] StageCheckpointController ready.")
+	StudioLog.ready("StageCheckpointController")
 end
 
 return StageCheckpointController

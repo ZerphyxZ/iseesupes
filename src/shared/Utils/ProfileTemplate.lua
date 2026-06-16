@@ -22,6 +22,7 @@ export type PlayerData = {
 	EquippedAura: string,
 	ClaimedRewards: { [string]: number }, -- rewardIndex (string) → os.time() of last claim
 	RewardsAnchorTime: number?, -- os.time() when reward timers started (first join / migration)
+	StarterPackAnchorTime: number?, -- os.time() when starter pack cycle anchor started
 	UnlockedAvatars: { [string]: boolean },
 	EquippedAvatar: string,
 	FriendInviteRewards: { [string]: boolean },
@@ -47,6 +48,8 @@ export type PlayerData = {
 	OwnedStarterPack: boolean,
 	--- Highest onboarding funnel step logged to Analytics (FunnelAnalyticsService)
 	OnboardingStepLogged: number,
+	--- Player setting: AutoFly on/off. Defaults ON; persists across sessions.
+	AutoFlyEnabled: boolean,
 }
 
 -- Pure data only — passed to ProfileService (no functions, no nil values).
@@ -89,6 +92,7 @@ local Data: PlayerData = {
 	LastSeenAt = 0,
 	OwnedStarterPack = false,
 	OnboardingStepLogged = 0,
+	AutoFlyEnabled = true,
 }
 
 local ProfileTemplate = {}

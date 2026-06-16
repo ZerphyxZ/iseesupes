@@ -268,6 +268,12 @@ function StageCheckpointService:ResetSessionGatesForPlayer(player: Player)
 	if not player.Parent then
 		return
 	end
+	pcall(function()
+		local giveWins = Knit.GetService("GiveWinsService")
+		if giveWins and giveWins.ClearRunClaims then
+			giveWins:ClearRunClaims(player)
+		end
+	end)
 	resetSessionGatesForPlayer(player)
 	StageCheckpointService.Client.SessionGatesReset:Fire(player)
 

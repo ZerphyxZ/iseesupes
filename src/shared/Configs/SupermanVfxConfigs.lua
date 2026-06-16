@@ -5,6 +5,7 @@
 export type BreakTier =
 	"Takeoff"
 	| "LongJumpLaunch"
+	| "LongJumpLaunchAir"
 	| "ImpactWall"
 	| "ImpactFloor"
 	| "Landing"
@@ -84,7 +85,7 @@ local SupermanVfxConfigs = {
 		--- Bright white foot smoke for double-tap long jump.
 		LongJumpSmoke = {
 			Texture = "rbxassetid://243660364",
-			Burst = 48,
+			Burst = 20,
 			Scale = 1.25,
 			SpeedMin = 14,
 			SpeedMax = 28,
@@ -137,6 +138,15 @@ local SupermanVfxConfigs = {
 				ScorchDiameter = 0,
 				Ring = false,
 				UseLongJumpSmoke = true,
+				LongJumpParticleBurst = 20,
+			},
+			--- Mid-air long jump recovery: lighter smoke (same cooldown bucket as ground launch).
+			LongJumpLaunchAir = {
+				ParticleBurst = 0,
+				ScorchDiameter = 0,
+				Ring = false,
+				UseLongJumpSmoke = true,
+				LongJumpParticleBurst = 12,
 			},
 			ImpactFloor = {
 				ParticleBurst = 6,
@@ -366,13 +376,20 @@ local SupermanVfxConfigs = {
 
 		Cooldowns = {
 			Takeoff = 0.5,
-			LongJumpLaunch = 0.15,
+			LongJumpLaunch = 0.35,
+			LongJumpLaunchAir = 0.35,
 			ImpactWall = 0.4,
 			ImpactFloor = 0.55,
 			Landing = 0.8,
 			HeatVision = 0.03,
 			GlassBreak = 0.15,
 			MetalMelt = 0.15,
+		},
+
+		--- Reuse floor raycast when chaining long jumps in quick succession.
+		FloorRayReuse = {
+			Seconds = 0.1,
+			MaxHrpMoveStuds = 4,
 		},
 	},
 

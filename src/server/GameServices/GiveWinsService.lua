@@ -1,5 +1,6 @@
 --!strict
 
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -12,19 +13,81 @@ local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 
 local GiveWinsService = Knit.CreateService({
 	Name = "GiveWinsService",
-	Client = {},
+	Client = {
+		-- (amount: number) fired on a win claim so the client can play a celebration
+		-- before the lobby return.
+		WinCelebration = Knit.CreateSignal(),
+	},
 })
 
 local DataService: any = nil
 local SpawnIntroService: any = nil
-local MonetizationService: any = nil
 local DoubleJumpService: any = nil
 local SuperJumpService: any = nil
 local BoostService: any = nil
+local SkipStageService: any = nil
 
 local touchConns: { [Instance]: RBXScriptConnection } = {}
 local buttonWinAmounts: { [Model]: number } = {}
+--- Stage a button's claim completes (melt gates are gone — buttons ARE stage progress).
+local buttonStages: { [Model]: number } = {}
 local cooldownUntil: { [Player]: { [Instance]: number } } = {}
+--- One grant per button until the run resets (lobby return / death / gate session reset).
+local claimedThisRun: { [Player]: { [Model]: boolean } } = {}
+--- Blocks repeat touches while a lobby return is in flight.
+local pendingLobbyReturn: { [Player]: boolean } = {}
+--- Touch parts disabled until ClearRunClaims (per player, for re-enable).
+local disabledTouchByPlayer: { [Player]: { BasePart } } = {}
+
+local function rollbackClaim(player: Player, button: Model)
+	local runClaims = claimedThisRun[player]
+	if runClaims then
+		runClaims[button] = nil
+	end
+	pendingLobbyReturn[player] = nil
+end
+
+local function tryBeginClaim(player: Player, button: Model): boolean
+	if pendingLobbyReturn[player] then
+		return false
+	end
+	local runClaims = claimedThisRun[player]
+	if runClaims and runClaims[button] then
+		if RunService:IsStudio() then
+			print("[iseesupes] GiveWins: duplicate claim blocked for", player.Name, button.Name)
+		end
+		return false
+	end
+	if not claimedThisRun[player] then
+		claimedThisRun[player] = {}
+	end
+	claimedThisRun[player][button] = true
+	pendingLobbyReturn[player] = true
+	return true
+end
+
+local function disableTouchForClaim(player: Player, touchPart: BasePart)
+	touchPart.CanTouch = false
+	local list = disabledTouchByPlayer[player]
+	if not list then
+		list = {}
+		disabledTouchByPlayer[player] = list
+	end
+	table.insert(list, touchPart)
+end
+
+local function reenableDisabledTouches(player: Player)
+	local disabled = disabledTouchByPlayer[player]
+	if not disabled then
+		return
+	end
+	for _, part in disabled do
+		if part.Parent then
+			part.CanTouch = true
+		end
+	end
+	disabledTouchByPlayer[player] = nil
+end
 
 local function findWinAmountLabel(root: Instance): TextLabel?
 	for _, desc in root:GetDescendants() do
@@ -36,11 +99,8 @@ local function findWinAmountLabel(root: Instance): TextLabel?
 end
 
 local function resolveWinAmount(button: Model): number?
-	local attr = button:GetAttribute(GiveWinsConfigs.WinAmountAttribute)
-	if typeof(attr) == "number" and attr > 0 then
-		return math.floor(attr)
-	end
-
+	-- The on-screen WinAmount label is the source of truth for the payout. A
+	-- stale WinAmount *attribute* must never override what the player sees.
 	local touch = button:FindFirstChild(GiveWinsConfigs.TouchPartName)
 	if touch then
 		local label = findWinAmountLabel(touch)
@@ -54,25 +114,67 @@ local function resolveWinAmount(button: Model): number?
 
 	local fallbackLabel = findWinAmountLabel(button)
 	if fallbackLabel then
-		return WinAmountParser.parse(fallbackLabel.Text)
+		local parsed = WinAmountParser.parse(fallbackLabel.Text)
+		if parsed then
+			return parsed
+		end
+	end
+
+	local attr = button:GetAttribute(GiveWinsConfigs.WinAmountAttribute)
+	if typeof(attr) == "number" and attr > 0 then
+		return math.floor(attr)
 	end
 
 	warn("[iseesupes] GiveWins: could not read win amount for", button:GetFullName())
 	return nil
 end
 
-local function getGrantAmount(player: Player, baseAmount: number): number
-	if MonetizationService and MonetizationService:PlayerOwnsDoubleWins(player) then
-		return baseAmount * 2
+local CHECKPOINTS_FOLDER = "StageCheckpoints"
+--- A button must sit within this distance of a gate marker to map to a stage.
+local BUTTON_GATE_MAX_DIST = 150
+
+--- Buttons sit ~50 studs before the NEXT stage's gate marker, so a button near
+--- gate K marks the END of stage K-1 (ground truth: Button1@gate2, Button2@gate3).
+--- Mapped by POSITION, not name — several buttons are named one stage off, and
+--- Button3 (sky build area) is deliberately unmapped: 8 buttons cover stages 1-8.
+local function resolveButtonStage(button: Model): number?
+	local folder = MapWorld.findChildInMap(CHECKPOINTS_FOLDER)
+	if not folder then
+		return nil
 	end
-	return baseAmount
+
+	local touch = button:FindFirstChild(GiveWinsConfigs.TouchPartName)
+	local pos = if touch and touch:IsA("BasePart") then touch.Position else button:GetPivot().Position
+
+	local bestGate: number? = nil
+	local bestDist = math.huge
+	for _, child in folder:GetChildren() do
+		local gateNum = tonumber(child.Name)
+		local part = if child:IsA("BasePart") then child else child:FindFirstChildWhichIsA("BasePart")
+		if gateNum and part then
+			local dist = (part.Position - pos).Magnitude
+			if dist < bestDist then
+				bestDist = dist
+				bestGate = gateNum
+			end
+		end
+	end
+
+	if bestGate and bestDist <= BUTTON_GATE_MAX_DIST then
+		return math.max(bestGate - 1, 1)
+	end
+	return nil
 end
 
-local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: BasePart)
+local function onWinButtonTouched(button: Model, touchPart: BasePart, hit: BasePart)
 	local winAmount = buttonWinAmounts[button]
 	if not winAmount then
 		return
 	end
+	if hit:IsDescendantOf(button) then
+		return
+	end
+
 	local character = hit:FindFirstAncestorOfClass("Model")
 	if not character then
 		return
@@ -100,56 +202,88 @@ local function onWinButtonTouched(button: Model, _touchPart: BasePart, hit: Base
 	end
 	perPlayer[button] = now
 
-	if not DataService then
+	if not tryBeginClaim(player, button) then
 		return
 	end
 
-	local grant = getGrantAmount(player, winAmount)
-	if DataService:AddWins(player, grant) then
-		if grant ~= winAmount then
-			print("[iseesupes] GiveWins:", player.Name, "+", grant, "wins (2x) from", button.Name)
-		else
-			print("[iseesupes] GiveWins:", player.Name, "+", grant, "wins from", button.Name)
-		end
+	if not DataService then
+		rollbackClaim(player, button)
+		return
+	end
 
-		-- Clear any active boost (used for 1 run only)
-		if BoostService and BoostService:IsBoostActive(player) then
-			BoostService:ClearBoost(player)
-		end
+	local grant = winAmount
+	if not DataService:AddWins(player, grant) then
+		rollbackClaim(player, button)
+		return
+	end
 
-		-- End flight on the server and signal the client.
-		-- _endAbility fires AbilityEnded to the client via remote event — we MUST
-		-- wait at least one network round-trip before teleporting, otherwise the
-		-- client's BodyVelocity/BodyGyro (client-owned flight physics) are still
-		-- active when TeleportToLobby moves the HRP → character explodes.
-		if DoubleJumpService and DoubleJumpService._endAbility then
-			DoubleJumpService:_endAbility(player)
-		end
-		if SuperJumpService and SuperJumpService._endAbility then
-			SuperJumpService:_endAbility(player)
-		end
+	pcall(function()
+		DataService:AdvanceTutorialComplete(player)
+	end)
+
+	disableTouchForClaim(player, touchPart)
+
+	print("[iseesupes] GiveWins:", player.Name, "+", grant, "wins from", button.Name)
+
+	-- Celebration moment on the client before we yank them back to the lobby.
+	GiveWinsService.Client.WinCelebration:Fire(player, grant)
+
+	-- Buttons are the stage-progress markers now (melt gates removed): claiming
+	-- the button at stage S's end records Stage/MaxStage = S and feeds the
+	-- StageProgress analytics funnel. AdvanceStageForPlayer dedupes internally.
+	local stageCompleted = buttonStages[button]
+	if stageCompleted and SkipStageService and SkipStageService.AdvanceStageForPlayer then
 		pcall(function()
-			local hv = Knit.GetService("HeatVisionService")
-			if hv and hv.ForceEndForLobby then
-				hv:ForceEndForLobby(player)
-			end
-		end)
-		player:SetAttribute("ForceStandUp", true)
-
-		task.delay(0.25, function()
-			if not player.Parent then
-				return
-			end
-			player:SetAttribute("ForceStandUp", nil)
-
-			local introCfg = CharacterConfigs.SpawnIntro
-			if SpawnIntroService and introCfg and introCfg.Enabled == true and introCfg.OnWinClaimReturn == true then
-				SpawnIntroService:PlayLobbyReturnIntro(player)
-			else
-				DataService:TeleportToLobby(player)
-			end
+			SkipStageService:AdvanceStageForPlayer(player, stageCompleted)
 		end)
 	end
+
+	-- Clear any active boost (used for 1 run only)
+	if BoostService and BoostService:IsBoostActive(player) then
+		BoostService:ClearBoost(player)
+	end
+
+	-- End flight on the server and signal the client.
+	-- _endAbility fires AbilityEnded to the client via remote event — we MUST
+	-- wait at least one network round-trip before teleporting, otherwise the
+	-- client's BodyVelocity/BodyGyro (client-owned flight physics) are still
+	-- active when TeleportToLobby moves the HRP → character explodes.
+	if DoubleJumpService and DoubleJumpService._endAbility then
+		DoubleJumpService:_endAbility(player)
+	end
+	if SuperJumpService and SuperJumpService._endAbility then
+		SuperJumpService:_endAbility(player)
+	end
+	pcall(function()
+		local hv = Knit.GetService("HeatVisionService")
+		if hv and hv.ForceEndForLobby then
+			hv:ForceEndForLobby(player)
+		end
+	end)
+	player:SetAttribute("ForceStandUp", true)
+
+	-- Hold ~1.5s so the win celebration can play before the lobby return (was 0.25s,
+	-- which also covered the network round-trip needed before teleporting).
+	task.delay(1.5, function()
+		if not player.Parent then
+			return
+		end
+		player:SetAttribute("ForceStandUp", nil)
+
+		local introCfg = CharacterConfigs.SpawnIntro
+		if SpawnIntroService and introCfg and introCfg.Enabled == true and introCfg.OnWinClaimReturn == true then
+			SpawnIntroService:PlayLobbyReturnIntro(player)
+		else
+			DataService:TeleportToLobby(player)
+		end
+	end)
+end
+
+--- Cleared when a new stage run starts (lobby return, death, gate session reset).
+function GiveWinsService:ClearRunClaims(player: Player)
+	reenableDisabledTouches(player)
+	claimedThisRun[player] = nil
+	pendingLobbyReturn[player] = nil
 end
 
 local function bindWinButton(button: Model)
@@ -162,6 +296,13 @@ local function bindWinButton(button: Model)
 		return
 	end
 	buttonWinAmounts[button] = winAmount
+
+	local stage = resolveButtonStage(button)
+	if stage then
+		buttonStages[button] = stage
+	else
+		warn("[iseesupes] GiveWins:", button.Name, "is not near any stage gate marker — claims will not record stage progress")
+	end
 
 	local touchPart = button:FindFirstChild(GiveWinsConfigs.TouchPartName)
 	if not touchPart or not touchPart:IsA("BasePart") then
@@ -200,6 +341,7 @@ local function unbindWinButton(button: Instance)
 	end
 	if button:IsA("Model") then
 		buttonWinAmounts[button] = nil
+		buttonStages[button] = nil
 	end
 end
 
@@ -224,6 +366,13 @@ local function initGiveWins()
 
 	scanGiveWinsFolder(folder)
 
+	local mapped = {}
+	for button, stage in buttonStages do
+		table.insert(mapped, button.Name .. "→S" .. tostring(stage))
+	end
+	table.sort(mapped)
+	print("[iseesupes] GiveWins: button→stage map:", table.concat(mapped, "  "))
+
 	folder.ChildAdded:Connect(function(child)
 		if child:IsA("Model") then
 			task.defer(bindWinButton, child)
@@ -236,7 +385,6 @@ end
 function GiveWinsService:KnitStart()
 	DataService = Knit.GetService("DataService")
 	SpawnIntroService = Knit.GetService("SpawnIntroService")
-	MonetizationService = Knit.GetService("MonetizationService")
 	pcall(function()
 		DoubleJumpService = Knit.GetService("DoubleJumpService")
 	end)
@@ -246,10 +394,16 @@ function GiveWinsService:KnitStart()
 	pcall(function()
 		BoostService = Knit.GetService("BoostService")
 	end)
+	pcall(function()
+		SkipStageService = Knit.GetService("SkipStageService")
+	end)
 	initGiveWins()
 
 	Players.PlayerRemoving:Connect(function(player)
 		cooldownUntil[player] = nil
+		reenableDisabledTouches(player)
+		claimedThisRun[player] = nil
+		pendingLobbyReturn[player] = nil
 	end)
 end
 

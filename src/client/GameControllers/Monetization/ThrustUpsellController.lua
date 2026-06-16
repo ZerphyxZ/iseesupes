@@ -8,6 +8,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ThrustUpgradeConfigs = require(ReplicatedStorage.Shared.Configs.ThrustUpgradeConfigs)
@@ -59,7 +60,7 @@ function ThrustUpsellController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] ThrustUpsellController ready.")
+	StudioLog.ready("ThrustUpsellController")
 end
 
 return ThrustUpsellController

@@ -15,21 +15,25 @@ local ThrustUpgradeConfigs = {
 	-- Tuned against measured stage lengths: one tank should cover ~45-70% of the
 	-- player's current stage, with each pack a felt spike the NEXT stage re-humbles.
 	-- Win pacing: pack 1 ≈ stage 3-4, pack 2 ≈ stage 5-6, pack 3 ≈ stage 7-8.
+	-- Win prices rebalanced 2026-06-14 (~3.3x) to the inflated win economy; pacing kept.
+	-- FuelBonus / ProductId (the Robux paid value) intentionally unchanged.
 	Tiers = {
-		[1] = { WinCost = 30,  FuelBonus = 40,  ProductId = 3602350603 }, -- Thrust Pack 1 (19 R$)
-		[2] = { WinCost = 80,  FuelBonus = 80,  ProductId = 3602350672 }, -- Thrust Pack 2 (39 R$)
-		[3] = { WinCost = 300, FuelBonus = 160, ProductId = 3602350745 }, -- Thrust Pack 3 (109 R$)
+		[1] = { WinCost = 100,  FuelBonus = 40,  ProductId = 3602350603 }, -- Thrust Pack 1 (19 R$)
+		[2] = { WinCost = 300,  FuelBonus = 80,  ProductId = 3602350672 }, -- Thrust Pack 2 (39 R$)
+		[3] = { WinCost = 1000, FuelBonus = 160, ProductId = 3602350745 }, -- Thrust Pack 3 (109 R$)
 	} :: { [number]: ThrustUpgradeTier },
 
 	-- Workspace paths
 	FolderName     = "UpgradeShop",
 	TouchModelName = "UTouch",
 	TouchPartName  = "Touch",
+	--- Parts checked for HRP zone + .Touched (Mesh = visible pad players stand on).
+	TouchZonePartNames = { "Touch", "Mesh" },
 
 	TouchDebounce  = 2,
 
 	--- HRP zone around UpgradeShop Touch (covers tall / aura / morph suits when .Touched misses).
-	TouchZoneHorizontalPadding = 6,
+	TouchZoneHorizontalPadding = 10,
 	TouchZoneMaxHeightAbove = 18,
 	TouchZoneMinHeightBelow = -8,
 

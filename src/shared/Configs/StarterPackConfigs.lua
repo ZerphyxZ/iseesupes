@@ -4,15 +4,27 @@
 -- button. ProductId = 0 keeps the offer hidden: create a "Starter Pack"
 -- developer product in Creator Hub (suggested 9 R$ — the button art says 9),
 -- paste the id here, done.
--- Countdown anchors to first join (RewardsAnchorTime); offer hides on expiry
--- or after purchase. One purchase per player (OwnedStarterPack flag).
+-- Countdown loops every OfferHours until purchase (RestartOfferOnExpiry).
+-- One purchase per player (OwnedStarterPack flag).
 
 local StarterPackConfigs = {
 	ProductId = 3603845869,
-	--- Offer window from first join; the button art was designed around 18h.
+	--- Offer window per cycle; the button art was designed around 18h.
 	OfferHours = 18,
+	--- When true, timer restarts at full OfferHours each cycle instead of hiding the offer.
+	RestartOfferOnExpiry = true,
+	AnchorField = "StarterPackAnchorTime",
 	OwnedFlag = "OwnedStarterPack",
 	HudButtonName = "StarterPack",
+
+	StandModelName = "StarterPackStand",
+	GiftBoxPartName = "GiftBox",
+	TouchPartName = "Touch",
+	BillboardName = "Billboard",
+	BillboardTimerName = "Timer",
+	ResolveTimeoutSeconds = 60,
+	ResolveRetrySeconds = 2,
+	MaxResolveAttempts = 30,
 
 	--- What the pack grants (bundle ≈ 60+ R$ of value for 9 R$ — that gap is the pitch).
 	Grants = {
@@ -27,9 +39,27 @@ local StarterPackConfigs = {
 	},
 }
 
+function StarterPackConfigs.GetOfferCycleSeconds(): number
+	return StarterPackConfigs.OfferHours * 3600
+end
+
+function StarterPackConfigs.GetOfferAnchor(data: any, now: number): number
+	local field = StarterPackConfigs.AnchorField
+	if type(field) == "string" and field ~= "" then
+		local anchor = data[field]
+		if type(anchor) == "number" then
+			return anchor
+		end
+	end
+	if type(data.RewardsAnchorTime) == "number" then
+		return data.RewardsAnchorTime
+	end
+	return now
+end
+
 function StarterPackConfigs.GetDeadline(data: any): number
-	local anchor = if type(data.RewardsAnchorTime) == "number" then data.RewardsAnchorTime else os.time()
-	return anchor + StarterPackConfigs.OfferHours * 3600
+	local now = os.time()
+	return StarterPackConfigs.GetOfferAnchor(data, now) + StarterPackConfigs.GetOfferCycleSeconds()
 end
 
 function StarterPackConfigs.IsOfferActive(data: any, now: number): boolean
@@ -39,7 +69,30 @@ function StarterPackConfigs.IsOfferActive(data: any, now: number): boolean
 	if data == nil or data[StarterPackConfigs.OwnedFlag] == true then
 		return false
 	end
+	if StarterPackConfigs.RestartOfferOnExpiry == true then
+		return true
+	end
 	return now < StarterPackConfigs.GetDeadline(data)
+end
+
+function StarterPackConfigs.GetRemainingSeconds(data: any, now: number?): number
+	if data == nil then
+		return 0
+	end
+	local t = if type(now) == "number" then now else os.time()
+	local cycle = StarterPackConfigs.GetOfferCycleSeconds()
+	local anchor = StarterPackConfigs.GetOfferAnchor(data, t)
+
+	if StarterPackConfigs.RestartOfferOnExpiry == true then
+		local elapsed = math.max(0, t - anchor)
+		local intoCycle = elapsed % cycle
+		if intoCycle == 0 and elapsed > 0 then
+			return cycle
+		end
+		return cycle - intoCycle
+	end
+
+	return math.max(0, anchor + cycle - t)
 end
 
 function StarterPackConfigs.FormatRemaining(seconds: number): string

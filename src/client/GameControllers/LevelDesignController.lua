@@ -9,6 +9,7 @@ local RunService = game:GetService("RunService")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local ThrustConfigs = SpeedConfigs.Thrust
@@ -123,7 +124,7 @@ function LevelDesignController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] LevelDesignController — edit Attributes in Properties; values sync to server on change.")
+	StudioLog.print("LevelDesign", "[iseesupes] LevelDesignController — edit Attributes in Properties; values sync to server on change.")
 end
 
 return LevelDesignController

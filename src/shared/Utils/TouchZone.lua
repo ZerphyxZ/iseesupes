@@ -33,23 +33,58 @@ function TouchZone.isRootInPartZone(root: BasePart, zonePart: BasePart, options:
 		minBelow = DEFAULTS.minHeightBelow
 	end
 
+	local localPos = zonePart.CFrame:PointToObjectSpace(root.Position)
 	local half = zonePart.Size * 0.5
 	local radius = math.max(half.X, half.Z) + pad
-	local delta = root.Position - zonePart.Position
-	if Vector3.new(delta.X, 0, delta.Z).Magnitude > radius then
+	if Vector3.new(localPos.X, 0, localPos.Z).Magnitude > radius then
 		return false
 	end
 
-	local topY = zonePart.Position.Y + half.Y
-	local bottomY = zonePart.Position.Y - half.Y
-	local rootY = root.Position.Y
-	if rootY > topY + maxAbove then
+	if localPos.Y > half.Y + maxAbove then
 		return false
 	end
-	if rootY < bottomY + minBelow then
+	if localPos.Y < -half.Y + minBelow then
 		return false
 	end
 	return true
+end
+
+function TouchZone.isRootInAnyPartZone(root: BasePart, zoneParts: { BasePart }, options: ZoneOptions?): boolean
+	for _, zonePart in zoneParts do
+		if TouchZone.isRootInPartZone(root, zonePart, options) then
+			return true
+		end
+	end
+	return false
+end
+
+function TouchZone.collectNamedParts(container: Instance, partNames: { string }): { BasePart }
+	local seen: { [BasePart]: boolean } = {}
+	local parts: { BasePart } = {}
+	for _, name in partNames do
+		local inst = container:FindFirstChild(name, true)
+		if inst and inst:IsA("BasePart") and not seen[inst] then
+			seen[inst] = true
+			table.insert(parts, inst)
+		end
+	end
+	return parts
+end
+
+function TouchZone.pickLargestBasePart(container: Instance): BasePart?
+	local largest: BasePart? = nil
+	local largestVol = 0
+	for _, desc in container:GetDescendants() do
+		if desc:IsA("BasePart") then
+			local part = desc :: BasePart
+			local vol = part.Size.X * part.Size.Y * part.Size.Z
+			if vol > largestVol then
+				largestVol = vol
+				largest = part
+			end
+		end
+	end
+	return largest
 end
 
 function TouchZone.getPlayerFromCharacterPart(hit: BasePart): Player?

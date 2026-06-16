@@ -35,7 +35,7 @@ local TrailConfigs = {
 		{
 			ID = "SupermanClassic",
 			Name = "Superman",
-			WinCost = 50,
+			WinCost = 150,
 			ProductId = 3602184828, -- Developer Product: Superman Trail
 			SpeedBoost = 1.5,
 			Image = "rbxassetid://120995773891656",
@@ -48,7 +48,7 @@ local TrailConfigs = {
 		{
 			ID = "Kryptonite",
 			Name = "Kryptonite",
-			WinCost = 500,
+			WinCost = 1500,
 			ProductId = 3602184962, -- Developer Product: Kryptonite Trail
 			SpeedBoost = 1.5,
 			Image = "rbxassetid://75031648687157",
@@ -60,7 +60,7 @@ local TrailConfigs = {
 		{
 			ID = "Ice",
 			Name = "Arctic",
-			WinCost = 800,
+			WinCost = 2500,
 			ProductId = 3602185251, -- Developer Product: Arctic Trail
 			SpeedBoost = 1.5,
 			Image = "rbxassetid://70542207066635",
@@ -72,7 +72,7 @@ local TrailConfigs = {
 		{
 			ID = "Solar",
 			Name = "Solar",
-			WinCost = 1200,
+			WinCost = 4000,
 			ProductId = 3602185055, -- Developer Product: Solar Trail
 			SpeedBoost = 2,
 			Image = "rbxassetid://100582612862019",

@@ -1,9 +1,10 @@
 --!strict
 
--- Slowly rotates the "Shine" ImageLabel inside configured HUD buttons (RainbowCarpet, StarterPack).
+-- Slowly rotates the "Shine" ImageLabel inside configured HUD buttons (e.g. StarterPack).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -64,7 +65,7 @@ function ShineSpinController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] ShineSpinController ready.")
+	StudioLog.ready("ShineSpinController")
 end
 
 return ShineSpinController

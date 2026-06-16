@@ -27,9 +27,22 @@ local edited = {
 	"src/server/GameServices/RebirthService.lua",
 	"src/server/GameServices/ThrustUpgradeService.lua",
 	"src/server/GameServices/TreadmillService.lua",
+	"src/server/GameServices/GiveWinsService.lua",
+	"src/server/GameServices/HealthRedService.lua",
+	"src/shared/Configs/FunnelAnalyticsConfigs.lua",
+	"src/shared/Configs/HealthRedConfigs.lua",
+	"src/shared/Configs/CharacterConfigs.lua",
+	"src/shared/Utils/StageCheckpointWorld.lua",
+	"src/client/GameControllers/Character/LongJumpController.lua",
+	"src/client/GameControllers/HUD/JumpCounterController.lua",
 	"src/server/GlobalServices/DataService.lua",
 	"src/client/GameControllers/Speed/SpeedController.lua",
 	"src/client/GameControllers/Rebirth/RebirthController.lua",
+	"src/shared/Configs/PlaytimeRewardConfigs.lua",
+	"src/server/GameServices/PlaytimeRewardService.lua",
+	"src/client/GameControllers/PlaytimeReward/PlaytimeRewardController.lua",
+	"src/client/GameControllers/HUD/WinCelebrationController.lua",
+	"src/client/GameControllers/Character/CharacterController.lua",
 }
 for _, path in edited do
 	compileCheck(path)
@@ -105,8 +118,8 @@ print("")
 print("STAGE | length | entryLvl | flight | no-pack tank %% | geared tank %%")
 local stages = {
 	{ n = 1, len = 640, lvl = 1, packs = 0 },
-	{ n = 2, len = 645, lvl = 5, packs = 0 },
-	{ n = 3, len = 793, lvl = 7, packs = 1 },
+	{ n = 2, len = 645, lvl = 3, packs = 0 },
+	{ n = 3, len = 793, lvl = 6, packs = 1 },
 	{ n = 4, len = 1409, lvl = 9, packs = 1 },
 	{ n = 5, len = 953, lvl = 12, packs = 2 },
 	{ n = 6, len = 2411, lvl = 15, packs = 2 },
@@ -142,7 +155,7 @@ end
 local f18 = SpeedConfigs.GetFlightForwardSpeed(18)
 assert(f18 >= 105 and f18 <= 140, "L18 flight should be controllable (105-140), got " .. f18)
 assert(SpeedConfigs.GetFlightForwardSpeed(1) >= 45, "L1 flight too slow")
-assert(SpeedConfigs.GetFlightForwardSpeed(100) >= 400, "L100 should be crazy fast")
+assert(SpeedConfigs.GetFlightForwardSpeed(100) <= 115, "flight is capped ~110 for stage control")
 
 local prevDrain = 0
 local prevFlight = 0
@@ -169,7 +182,7 @@ end
 local t1 = Thrust.BaseMaxFuel / SpeedConfigs.GetFlightDrainPerSecond(1)
 local t25 = Thrust.BaseMaxFuel / SpeedConfigs.GetFlightDrainPerSecond(25)
 local t100 = Thrust.BaseMaxFuel / SpeedConfigs.GetFlightDrainPerSecond(100)
-assert(t25 < t1 and t100 < t25, "time-per-tank must shrink with level")
+assert(t25 < t1 and t100 <= t25, "time-per-tank must shrink early then flatten (flight capped)")
 
 -- XP anti-teleport headroom: max flight speed per frame at 60fps must fit cap
 local maxFlight = SpeedConfigs.GetFlightForwardSpeed(200)

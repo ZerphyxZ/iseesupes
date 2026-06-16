@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -185,7 +186,7 @@ function UpgradeWinsController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] UpgradeWinsController ready.")
+	StudioLog.ready("UpgradeWinsController")
 end
 
 return UpgradeWinsController

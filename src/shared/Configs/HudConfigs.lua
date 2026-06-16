@@ -17,6 +17,19 @@ local HudConfigs = {
 
 	CloseButtonNames = { "Close", "X", "CloseButton", "Exit" },
 
+	--- Level bar Requirement label (XP progress text). Off = bar fill only.
+	UpdateLevelBarRequirementLabel = true,
+
+	--- Thrust bar Requirement label (current/max fuel). On so upgrades show new max.
+	UpdateThrustBarRequirementLabel = true,
+
+	--- Level-up toast sits below the Long Jump counter (code-built JumpCounter frame).
+	LevelUp = {
+		GapBelowJumpCounterPx = 10,
+		--- Used when JumpCounter is not present yet.
+		FallbackYOffsetScale = 0.05,
+	},
+
 	--- Frames under GUI.Frames that are not HUD-toggled (e.g. level-up popup).
 	ExcludeFromNavigator = { "LevelUp", "Notifications", "ThrustBoosts", "DailyStreak", "OfflineReward" },
 
@@ -53,7 +66,7 @@ local HudConfigs = {
 	ShineSpin = {
 		DegreesPerSecond = 30,
 		ShineName = "Shine",
-		ButtonNames = { "RainbowCarpet", "StarterPack" },
+		ButtonNames = { "StarterPack" },
 		--- Rescan PlayerGui for (re)spawned shine labels this often.
 		RescanSeconds = 5,
 	},
@@ -67,6 +80,25 @@ local HudConfigs = {
 		ClickPlaybackSpeed = 0.94,
 		HoverDebounce = 0.04,
 		BoundAttribute = "_HudButtonSoundBound",
+	},
+
+	--- Win icons fly from screen centre to HUD Left/Wins (EffectsSystem).
+	WinCollectEffect = {
+		IconImage = "rbxassetid://137378104956269",
+		HudIconName = "Icon",
+		MatchHudIconSize = true,
+		IconPx = 56,
+		IconPxMobile = 48,
+		IconPxLowEnd = 40,
+		ScaleType = Enum.ScaleType.Fit,
+		MaxVisibleIcons = 12,
+		StaggerDelay = 0.055,
+		FlyDuration = 0.42,
+		PopInDuration = 0.16,
+		ArrivalPopDuration = 0.12,
+		SpawnSpreadPx = 140,
+		WinsFramePath = { "GUI", "HUD", "Left", "Wins" },
+		FinalPulseScale = 1.18,
 	},
 }
 

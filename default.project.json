@@ -27,6 +27,18 @@
       }
     },
 
+    "ReplicatedFirst": {
+      "LoadingScreen": {
+        "$path": "src/replicatedFirst"
+      }
+    },
+
+    "Workspace": {
+      "$properties": {
+        "StreamingEnabled": false
+      }
+    },
+
     "SoundService": {
       "$properties": {
         "RespectFilteringEnabled": true

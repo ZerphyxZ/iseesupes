@@ -1,6 +1,7 @@
 --!strict
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RewardConfigs = require(ReplicatedStorage.Shared.Configs.RewardConfigs)
@@ -75,7 +76,7 @@ end
 
 function RewardService:KnitStart()
 	DataService = Knit.GetService("DataService")
-	print("[iseesupes] RewardService ready.")
+	StudioLog.ready("RewardService")
 end
 
 return RewardService

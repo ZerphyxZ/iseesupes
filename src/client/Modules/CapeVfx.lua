@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local GlideVfxConfigs = require(ReplicatedStorage.Shared.Configs.GlideVfxConfigs)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
 local CapePoseBootstrap = require(ReplicatedStorage.Shared.Utils.CapePoseBootstrap)
 local CapeRigEnsure = require(ReplicatedStorage.Shared.Utils.CapeRigEnsure)
 
@@ -527,8 +528,12 @@ end
 
 local function applyMeshForState(mesh: BasePart, capeState: CapeVisualState)
 	setMeshVisible(mesh)
-	if GlideVfxConfigs.Cape.EnableFluidForces ~= false then
+	local useFluid = GlideVfxConfigs.Cape.EnableFluidForces ~= false
+		and not ClientPerformance.shouldReduceCapeDynamics()
+	if useFluid then
 		mesh.EnableFluidForces = true
+	else
+		mesh.EnableFluidForces = false
 	end
 	applyClothAttributes(mesh, capeState)
 end
@@ -670,6 +675,10 @@ function CapeVfx.tickCapeDynamics(character: Model?, dt: number)
 
 	local charState = characterStates[character]
 	if not charState or not charState.rig or not charState.capeState then
+		return
+	end
+
+	if ClientPerformance.shouldReduceCapeDynamics() then
 		return
 	end
 
@@ -884,9 +893,11 @@ local function stopFlyLoop(state: CharacterState)
 end
 
 local function startFlyEffects(character: Model, state: CharacterState, sounds: Folder?)
-	ensureGlideTrails(character)
-	CapeVfx.setGlideTrailColor(character, equippedTrailColor)
-	setTrailsEnabled(character, true)
+	if not ClientPerformance.shouldDisableFlightTrails() then
+		ensureGlideTrails(character)
+		CapeVfx.setGlideTrailColor(character, equippedTrailColor)
+		setTrailsEnabled(character, true)
+	end
 	playFlyLoop(character, state)
 
 	local hrp = character:FindFirstChild("HumanoidRootPart")

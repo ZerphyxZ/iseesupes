@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
@@ -43,7 +44,7 @@ local function grantTier(player: Player, tier: number): string
 
 	local totalBonus = ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
 	local rebirthBonus = RebirthConfigs.GetThrustBonus(data.Rebirths)
-	local newMax = ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus
+	local newMax = ThrustConfigs.ClampMax(ThrustConfigs.BaseMaxFuel + totalBonus + rebirthBonus)
 	data.ThrustUpgradeTier = math.max(getCurrentTier(data), tier)
 	DataService:ApplyUpgradedMax(player, newMax)
 	DataService:ForceSave(player)
@@ -110,7 +111,16 @@ function ThrustUpgradeService.Client:BuyUpgrade(player: Player, tier: number): (
 		return
 	end
 
-	-- No "AlreadyOwned" check — allow repeat purchases
+	-- Already at the thrust ceiling? Refuse BEFORE charging — don't take wins for fuel the
+	-- cap won't grant. This is what bounds the otherwise-infinite repeat Tier-1 buys.
+	local packBonus = ThrustUpgradeConfigs.GetTotalBonusFromPurchases(data)
+	local rebirthBonus = RebirthConfigs.GetThrustBonus(data.Rebirths)
+	if ThrustConfigs.IsAtMaxCap(packBonus, rebirthBonus) then
+		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "MaxThrustReached", tier)
+		return
+	end
+
+	-- No "AlreadyOwned" check — allow repeat purchases (bounded by the cap above)
 	if not DataService:TrySpendWins(player, tierCfg.WinCost) then
 		ThrustUpgradeService.Client.UpgradeResult:Fire(player, "NotEnoughWins", tier)
 		return
@@ -127,7 +137,7 @@ function ThrustUpgradeService:KnitStart()
 		-- nothing to clean up — state lives in DataService profile
 	end)
 
-	print("[iseesupes] ThrustUpgradeService ready.")
+	StudioLog.ready("ThrustUpgradeService")
 end
 
 return ThrustUpgradeService

@@ -12,26 +12,36 @@ local SpeedConfigs = {
 	BaseXpCost = 300,
 	CostMultiplier = 1.3,
 	--- After this level, per-level XP cost grows by SoftCostMultiplier instead of
-	--- CostMultiplier. Stage gates end at L25; without this bend 1.3^N makes
-	--- L46 cost ~40M XP for one level and the late flight curve unreachable.
+	--- CostMultiplier. Stage gates end at L25 (gate 9 ≈ 540k total XP); SoftCapLevel
+	--- must stay 25 — lowering it breaks Stage 9 pacing (see validate-balance.luau).
 	SoftCapLevel = 25,
 	SoftCostMultiplier = 1.1,
-	BaseWalkSpeed = 8,
+	BaseWalkSpeed = 16,
 	RebirthPercentPerStep = 50,
 	SpeedGainPerStudBatch = 1,
 	AddSpeedMinInterval = 0.05,
 	--- Anti-teleport cap on per-frame distance counted for Speed XP (SpeedController).
-	--- Must stay above max flight speed / 60fps (450/60 = 7.5) or flight XP stops at high level.
+	--- Must stay above max flight speed / 60fps (flight capped 110 → 110/60 ≈ 1.8) or flight XP stops.
 	MaxCountedStudsPerFrame = 12,
 	SwimSpeedAttribute = "SwimSpeed",
 	--- Client HUD custom speed cap (integer studs/s). Nil / 0 = use full profile max.
 	CustomSpeedCapAttribute = "CustomSpeedCap",
 	--- Effective walk cap ÷ profile max (1 = full). Used to scale E-flight forward speed.
 	CustomSpeedRatioAttribute = "CustomSpeedRatio",
-	--- Icon on the +Speed burst when walking / gaining speed (EffectsSystem).
-	SpeedGainPopupImage = "rbxassetid://79786696302749",
+	--- Icon on the +Speed burst when leveling up by step / gaining speed (EffectsSystem).
+	SpeedGainPopupImage = "rbxassetid://130009821689663",
 	--- Icon on the +Thrust burst when thrust refills (EffectsSystem).
 	ThrustGainPopupImage = "rbxassetid://109635513870423",
+	--- +Speed / +Thrust burst layout (EffectsSystem; device tier picks mobile/low-end).
+	GainPopupIconPx = 96,
+	GainPopupIconPxMobile = 72,
+	GainPopupIconPxLowEnd = 64,
+	GainPopupTextSize = 48,
+	GainPopupTextSizeMobile = 36,
+	GainPopupTextSizeLowEnd = 32,
+	GainPopupTextWidth = 160,
+	GainPopupTextWidthMobile = 130,
+	GainPopupTextWidthLowEnd = 120,
 }
 
 function SpeedConfigs.GetExperienceForLevel(level: number): number
@@ -72,43 +82,39 @@ end
 
 export type CurveAnchor = { level: number, value: number }
 
---- Walk / swim speed (Humanoid.WalkSpeed). Old formula (8 + 3/level) hit 59 at
---- L18 — uncontrollable on obstacles. Slow growth, soft-capped late.
+--- Walk / swim speed (Humanoid.WalkSpeed). Fast early so the game feels snappy
+--- (L1=16 = Roblox default, ~2x the old start), then eased back to ~33-35 by
+--- L22-25 so the S8/S9 pillar-hop jumps (BasicJump range = walk × 0.815) stay
+--- precise and don't overshoot the small pillar tops. Flight is separate. Rebalanced
+--- 2026-06-14 to fix "feels slow" / low session time (reverses the old slow-learn curve).
 SpeedConfigs.WalkSpeedCurve = {
-	{ level = 1, value = 8 },
-	{ level = 3, value = 11 },
-	{ level = 5, value = 14 },
-	{ level = 8, value = 18 },
-	{ level = 12, value = 23 },
-	{ level = 16, value = 27 },
-	{ level = 20, value = 31 },
-	{ level = 25, value = 35 },
-	{ level = 32, value = 40 },
-	{ level = 40, value = 46 },
-	{ level = 50, value = 52 },
-	{ level = 60, value = 58 },
-	{ level = 80, value = 67 },
-	{ level = 100, value = 75 },
+	{ level = 1, value = 20 },
+	{ level = 3, value = 26 },
+	{ level = 5, value = 34 },
+	{ level = 8, value = 44 },
+	{ level = 12, value = 56 },
+	{ level = 16, value = 68 },
+	{ level = 20, value = 80 },
+	{ level = 25, value = 94 },
+	{ level = 32, value = 110 },
+	{ level = 40, value = 125 },
+	{ level = 50, value = 142 },
+	{ level = 60, value = 156 },
+	{ level = 80, value = 170 },
+	{ level = 100, value = 182 },
 } :: { CurveAnchor }
 
---- E-flight forward speed (studs/s). Old formula reached its full 4.48x walk
---- multiplier at L4 and gave ~285 studs/s at L18. New curve: learn the map
---- early, earn crazy speed late. Flat beyond the last anchor.
+--- E-flight forward speed (studs/s). CAPPED at 110 (2026-06-14): high-level flight
+--- (was 450 at L100) was uncontrollable and overshot the stages, which are built for
+--- ~110. Rises 50→110 by L16, then flat. Speed fantasy now lives in walk speed + the
+--- Total Speed number, not raw flight. Tune by editing the anchor rows.
 SpeedConfigs.FlightSpeedCurve = {
 	{ level = 1, value = 50 },
 	{ level = 3, value = 62 },
 	{ level = 5, value = 75 },
 	{ level = 8, value = 88 },
 	{ level = 12, value = 102 },
-	{ level = 16, value = 115 },
-	{ level = 20, value = 130 },
-	{ level = 25, value = 150 },
-	{ level = 32, value = 180 },
-	{ level = 40, value = 215 },
-	{ level = 50, value = 260 },
-	{ level = 65, value = 320 },
-	{ level = 80, value = 380 },
-	{ level = 100, value = 450 },
+	{ level = 16, value = 110 },
 } :: { CurveAnchor }
 
 local function evalLevelCurve(curve: { CurveAnchor }, level: number): number
@@ -288,6 +294,13 @@ end
 -- Solar energy (heat vision) lives in HeatVisionConfigs.SolarEnergy — separate profile fields.
 local Thrust = {
 	BaseMaxFuel = 60,
+	--- Hard ceiling on PERMANENT Max Thrust (base + thrust packs + rebirth perk). The whole
+	--- game's fly demand tops out around 270 fuel (a full Stage 7 crossing); every ToggleFly
+	--- hop is ≤ 90. 400 lets all three thrust packs (+280) and ~6 rebirths land — flying
+	--- Stage 7 nonstop is the fully-upgraded reward — while killing unbounded stockpiling and
+	--- wasted wins on repeat Tier-1 buys. Temporary boosts set ThrustMax directly and
+	--- intentionally bypass this. 0 = no cap.
+	MaxFuelCap = 400,
 	--- Drain per second at L1 flight speed. Actual drain RISES with flight speed
 	--- (see GetFlightDrainPerSecond) so faster flight burns hotter — one tank
 	--- should never comfortably cover a full stage without thrust upgrades.
@@ -353,6 +366,26 @@ end
 
 function Thrust.GetNetDrainPerSecond(): number
 	return math.max(Thrust.DrainPerSecond, 0.01)
+end
+
+--- Clamp a freshly-computed PERMANENT max (base + packs + rebirth) to MaxFuelCap. Call this
+--- everywhere a permanent ThrustMax is (re)computed so the ceiling is single-sourced.
+function Thrust.ClampMax(rawMax: number): number
+	local cap = Thrust.MaxFuelCap
+	if typeof(cap) == "number" and cap > 0 and rawMax > cap then
+		return cap
+	end
+	return rawMax
+end
+
+--- True once base + packs + rebirth already sits at (or above) the cap — used to refuse a
+--- thrust-pack purchase before charging the player for fuel they can't receive.
+function Thrust.IsAtMaxCap(baseBonus: number, rebirthBonus: number): boolean
+	local cap = Thrust.MaxFuelCap
+	if typeof(cap) ~= "number" or cap <= 0 then
+		return false
+	end
+	return Thrust.BaseMaxFuel + baseBonus + rebirthBonus >= cap
 end
 
 function Thrust.GetAbilityTimeCap(fuelAtStart: number, tuningMax: number): number
@@ -429,9 +462,9 @@ function SpeedConfigs.ScaledCooldown(base: number, level: number, reductionPerLe
 	return math.clamp(base - (lvl - 1) * reductionPerLevel, minCD, base)
 end
 
---- Double-jump / flight cooldown: 5.0s at L1 → 0.8s at L85+.
+--- Double-jump / flight cooldown: 1.0s at L1 → 0.2s at L67+.
 function SpeedConfigs.GetDoubleJumpCooldown(level: number): number
-	return SpeedConfigs.ScaledCooldown(5.0, level, 0.05, 0.8)
+	return SpeedConfigs.ScaledCooldown(1.0, level, 0.012, 0.2)
 end
 
 --- Long-jump cooldown: 1.0s at L1 → 0.2s at L41+.

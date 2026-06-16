@@ -5,6 +5,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
@@ -37,10 +38,10 @@ function GiveDoubleWinsController:KnitStart()
 	)
 
 	GiveDoubleWinsService.PurchaseGranted:Connect(function(grantAmount: number)
-		NotificationManager.show("+" .. tostring(grantAmount) .. " Wins! 2x Wins unlocked!", "Success")
+		NotificationManager.show("+" .. tostring(grantAmount) .. " Wins!", "Success")
 	end)
 
-	print("[iseesupes] GiveDoubleWinsController ready.")
+	StudioLog.ready("GiveDoubleWinsController")
 end
 
 return GiveDoubleWinsController

@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -11,9 +12,10 @@ local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJum
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
-local StageCheckpointProgress = require(ReplicatedStorage.Shared.Utils.StageCheckpointProgress)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
+local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
+local TutorialFlightAssist = require(ReplicatedStorage.Shared.Utils.TutorialFlightAssist)
 
 local Features = CharacterConfigs.Features
 local DjCfg = CharacterConfigs.DoubleJump
@@ -79,9 +81,60 @@ type AbilitySession = {
 	landingProbe: DoubleJumpLanding.LandingProbe?,
 	obstacleProbeAt: number?,
 	obstacleBlocked: boolean?,
+	startedGrounded: boolean?,
+	takeoffGroundBoostApplied: boolean?,
 }
 
 local HARD_LANDED_END_SECONDS = 1.5
+
+local function isInTakeoffGrace(session: AbilitySession): boolean
+	local grace = session.tuning.TakeoffGraceSeconds or DjCfg.TakeoffGraceSeconds or 1.2
+	return os.clock() - session.abilityStartedAt < grace
+end
+
+local function isAfterTransitionReady(
+	cfg: any,
+	heightGain: number,
+	phaseElapsed: number
+): boolean
+	local minHeight = cfg.TakeoffMinHeightAboveStart or 6
+	local failsafeDuration = cfg.TakeoffFailsafeDuration or 1.4
+	local failsafeMinHeight = cfg.TakeoffFailsafeMinHeight or 2
+	local minElapsed = phaseElapsed >= (cfg.MinDuration or 0)
+	local ready = heightGain >= minHeight
+		or (phaseElapsed >= failsafeDuration and heightGain >= failsafeMinHeight)
+	return ready and minElapsed
+end
+
+local function hasTutorialFlightAssist(player: Player): boolean
+	return TutorialFlightAssist.isActiveForPlayer(player)
+end
+
+local function applyTutorialAssistTuning(player: Player, tuning: DjTuning): DjTuning
+	if not hasTutorialFlightAssist(player) then
+		return tuning
+	end
+	local assist = TutorialConfigs.FlightAssist
+	if not assist or assist.Enabled == false then
+		return tuning
+	end
+	if assist.RelaxRequiresHold == true then
+		tuning.Phases.AfterTransition.RequiresHold = false
+		tuning.Phases.LeanUp.RequiresHold = false
+	end
+	if type(assist.MaxAbilityDuration) == "number" and assist.MaxAbilityDuration > 0 then
+		tuning.MaxAbilityDuration = assist.MaxAbilityDuration
+	end
+	if type(assist.LeanUpMaxDuration) == "number" and assist.LeanUpMaxDuration > 0 then
+		tuning.Phases.LeanUp.MaxDuration = assist.LeanUpMaxDuration
+	end
+	return tuning
+end
+
+local function shouldSkipTutorialHardGroundEnd(player: Player): boolean
+	local assist = TutorialConfigs.FlightAssist
+	return hasTutorialFlightAssist(player) and assist ~= nil and assist.SkipHardGroundEnd == true
+end
 
 local function clientOwnsFlightPhysics(): boolean
 	local net = DjCfg.Network
@@ -111,6 +164,33 @@ local function getFlightProbeOptions(phase: string): DoubleJumpLanding.FlightPro
 		ignoreWallProbeHitsIn = folder,
 		ignoreWalkableInstance = StageCheckpointWorld.isCheckpointSpawnPart,
 	}
+end
+
+local function maybeApplyTakeoffGroundBoost(session: AbilitySession, vel: Vector3): Vector3
+	if session.takeoffGroundBoostApplied then
+		return vel
+	end
+	if not isInTakeoffGrace(session) then
+		return vel
+	end
+	local phase = session.phase
+	if phase ~= PHASE.FlightTransit and phase ~= PHASE.AfterTransition then
+		return vel
+	end
+	local landingCfg = session.tuning.Phases.DownSupes
+	local onGround = DoubleJumpLanding.isOnWalkableGround(
+		session.humanoid,
+		session.root,
+		session.rayParams,
+		landingCfg,
+		getFlightProbeOptions(phase)
+	)
+	if not onGround then
+		return vel
+	end
+	session.takeoffGroundBoostApplied = true
+	local boost = session.tuning.TakeoffGroundBoost or DjCfg.TakeoffGroundBoost or 32
+	return vel + Vector3.new(0, boost, 0)
 end
 
 local function getLandingProbeDistanceForPhase(session: AbilitySession, phase: string): number?
@@ -811,6 +891,10 @@ function DoubleJumpService:_endAbility(player: Player)
 	self.Client.AbilityEnded:Fire(player)
 end
 
+function DoubleJumpService:HasActiveSession(player: Player): boolean
+	return sessions[player] ~= nil
+end
+
 --- Ends active thrust/flight before lobby teleport so the rig is upright, not prone.
 function DoubleJumpService:ForceEndForLobby(player: Player)
 	if sessions[player] then
@@ -935,33 +1019,35 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 		)
 
 	-- Wall/obstacle: end E immediately (PlatformStand often keeps FloorMaterial = Air on walls).
-	if probe then
-		if not probe.isNearFloor and probe.obstacleBlocked then
-			self:_endAbilityFromCollision(session)
-			return
-		end
-	elseif
-		session.phase == PHASE.AfterTransition
-		or session.phase == PHASE.LeanUp
-		or session.phase == PHASE.LeapDown
-	then
-		if
-			DoubleJumpLanding.hasObstacleContact(
-				humanoid,
-				root,
-				session.rayParams,
-				landingCfg,
-				session.flightDirection,
-				getFlightProbeOptions(session.phase)
-			)
+	if not isInTakeoffGrace(session) then
+		if probe then
+			if not probe.isNearFloor and probe.obstacleBlocked then
+				self:_endAbilityFromCollision(session)
+				return
+			end
+		elseif
+			session.phase == PHASE.AfterTransition
+			or session.phase == PHASE.LeanUp
+			or session.phase == PHASE.LeapDown
 		then
-			self:_endAbilityFromCollision(session)
-			return
+			if
+				DoubleJumpLanding.hasObstacleContact(
+					humanoid,
+					root,
+					session.rayParams,
+					landingCfg,
+					session.flightDirection,
+					getFlightProbeOptions(session.phase)
+				)
+			then
+				self:_endAbilityFromCollision(session)
+				return
+			end
 		end
 	end
 
 	-- Hard-grounded fail-safe: feet on walkable floor only (not "near landing" while still gliding).
-	if onWalkableGround then
+	if onWalkableGround and not shouldSkipTutorialHardGroundEnd(session.player) and not isInTakeoffGrace(session) then
 		session.hardLandedAt = session.hardLandedAt or now
 		local hardLandDelay = if session.phase == PHASE.LeapDown or session.phase == PHASE.DownSupes
 			then 0.35
@@ -1022,6 +1108,9 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 				nudge
 			)
 		end
+		if not clientOwnsFlightPhysics() then
+			vel = maybeApplyTakeoffGroundBoost(session, vel)
+		end
 		applyFlightYawRollAndVelocity(session, getOrientationHeading(session), 0, vel, session.currentPitch)
 
 		if phaseElapsed >= cfg.Duration then
@@ -1049,13 +1138,14 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 			local aim = getFlightDirectionWithPitch(session, tuning)
 			vel = unit3D(vel.Unit:Lerp(aim, pitchBlend)) * vel.Magnitude
 		end
+		if not clientOwnsFlightPhysics() then
+			vel = maybeApplyTakeoffGroundBoost(session, vel)
+		end
 		applyFlightYawRollAndVelocity(session, getOrientationHeading(session), 0, vel, session.currentPitch)
 
 		local heightGain = root.Position.Y - session.startPosition.Y
 		if not session.afterTransitionComplete then
-			local ready = heightGain >= cfg.TargetHeightAboveStart or phaseElapsed >= cfg.MaxDuration
-			local minElapsed = phaseElapsed >= (cfg.MinDuration or 0)
-			if ready and minElapsed then
+			if isAfterTransitionReady(cfg, heightGain, phaseElapsed) then
 				session.afterTransitionComplete = true
 				self:_setPhase(session, PHASE.LeanUp)
 			end
@@ -1375,18 +1465,36 @@ function DoubleJumpService:_tickSession(session: AbilitySession, dt: number)
 	end
 end
 
---- Returns true when the player stands on a Kryptonite stage (flight is sapped there).
-function DoubleJumpService:_isOnKryptoniteStage(player: Player): boolean
+--- Returns true when the player is physically in a Kryptonite stage (flight is sapped there).
+function DoubleJumpService:_isOnKryptoniteStage(player: Player, root: BasePart): boolean
 	local cfg = DjCfg.Kryptonite
 	if not cfg or cfg.Enabled ~= true then
 		return false
 	end
-	local data = DataService and DataService:GetData(player)
-	if not data then
+
+	local character = player.Character
+	if not character then
 		return false
 	end
-	local stage = StageCheckpointProgress.getEffectiveStage(data)
-	return cfg.Stages[stage] == true
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { character }
+
+	local physicalStage = StageCheckpointWorld.resolvePhysicalStageFromRoot(root, rayParams)
+	if physicalStage == nil then
+		local fadeCfg = cfg.FadePlatforms
+		local bounds = fadeCfg and fadeCfg.StreamBounds
+		if bounds and StageCheckpointWorld.isPositionInStreamBounds(root.Position, bounds) then
+			physicalStage = 8
+		end
+	end
+
+	if physicalStage == nil then
+		return false
+	end
+
+	return cfg.Stages[physicalStage] == true
 end
 
 function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
@@ -1414,12 +1522,10 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		return false, "no_thrust"
 	end
 
-	local tuning = LevelDesignTuning.getDoubleJump(player)
+	local tuning = applyTutorialAssistTuning(player, LevelDesignTuning.getDoubleJump(player))
 	local poseCfg = tuning.SupermanPose
 
-	if RunService:IsStudio() then
-		print("[iseesupes] E ability using server tuning:", LevelDesignTuning.formatActiveTuning(player))
-	end
+	StudioLog.print("LevelDesign", "[iseesupes] E ability using server tuning:", LevelDesignTuning.formatActiveTuning(player))
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -1472,6 +1578,8 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 		thrustEmptyAt = nil,
 		flightFuelAtStart = fuelAtStart,
 		earlyCancel = false,
+		startedGrounded = isGrounded(humanoid),
+		takeoffGroundBoostApplied = false,
 	}
 
 	humanoid.AutoRotate = false
@@ -1501,7 +1609,7 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 	self.Client.PhaseChanged:Fire(player, PHASE.FlightTransit)
 
 	-- Kryptonite stage: let the takeoff begin, then sap all thrust so flight dies instantly.
-	if self:_isOnKryptoniteStage(player) then
+	if self:_isOnKryptoniteStage(player, root) then
 		DataService:DrainThrust(player)
 		self.Client.KryptoniteDrained:Fire(player)
 	end
@@ -1609,6 +1717,15 @@ function DoubleJumpService.Client:SetHolding(player: Player, isHolding: boolean)
 	end
 
 	if not isHolding and canCancelOnRelease(session.phase) then
+		local assist = TutorialConfigs.FlightAssist
+		if
+			hasTutorialFlightAssist(player)
+			and assist
+			and assist.RelaxRequiresHold == true
+			and (session.phase == PHASE.AfterTransition or session.phase == PHASE.LeanUp)
+		then
+			return
+		end
 		local elapsed = os.clock() - session.abilityStartedAt
 		if elapsed < getCancelMinActiveTime(session.tuning) then
 			return
@@ -1667,7 +1784,7 @@ function DoubleJumpService:KnitStart()
 		end)
 	end
 
-	print("[iseesupes] DoubleJumpService ready.")
+	StudioLog.ready("DoubleJumpService")
 end
 
 return DoubleJumpService

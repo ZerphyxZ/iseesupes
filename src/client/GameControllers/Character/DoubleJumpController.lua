@@ -4,11 +4,13 @@ local ContentProvider = game:GetService("ContentProvider")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local DoubleJumpLanding = require(ReplicatedStorage.Shared.Utils.DoubleJumpLanding)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
@@ -17,6 +19,7 @@ local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
+local AutoFlyState = require(script.Parent.Parent.Parent.Modules.AutoFlyState)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -38,6 +41,22 @@ local function getTuning(): LevelDesignTuning.DoubleJumpTuning
 		refreshTuning()
 	end
 	return cachedTuning :: LevelDesignTuning.DoubleJumpTuning
+end
+
+local function getSteeringTuning(): any
+	local steering = getTuning().Steering
+	if not ClientPerformance.isMobile() then
+		return steering
+	end
+	local mobile = DjCfg.Mobile
+	if not mobile or not mobile.Steering then
+		return steering
+	end
+	local merged = table.clone(steering)
+	for key, value in mobile.Steering do
+		merged[key] = value
+	end
+	return merged
 end
 
 local function bindTuningAttrListeners(character: Model?)
@@ -156,6 +175,7 @@ local animFolder: Folder? = nil
 local actionBound = false
 local abilityActive = false
 local abilityStartedAt: number? = nil
+local startRequestPending = false
 local holdingLocally = false
 local lastCancelTooSoonToastAt = -math.huge
 local smoothedSteerDir: Vector3? = nil
@@ -219,7 +239,33 @@ local function getSteerSendHz(): number
 	if net and typeof(net.SteerSendHz) == "number" and net.SteerSendHz > 0 then
 		return net.SteerSendHz
 	end
-	return 15
+	return ClientPerformance.getSteerSendHz()
+end
+
+local THRUST_DEPLETED_GRACE_SECONDS = 0.6
+
+local function getTakeoffGraceSeconds(): number
+	return getTuning().TakeoffGraceSeconds or DjCfg.TakeoffGraceSeconds or 1.2
+end
+
+local function getTakeoffMinHeight(): number
+	local cfg = getTuning().Phases.AfterTransition
+	return cfg.TakeoffMinHeightAboveStart or 6
+end
+
+local function isPastTakeoffGrace(): boolean
+	if not abilityStartedAt then
+		return false
+	end
+	return os.clock() - abilityStartedAt >= getTakeoffGraceSeconds()
+end
+
+local function hasTakeoffMinHeight(state: CharacterAbilityState): boolean
+	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return false
+	end
+	return root.Position.Y - state.startPosition.Y >= getTakeoffMinHeight()
 end
 
 local function isClientThrustDepleted(): boolean
@@ -232,6 +278,17 @@ local function isClientThrustDepleted(): boolean
 	end
 	return (data.ThrustCurrent or 0) <= 0
 end
+
+local function isClientThrustDepletedForCancel(): boolean
+	if not isClientThrustDepleted() then
+		return false
+	end
+	if abilityStartedAt and os.clock() - abilityStartedAt < THRUST_DEPLETED_GRACE_SECONDS then
+		return false
+	end
+	return true
+end
+
 local lastCameraYaw: number? = nil
 local lastCameraPitch: number? = nil
 local currentPhase: string? = nil
@@ -276,6 +333,7 @@ type CharacterAbilityState = {
 	leanAnimSubphase: string?, -- "glide" | "descent" while in LeanUp
 	landingWatchdogAt: number?,
 	thrustCancelSent: boolean,
+	takeoffGroundBoostApplied: boolean,
 }
 
 local characterStates: { [Model]: CharacterAbilityState } = {}
@@ -284,7 +342,6 @@ local DEBUG_DOWNSUPES = DjCfg.Debug == true
 
 local globalDjAnimsPreloaded = false
 local DOWNSUPES_PULSE_SEC = 0.25
-local LANDING_WATCHDOG_HEAVY_INTERVAL = 0.15
 
 type DownSupesDiagState = {
 	lastPulseAt: number,
@@ -651,7 +708,12 @@ local function getSteerThreshold(): number
 end
 
 local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector3
-	local steering = getTuning().Steering
+	local autoDir = AutoFlyState.getSteerOverride()
+	if autoDir and autoDir.Magnitude > 0.01 then
+		return autoDir
+	end
+
+	local steering = getSteeringTuning()
 	local followPitch = steering.FollowCameraPitch ~= false and phaseUsesCameraPitchSteer(currentPhase)
 	local maxPitch = steering.MaxPitchDegrees or 80
 
@@ -713,26 +775,46 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 end
 
 local TOUCH_STICK_DRIFT_DEADZONE = 0.22
+local cachedTouchControls: any = nil
+
+local function resetTouchControlsCache()
+	cachedTouchControls = nil
+end
+
+local function getTouchControls()
+	if cachedTouchControls then
+		return cachedTouchControls
+	end
+	if not UserInputService.TouchEnabled then
+		return nil
+	end
+
+	local playerScripts = player:FindFirstChild("PlayerScripts")
+	if not playerScripts then
+		return nil
+	end
+
+	local playerModuleScript = playerScripts:FindFirstChild("PlayerModule")
+	if not playerModuleScript then
+		return nil
+	end
+
+	local ok, controls = pcall(function()
+		return require(playerModuleScript :: ModuleScript):GetControls()
+	end)
+	if ok and controls then
+		cachedTouchControls = controls
+	end
+	return cachedTouchControls
+end
 
 local function getTouchSteerAxis(): number
 	if not UserInputService.TouchEnabled then
 		return 0
 	end
 
-	local playerScripts = player:FindFirstChild("PlayerScripts")
-	if not playerScripts then
-		return 0
-	end
-
-	local playerModuleScript = playerScripts:FindFirstChild("PlayerModule")
-	if not playerModuleScript then
-		return 0
-	end
-
-	local ok, controls = pcall(function()
-		return require(playerModuleScript :: ModuleScript):GetControls()
-	end)
-	if not ok or not controls then
+	local controls = getTouchControls()
+	if not controls then
 		return 0
 	end
 
@@ -863,9 +945,6 @@ local function getCameraYawRateSteerAxis(dt: number): number
 	local yawRate = delta / safeDt
 	local axis = math.clamp(-yawRate / fullBankRate, -1, 1)
 	local minRate = poseCfg.CameraYawRateMin or 0.35
-	if UserInputService.TouchEnabled then
-		minRate = math.max(minRate, 0.9)
-	end
 	local minAxis = poseCfg.CameraYawRateMinAxis or 0.28
 	if math.abs(yawRate) >= minRate and math.abs(axis) < minAxis then
 		axis = -math.sign(yawRate) * minAxis
@@ -901,6 +980,10 @@ local function getCameraHeadingBankAxis(state: CharacterAbilityState): number
 end
 
 local function getSteerAxisFromInput(state: CharacterAbilityState, dt: number): number
+	if AutoFlyState.isSteeringLocked() then
+		return 0
+	end
+
 	local steerAxis = 0
 
 	-- A = left, D = right (bank roll sign)
@@ -955,7 +1038,7 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 		return
 	end
 
-	local steerCfg = getTuning().Steering
+	local steerCfg = getSteeringTuning()
 	local targetAxis = getSteerAxisFromInput(state, dt)
 	local adHeldOnLeanUp = currentPhase == PHASE.LeanUp
 		and (UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D))
@@ -1014,7 +1097,7 @@ local function publishSteerInput(state: CharacterAbilityState, dt: number)
 end
 
 local function applySteerToFlightDirection(state: CharacterAbilityState, dt: number)
-	local steerCfg = getTuning().Steering
+	local steerCfg = getSteeringTuning()
 	if steerCfg.Enabled == false then
 		return
 	end
@@ -1105,6 +1188,7 @@ local function buildFlightPhysicsState(state: CharacterAbilityState): DoubleJump
 		clientSteerPitchAxis = smoothedSteerPitchAxis,
 		clientSteerDirection = smoothedSteerDir,
 		lastBankHeadingYaw = state.lastBankHeadingYaw,
+		takeoffGroundBoostApplied = state.takeoffGroundBoostApplied,
 	}
 end
 
@@ -1115,11 +1199,16 @@ local function applyFlightStateFromPhysics(state: CharacterAbilityState, fpState
 	state.currentRoll = fpState.currentRoll
 	state.descentStartedAt = fpState.descentStartedAt
 	state.lastBankHeadingYaw = fpState.lastBankHeadingYaw
+	state.takeoffGroundBoostApplied = fpState.takeoffGroundBoostApplied == true
 end
 
 local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number, phase: string)
 	if not clientOwnsFlightPhysics() then
 		return
+	end
+
+	if ClientPerformance.isMobile() then
+		dt = math.min(dt, 1 / 24)
 	end
 
 	local root = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -1138,7 +1227,7 @@ local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number,
 
 	local tickOpts: { thrustDepleted: boolean }? = nil
 	if
-		isClientThrustDepleted()
+		isClientThrustDepletedForCancel()
 		and (phase == PHASE.FlightTransit or phase == PHASE.AfterTransition or phase == PHASE.LeanUp)
 	then
 		if not state.thrustCancelSent then
@@ -1156,6 +1245,7 @@ local function tickClientFlightPhysics(state: CharacterAbilityState, dt: number,
 			phase = phase,
 			phaseElapsed = phaseElapsed,
 			phaseStartedAt = state.phaseStartedAt,
+			abilityStartedAt = abilityStartedAt,
 			startPosition = state.startPosition,
 			rayParams = state.rayParams,
 			humanoid = state.humanoid,
@@ -1395,7 +1485,11 @@ enforceLandingAnim = function(state: CharacterAbilityState, runHeavyChecks: bool
 
 	if currentPhase == PHASE.LeanUp or currentPhase == PHASE.DownSupes then
 		if grounded and not state.leapDownCommitted then
-			playLeapDownLanding(state, "enforce_leanup_grounded")
+			if isPastTakeoffGrace() and hasTakeoffMinHeight(state) then
+				playLeapDownLanding(state, "enforce_leanup_grounded")
+			else
+				updateLeanUpAnimSubphase(state)
+			end
 		else
 			updateLeanUpAnimSubphase(state)
 		end
@@ -1550,7 +1644,7 @@ local function tickLandingWatchdog(state: CharacterAbilityState)
 	local needsHeavy = phaseNeedsHeavyLandingChecks(currentPhase)
 	if not needsHeavy then
 		local last = state.landingWatchdogAt or 0
-		if now - last < LANDING_WATCHDOG_HEAVY_INTERVAL then
+		if now - last < ClientPerformance.getLandingWatchdogInterval() then
 			if currentPhase == PHASE.LeanUp then
 				updateLeanUpAnimSubphase(state)
 			end
@@ -1675,6 +1769,7 @@ onAbilityEnded = function()
 	applyAbilityJumpLock(false)
 	abilityActive = false
 	abilityStartedAt = nil
+	startRequestPending = false
 	holdingLocally = false
 	smoothedSteerDir = nil
 	smoothedSteerAxis = 0
@@ -1757,6 +1852,7 @@ onPhaseChanged = function(phase: string)
 		state.currentRoll = 0
 		state.lastBankHeadingYaw = nil
 		state.descentStartedAt = nil
+		state.takeoffGroundBoostApplied = false
 	elseif phase == PHASE.LeanUp or phase == PHASE.DownSupes then
 		state.currentPitch = getTuning().SupermanPose.UprightPitch
 		state.currentRoll = 0
@@ -1782,29 +1878,29 @@ onPhaseChanged = function(phase: string)
 	end
 
 	local tracks = state.tracks
-	-- #region agent log
-	DebugLog.write("DoubleJumpController:onPhaseChanged", "client_phase_anim", {
-		phase = phase,
-		leapDownPlaying = tracks.leapDown.IsPlaying,
-		downSupesPlaying = tracks.downSupes.IsPlaying,
-		afterTransitionPlaying = tracks.afterTransition.IsPlaying,
-		grounded = DoubleJumpLanding.isGrounded(state.humanoid),
-	}, "B")
-	-- #endregion
+	if not ClientPerformance.shouldSkipFlightDebugLogs() then
+		DebugLog.write("DoubleJumpController:onPhaseChanged", "client_phase_anim", {
+			phase = phase,
+			leapDownPlaying = tracks.leapDown.IsPlaying,
+			downSupesPlaying = tracks.downSupes.IsPlaying,
+			afterTransitionPlaying = tracks.afterTransition.IsPlaying,
+			grounded = DoubleJumpLanding.isGrounded(state.humanoid),
+		}, "B")
+	end
 
 	playPhaseAnim(state, phase)
 
-	-- #region agent log
-	DebugLog.write("DoubleJumpController:onPhaseChanged", "after_play_phase_anim", {
-		phase = phase,
-		leapDownPlaying = tracks.leapDown.IsPlaying,
-		downSupesPlaying = tracks.downSupes.IsPlaying,
-		afterTransitionPlaying = tracks.afterTransition.IsPlaying,
-		flightTransitPlaying = tracks.flightTransit.IsPlaying,
-		leanUpPlaying = tracks.leanUp.IsPlaying,
-		currentTrack = currentTrackName(state),
-	}, "B")
-	-- #endregion
+	if not ClientPerformance.shouldSkipFlightDebugLogs() then
+		DebugLog.write("DoubleJumpController:onPhaseChanged", "after_play_phase_anim", {
+			phase = phase,
+			leapDownPlaying = tracks.leapDown.IsPlaying,
+			downSupesPlaying = tracks.downSupes.IsPlaying,
+			afterTransitionPlaying = tracks.afterTransition.IsPlaying,
+			flightTransitPlaying = tracks.flightTransit.IsPlaying,
+			leanUpPlaying = tracks.leanUp.IsPlaying,
+			currentTrack = currentTrackName(state),
+		}, "B")
+	end
 end
 
 setupCharacter = function(character: Model)
@@ -1904,6 +2000,7 @@ setupCharacter = function(character: Model)
 		landingGroundedAt = nil,
 		leanAnimSubphase = nil,
 		thrustCancelSent = false,
+		takeoffGroundBoostApplied = false,
 	}
 	characterStates[character] = state
 
@@ -1956,6 +2053,9 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 	local service = getDoubleJumpService()
 
 	if inputState == Enum.UserInputState.Begin then
+		if startRequestPending then
+			return Enum.ContextActionResult.Sink
+		end
 		if abilityActive or player:GetAttribute(PHASE_ATTR) then
 			-- Toggle: second E press ends Superman flight (cancel fall → land).
 			cancelActiveAbilityFromInput()
@@ -1963,8 +2063,9 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 		end
 
 		holdingLocally = true
-		markAbilityStarted()
+		startRequestPending = true
 		service:RequestStart():andThen(function(ok: boolean, _reason: string?)
+			startRequestPending = false
 			if ok then
 				abilityActive = true
 				markAbilityStarted()
@@ -2010,7 +2111,12 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 				holdingLocally = false
 				abilityStartedAt = nil
 			end
-		end):catch(warn)
+		end):catch(function(err)
+			startRequestPending = false
+			holdingLocally = false
+			abilityStartedAt = nil
+			warn(err)
+		end)
 
 		return Enum.ContextActionResult.Sink
 	end
@@ -2141,6 +2247,7 @@ function DoubleJumpController:KnitStart()
 	end)
 
 	player.CharacterAdded:Connect(function(character)
+		resetTouchControlsCache()
 		if abilityActive or player:GetAttribute(PHASE_ATTR) then
 			onAbilityEnded()
 		end
@@ -2152,7 +2259,7 @@ function DoubleJumpController:KnitStart()
 		setupCharacter(player.Character)
 	end
 
-	print("[iseesupes] DoubleJumpController ready.")
+	StudioLog.ready("DoubleJumpController")
 end
 
 return DoubleJumpController

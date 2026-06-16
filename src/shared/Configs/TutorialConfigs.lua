@@ -50,16 +50,21 @@ local TutorialConfigs = {
 
 	TreadmillsFolderName = TreadmillConfigs.World.TreadmillsFolderName,
 
+	--- Foot-beam path guide (treadmill → wins → upgrade → stage). Off when hidden in Studio.
+	FootBeam = {
+		Enabled = true,
+	},
+
 	Beam = {
 		Texture = "rbxassetid://115279166708864",
 		Color = Color3.fromRGB(206, 23, 6),
 		-- Wide racing-style chevrons along the floor path.
-		Width0 = 5,
-		Width1 = 6,
+		Width0 = 8,
+		Width1 = 10,
 		TextureLength = 14,
-		TextureSpeed = 2.5,
+		TextureSpeed = 3.5,
 		FaceCamera = false,
-		LightEmission = 0.75,
+		LightEmission = 0.95,
 		LightInfluence = 0,
 		Transparency = NumberSequence.new(0),
 		FootOffset = Vector3.new(0, -2.85, 0),
@@ -72,9 +77,8 @@ local TutorialConfigs = {
 
 	StepMessages = {
 		[1] = "Train on the treadmill to level up!",
-		[2] = "Claim wins here (get 3 total)!",
+		[2] = "Claim wins here to unlock your suit!",
 		[3] = "Unlock your first suit!",
-		[5] = "Head to Stage 1 — melt the wall with your laser!",
 	},
 
 	FlyIntro = {
@@ -87,13 +91,25 @@ local TutorialConfigs = {
 		ArrowBobPeriodSeconds = 0.65,
 		HeartbeatPeakScale = 1.14,
 		HeartbeatPeriodSeconds = 0.9,
-		LabelPC = "Press E to Fly",
-		LabelMobile = "Press Supes to Fly",
-		LabelGamepad = "Press Y to Fly",
+		LabelPC = "Tap E to Fly",
+		LabelMobile = "Tap Supes to Fly",
+		LabelGamepad = "Tap Y to Fly",
+	},
+
+	--- Stage 1 fly lesson only (GoStage1, before TutorialFlyIntroShown).
+	FlightAssist = {
+		Enabled = true,
+		AttributeName = "TutorialFlightAssist",
+		RelaxRequiresHold = true,
+		InfiniteThrust = true,
+		SkipHardGroundEnd = true,
+		MaxAbilityDuration = 45,
+		LeanUpMaxDuration = 12,
+		RefillThrustOnStepEnter = true,
 	},
 
 	LaserIntro = {
-		Enabled = true,
+		Enabled = false,
 		--- Studio layout under StarterGui (cloned to PlayerGui). Script only enables/disables.
 		ScreenGuiName = "TutorialLaserHintGui",
 		CalloutName = "FlyCallout",
@@ -121,7 +137,7 @@ local TutorialConfigs = {
 		Enabled = true,
 		ToastMessage = "Behind you: Upgrade Shop — spend wins later to boost thrust!",
 		BeamBillboardMessage = "Upgrade thrust here!",
-		BeamDurationSeconds = 10,
+		BeamDurationSeconds = 0,
 		CameraHoldSeconds = 1.2,
 		CameraTweenSeconds = 0.8,
 		GroundedWaitTimeoutSeconds = 5,
@@ -130,9 +146,8 @@ local TutorialConfigs = {
 		HighlightFillTransparency = 0.5,
 		HighlightOutlineTransparency = 0.2,
 		PurchaseHintToast = "You have enough wins — upgrade thrust at the shop behind spawn!",
-		PurchaseHintBeamSeconds = 5,
-		--- Recurring reminder beam whenever the next thrust pack becomes affordable.
-		AffordableBeamSeconds = 12,
+		PurchaseHintBeamSeconds = 0,
+		AffordableBeamSeconds = 0,
 	},
 }
 

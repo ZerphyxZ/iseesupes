@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local GodSpeedAuraConfigs = require(ReplicatedStorage.Shared.Configs.GodSpeedAuraConfigs)
@@ -87,7 +88,7 @@ function SpeedService:KnitStart()
 		lastAddAt[player] = nil
 	end)
 
-	print("[iseesupes] SpeedService ready.")
+	StudioLog.ready("SpeedService")
 end
 
 return SpeedService

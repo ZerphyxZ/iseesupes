@@ -8,6 +8,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
@@ -70,6 +71,15 @@ function GamepassShopController:KnitStart()
 			continue
 		end
 
+		if key == "DoubleSpeed" then
+			local desc = card:FindFirstChild("Description", true)
+				or card:FindFirstChild("Subtitle", true)
+			if desc and desc:IsA("TextLabel") then
+				desc.Text =
+					"2x Speed XP while running & on treadmills (Does not instantly add levels — buy Speed Packs for +XP)"
+			end
+		end
+
 		local pass = ProductConfigs.GetGamepassByKey(key)
 		local buy = card:FindFirstChild("BuyButton") :: TextButton?
 		local price = buy and buy:FindFirstChild("Price") :: TextLabel?
@@ -130,7 +140,7 @@ function GamepassShopController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] GamepassShopController ready.")
+	StudioLog.ready("GamepassShopController")
 end
 
 return GamepassShopController

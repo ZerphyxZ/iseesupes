@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -237,6 +238,19 @@ function SuperJumpService:_endAbility(player: Player)
 	self.Client.AbilityEnded:Fire(player)
 end
 
+function SuperJumpService:HasActiveSession(player: Player): boolean
+	return sessions[player] ~= nil
+end
+
+--- Ends active super jump before lobby teleport / profile reset.
+function SuperJumpService:ForceEndForLobby(player: Player)
+	if sessions[player] then
+		self:_endAbility(player)
+	else
+		player:SetAttribute(PHASE_ATTR, nil)
+	end
+end
+
 function SuperJumpService:_tickSession(session: SuperJumpSession, dt: number)
 	local character = session.character
 	if not character.Parent then
@@ -397,9 +411,7 @@ function SuperJumpService:_tryStart(player: Player): (boolean, string?)
 	local level = SpeedConfigs.GetPlayerLevel(player)
 	cooldownEndsAt[player] = os.clock() + SpeedConfigs.GetSuperJumpCooldown(level)
 
-	if RunService:IsStudio() then
-		print("[iseesupes] Super Jump using server tuning:", LevelDesignTuning.formatActiveTuning(player))
-	end
+	StudioLog.print("LevelDesign", "[iseesupes] Super Jump using server tuning:", LevelDesignTuning.formatActiveTuning(player))
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -476,6 +488,12 @@ function SuperJumpService:KnitStart()
 				SuperJumpService:_endAbility(player)
 			end
 		end
+
+		for _, player in Players:GetPlayers() do
+			if not sessions[player] and player:GetAttribute(PHASE_ATTR) ~= nil then
+				player:SetAttribute(PHASE_ATTR, nil)
+			end
+		end
 	end)
 
 	Players.PlayerRemoving:Connect(function(player)
@@ -501,7 +519,7 @@ function SuperJumpService:KnitStart()
 		end)
 	end
 
-	print("[iseesupes] SuperJumpService ready.")
+	StudioLog.ready("SuperJumpService")
 end
 
 return SuperJumpService

@@ -5,6 +5,7 @@
 -- Reuses the FriendStand showcase pipeline (FriendStandDisplay).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -183,7 +184,7 @@ function LeaderboardStandController:KnitStart()
 
 	startStandResolveLoop()
 
-	print("[iseesupes] LeaderboardStandController ready.")
+	StudioLog.ready("LeaderboardStandController")
 end
 
 return LeaderboardStandController

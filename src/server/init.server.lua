@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local PhysicsService = game:GetService("PhysicsService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local function loadFolder(folder: Instance?)
 	if not folder then
@@ -70,7 +71,7 @@ loadFolder(script:FindFirstChild("GameServices"))
 
 Knit.Start()
 	:andThen(function()
-		print("[iseesupes] Server started.")
+		StudioLog.print("ReadyMessages", "[iseesupes] Server started.")
 	end)
 	:catch(function(err)
 		warn("[iseesupes] Server Knit failed:", tostring(err))

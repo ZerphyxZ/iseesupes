@@ -4,14 +4,18 @@ local CollectionService = game:GetService("CollectionService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local TreadmillConfigs = require(ReplicatedStorage.Shared.Configs.TreadmillConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
+local StageCheckpointProgress = require(ReplicatedStorage.Shared.Utils.StageCheckpointProgress)
+local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
 
 type TreadmillTier = TreadmillConfigs.TreadmillTier
 
@@ -25,6 +29,8 @@ local TreadmillService = Knit.CreateService({
 	Client = {
 		ActiveTreadmillChanged = Knit.CreateSignal(),
 		AccessDenied = Knit.CreateSignal(),
+		KillPartRagdoll = Knit.CreateSignal(),
+		HazardHit = Knit.CreateSignal(),
 	},
 })
 
@@ -87,7 +93,10 @@ local function resolveWorldInstances()
 		return
 	end
 
+	-- Recursive fallback so the folder still resolves if it gets nested (e.g. dragged
+	-- into Lobby in the Explorer) instead of sitting directly under Map.
 	local folder = map:FindFirstChild(WorldCfg.TreadmillsFolderName)
+		or map:FindFirstChild(WorldCfg.TreadmillsFolderName, true)
 	if folder and folder:IsA("Folder") then
 		treadmillsFolder = folder
 	else
@@ -574,6 +583,42 @@ local function getKillSpawnCFrame(): CFrame?
 	return nil
 end
 
+-- Kill-floor respawn point: the player's CURRENT stage checkpoint, so a mistake sends
+-- them back to the start of the stage they were on instead of all the way to the lobby.
+-- Returns nil for fresh players (stage 0) → caller falls back to the lobby spawn.
+local function getStageCheckpointCFrame(player: Player, hazardPart: BasePart?): CFrame?
+	-- The stage the player physically died in, from the kill part's Stage<N> ancestor.
+	-- This beats their PROGRESS stage, which runs ahead (it advances when you claim a
+	-- stage's button) and would teleport a stage-5 death up to stage 6.
+	local stage: number? = nil
+	if hazardPart then
+		stage = StageCheckpointWorld.resolveStageFromAncestor(hazardPart)
+	end
+	if (not stage or stage < 1) and DataService then
+		local profile = DataService:GetProfile(player)
+		if profile then
+			stage = StageCheckpointProgress.getEffectiveStage(profile.Data)
+		end
+	end
+	if not stage or stage < 1 then
+		return nil
+	end
+	local folder = MapWorld.findChildInMap("StageCheckpoints")
+	if not folder then
+		return nil
+	end
+	local stageEntry = folder:FindFirstChild(tostring(stage))
+	if not (stageEntry and stageEntry:IsA("BasePart")) then
+		return nil
+	end
+	-- Prefer the dedicated Spawn pad inside the checkpoint; else land above the marker.
+	local spawnPart = stageEntry:FindFirstChild("Spawn")
+	if spawnPart and spawnPart:IsA("BasePart") then
+		return CFrame.new(spawnPart.Position + Vector3.new(0, spawnPart.Size.Y * 0.5 + 3, 0))
+	end
+	return CFrame.new(stageEntry.Position + Vector3.new(0, 5, 0))
+end
+
 local function getCharacterFromKillHit(hit: BasePart): Model?
 	local parent = hit.Parent
 	if parent and parent:IsA("Model") and parent:FindFirstChildOfClass("Humanoid") then
@@ -582,42 +627,16 @@ local function getCharacterFromKillHit(hit: BasePart): Model?
 	return hit:FindFirstAncestorOfClass("Model")
 end
 
-local function applyKillRagdoll(character: Model)
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid or humanoid.Health <= 0 then
-		return
-	end
-
-	humanoid.AutoRotate = false
-	humanoid.PlatformStand = true
-	pcall(function()
-		humanoid:ChangeState(Enum.HumanoidStateType.Ragdoll)
-	end)
-	pcall(function()
-		humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-	end)
-
-	for _, desc in character:GetDescendants() do
-		if desc:IsA("Motor6D") then
-			desc.Enabled = false
-		end
-	end
-end
-
-function TreadmillService:RespawnFromKillPart(player: Player)
-	if not player.Parent then
-		return
-	end
-
-	-- End any active flight/jump session BEFORE LoadCharacter so the session is
-	-- properly cleaned up (PHASE_ATTR cleared, AbilityEnded fired). Without this,
-	-- the kill ragdoll never triggers Humanoid.Died (Health > 0) and the stale
-	-- DJ session leaks into the new respawned character → prone/crying pose.
+local function endActiveAbilitiesForKill(player: Player)
 	if DoubleJumpService and DoubleJumpService._endAbility then
-		pcall(function() DoubleJumpService:_endAbility(player) end)
+		pcall(function()
+			DoubleJumpService:_endAbility(player)
+		end)
 	end
 	if SuperJumpService and SuperJumpService._endAbility then
-		pcall(function() SuperJumpService:_endAbility(player) end)
+		pcall(function()
+			SuperJumpService:_endAbility(player)
+		end)
 	end
 	pcall(function()
 		local hv = Knit.GetService("HeatVisionService")
@@ -625,6 +644,58 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 			hv:ForceEndForLobby(player)
 		end
 	end)
+	player:SetAttribute(CharacterConfigs.LongJump.ArcActiveAttribute or "LongJumpArcActive", nil)
+end
+
+local function getObstacleHitOptions(): CharacterStance.ObstacleHitOptions
+	return {
+		knockbackHorizontal = KillPartConfigs.KnockbackHorizontal or 80,
+		knockbackVertical = KillPartConfigs.KnockbackVertical or 30,
+	}
+end
+
+local function isHazardTagged(instance: Instance): boolean
+	if CollectionService:HasTag(instance, KillPartConfigs.Tag) then
+		return true
+	end
+	local obstacleTag = KillPartConfigs.ObstacleTag
+	if type(obstacleTag) == "string" and obstacleTag ~= "" and CollectionService:HasTag(instance, obstacleTag) then
+		return true
+	end
+	return false
+end
+
+local function isHazardPart(part: Instance?): boolean
+	if not part then
+		return false
+	end
+	if part:IsA("BasePart") and isHazardTagged(part) then
+		return true
+	end
+	local model = part:FindFirstAncestorOfClass("Model")
+	if model and isHazardTagged(model) then
+		return true
+	end
+	return false
+end
+
+local function resolveHazardSourcePart(hazardPart: BasePart?): BasePart?
+	if hazardPart and hazardPart:IsA("BasePart") and isHazardPart(hazardPart) then
+		return hazardPart
+	end
+	return nil
+end
+
+local function applyHazardHit(character: Model, hazardPart: BasePart?)
+	CharacterStance.applyObstacleStyleHit(character, hazardPart, getObstacleHitOptions())
+end
+
+function TreadmillService:RespawnFromKillPart(player: Player, hazardPart: BasePart?)
+	if not player.Parent then
+		return
+	end
+
+	endActiveAbilitiesForKill(player)
 	player:SetAttribute("ForceStandUp", true)
 	task.delay(0.2, function()
 		if player.Parent then
@@ -640,7 +711,9 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 	end
 
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local spawnCf = getKillSpawnCFrame()
+	-- Respawn at the checkpoint of the stage the player physically died in (less punishing
+	-- than a full trek back from the lobby); fresh players / missing checkpoints → lobby.
+	local spawnCf = getStageCheckpointCFrame(player, hazardPart) or getKillSpawnCFrame()
 	if spawnCf then
 		local upright = CharacterStance.buildUprightCFrame(root, spawnCf)
 		CharacterStance.resetToStanding(character, upright)
@@ -663,21 +736,39 @@ function TreadmillService:RespawnFromKillPart(player: Player)
 	end)
 end
 
-local function onKillPartPlayerKilled(player: Player, character: Model)
+function TreadmillService:ProcessHazardDeath(player: Player, hazardPart: BasePart?, fromClientReport: boolean?)
+	local character = player.Character
+	if not character then
+		return
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
 	local now = os.clock()
 	if (killCooldownUntil[player] or 0) > now then
 		return
 	end
 	killCooldownUntil[player] = now + KillPartConfigs.TouchDebounce
 
-	applyKillRagdoll(character)
+	endActiveAbilitiesForKill(player)
+	if fromClientReport then
+		TreadmillService.Client.HazardHit:Fire(player, hazardPart)
+	else
+		applyHazardHit(character, hazardPart)
+	end
 
 	task.delay(KillPartConfigs.RagdollDuration, function()
 		if not player.Parent then
 			return
 		end
-		TreadmillService:RespawnFromKillPart(player)
+		TreadmillService:RespawnFromKillPart(player, hazardPart)
 	end)
+end
+
+local function onKillPartPlayerKilled(player: Player, _character: Model, hazardPart: BasePart?, fromClientReport: boolean?)
+	TreadmillService:ProcessHazardDeath(player, hazardPart, fromClientReport)
 end
 
 local function onKillPartTouched(killPart: BasePart, hit: BasePart)
@@ -703,7 +794,23 @@ local function onKillPartTouched(killPart: BasePart, hit: BasePart)
 		return
 	end
 
-	onKillPartPlayerKilled(player, character)
+	onKillPartPlayerKilled(player, character, killPart)
+end
+
+function TreadmillService.Client:ReportKillPartHit(player: Player, hazardPart: BasePart?)
+	local character = player.Character
+	if not character then
+		return
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+	local sourcePart = resolveHazardSourcePart(hazardPart)
+	if not sourcePart then
+		return
+	end
+	onKillPartPlayerKilled(player, character, sourcePart, true)
 end
 
 local function bindKillPartPart(part: BasePart)
@@ -762,13 +869,19 @@ local function unbindKillPart(instance: Instance)
 end
 
 local function initKillParts()
-	local tag = KillPartConfigs.Tag
-	for _, instance in CollectionService:GetTagged(tag) do
-		bindKillPart(instance)
+	local tags: { string } = { KillPartConfigs.Tag }
+	local obstacleTag = KillPartConfigs.ObstacleTag
+	if type(obstacleTag) == "string" and obstacleTag ~= "" and obstacleTag ~= KillPartConfigs.Tag then
+		table.insert(tags, obstacleTag)
 	end
 
-	CollectionService:GetInstanceAddedSignal(tag):Connect(bindKillPart)
-	CollectionService:GetInstanceRemovedSignal(tag):Connect(unbindKillPart)
+	for _, tag in tags do
+		for _, instance in CollectionService:GetTagged(tag) do
+			bindKillPart(instance)
+		end
+		CollectionService:GetInstanceAddedSignal(tag):Connect(bindKillPart)
+		CollectionService:GetInstanceRemovedSignal(tag):Connect(unbindKillPart)
+	end
 end
 
 function TreadmillService:KnitStart()
@@ -791,7 +904,7 @@ function TreadmillService:KnitStart()
 		debugMissLastAt[player] = nil
 	end)
 
-	print("[iseesupes] TreadmillService ready. KillPart tag:", KillPartConfigs.Tag)
+	StudioLog.ready("TreadmillService", "Hazard tags: " .. KillPartConfigs.Tag .. " " .. (KillPartConfigs.ObstacleTag or ""))
 end
 
 return TreadmillService

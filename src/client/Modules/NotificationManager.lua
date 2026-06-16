@@ -4,6 +4,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Signal = require(ReplicatedStorage.Packages.Signal)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 export type NotificationKind = "Success" | "Error" | "Info"
 
@@ -13,7 +14,7 @@ NotificationManager.OnShow = Signal.new()
 
 function NotificationManager.show(message: string, kind: string?)
 	NotificationManager.OnShow:Fire(message, kind or "Info")
-	print("[iseesupes][Notification]", kind or "Info", message)
+	StudioLog.print("Notifications", "[iseesupes][Notification]", kind or "Info", message)
 end
 
 return NotificationManager

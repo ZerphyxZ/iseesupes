@@ -6,6 +6,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AuraShopConfigs = require(ReplicatedStorage.Shared.Configs.AuraShopConfigs)
@@ -22,9 +23,9 @@ local touchConns: { RBXScriptConnection } = {}
 local boundTouches: { [BasePart]: boolean } = {}
 local lastTouchAt = 0
 local pendingAuraMorphSnap = false
-local currentData: any = nil
-
-local DJ_PHASE_ATTR = "DjAbilityPhase"
+local lastBindingCount = 0
+local boundFingerprint = ""
+local bindingsLocked = false
 
 local function disconnectAll()
 	for _, conn in touchConns do
@@ -34,8 +35,17 @@ local function disconnectAll()
 	table.clear(boundTouches)
 end
 
+local function bindingsFingerprint(bindings: { AuraShopWorld.TouchBinding }): string
+	local parts: { string } = {}
+	for _, binding in bindings do
+		table.insert(parts, binding.touch:GetFullName())
+	end
+	table.sort(parts)
+	return table.concat(parts, "|")
+end
+
 local function promptPurchase(productId: number, displayName: string)
-	print("[iseesupes][AuraShop][Client] PromptProductPurchase", displayName, "id=", productId)
+	StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] PromptProductPurchase", displayName, "id=", productId)
 	if productId == 0 then
 		NotificationManager.show(displayName .. " is not configured yet.", "Error")
 		return
@@ -48,7 +58,7 @@ local function promptPurchase(productId: number, displayName: string)
 		warn("[iseesupes][AuraShop][Client] PromptProductPurchase failed:", displayName, err)
 		NotificationManager.show("Could not open purchase window.", "Error")
 	else
-		print("[iseesupes][AuraShop][Client] prompt opened OK")
+		StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] prompt opened OK")
 	end
 end
 
@@ -88,9 +98,8 @@ local function bindTouchClient(touch: BasePart, host: Model, offer: AuraShopConf
 			end
 			lastTouchAt = now
 
-			-- If already owned → equip instead of prompting purchase.
 			if localPlayerOwnsAura(offer.Key) then
-				print("[iseesupes][AuraShop][Client] touch (owned) → equipping", offer.Key)
+				StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] touch (owned) → equipping", offer.Key)
 				local AuraShopService = Knit.GetService("AuraShopService")
 				pendingAuraMorphSnap = true
 				task.spawn(function()
@@ -101,31 +110,50 @@ local function bindTouchClient(touch: BasePart, host: Model, offer: AuraShopConf
 			end
 
 			local productId = AuraShopWorld.resolveProductId(host, offer)
-			print("[iseesupes][AuraShop][Client] touch", offer.Key, "productId=", productId)
+			StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] touch", offer.Key, "productId=", productId)
 			promptPurchase(productId, offer.DisplayName)
 		end)
 	)
 
-	print("[iseesupes][AuraShop][Client] bound", offer.DisplayName, "→", touch:GetFullName())
+	StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] bound", offer.DisplayName, "→", touch:GetFullName())
 end
 
-local function scanAndBindClient(): number
-	disconnectAll()
+local function scanAndBindClient(force: boolean?): number
 	AuraShopWorld.stampConfiguredTouches()
+	local bindings = AuraShopWorld.collectTouchBindings({ warnIfMissing = force == true })
+	local fingerprint = bindingsFingerprint(bindings)
 
-	local bindings = AuraShopWorld.collectTouchBindings()
+	if not force and bindingsLocked and #bindings > 0 and fingerprint == boundFingerprint then
+		return lastBindingCount
+	end
+
+	if not force and lastBindingCount > 0 and #bindings == 0 then
+		return lastBindingCount
+	end
+
+	if not force and #bindings > 0 and fingerprint == boundFingerprint then
+		return lastBindingCount
+	end
+
+	disconnectAll()
 	for _, binding in bindings do
 		bindTouchClient(binding.touch, binding.host, binding.offer)
 	end
 
-	print("[iseesupes][AuraShop][Client] scan found", #bindings, "binding(s)")
-	if #bindings == 0 then
+	lastBindingCount = #bindings
+	boundFingerprint = fingerprint
+	if lastBindingCount > 0 then
+		bindingsLocked = true
+	end
+
+	StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] scan found", lastBindingCount, "binding(s)")
+	if lastBindingCount == 0 then
 		warn(
 			"[iseesupes][AuraShop][Client] no bindings — ensure models exist:",
 			"StarterCharacterAura, StarterCharacterAura2 with Decor/Touch under AvatarsShowcase"
 		)
 	end
-	return #bindings
+	return lastBindingCount
 end
 
 local function resetSteerAfterMorph()
@@ -138,8 +166,6 @@ local function resetSteerAfterMorph()
 end
 
 local function snapCameraAfterMorph()
-	-- Snap multiple times to defeat all timing edge cases (DjAbilityPhase still set,
-	-- humanoid not yet ready, etc). Each call is cheap (just sets CameraSubject + CFrame).
 	task.spawn(AvatarReplace.waitAndSnapLocalCamera, 4)
 	task.delay(0.3, function()
 		task.spawn(AvatarReplace.waitAndSnapLocalCamera, 4)
@@ -158,10 +184,8 @@ local function maybeSnapCameraAfterMorph()
 end
 
 function AuraShopController:KnitStart()
-	print("[iseesupes][AuraShop][Client] KnitStart")
+	StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] KnitStart")
 
-	-- After any character swap (aura morph → replacePlayerCharacter fires CharacterAdded):
-	-- re-bind the camera and refresh the cape rig so it follows the new skeleton.
 	player.CharacterAdded:Connect(function(character)
 		resetSteerAfterMorph()
 		maybeSnapCameraAfterMorph()
@@ -172,7 +196,7 @@ function AuraShopController:KnitStart()
 
 	local AuraShopService = Knit.GetService("AuraShopService")
 	AuraShopService.RequestProductPrompt:Connect(function(productId: number, displayName: string)
-		print("[iseesupes][AuraShop][Client] server requested prompt", displayName)
+		StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] server requested prompt", displayName)
 		promptPurchase(productId, displayName)
 	end)
 
@@ -197,12 +221,12 @@ function AuraShopController:KnitStart()
 
 	task.spawn(function()
 		for attempt = 1, 30 do
-			local count = scanAndBindClient()
+			local count = scanAndBindClient(attempt == 30)
 			if count > 0 then
 				break
 			end
-			if attempt == 1 or attempt % 5 == 0 then
-				print("[iseesupes][AuraShop][Client] retry scan attempt", attempt)
+			if StudioLog.isEnabled("AuraShop") and (attempt == 1 or attempt % 5 == 0) then
+				StudioLog.print("AuraShop", "[iseesupes][AuraShop][Client] retry scan attempt", attempt)
 			end
 			task.wait(2)
 		end
@@ -211,13 +235,20 @@ function AuraShopController:KnitStart()
 	local showcase = AuraShopWorld.getShowcaseFolder()
 	if showcase then
 		showcase.DescendantAdded:Connect(function(desc)
+			if bindingsLocked then
+				return
+			end
 			if desc.Name == AuraShopConfigs.TouchPartName and desc:IsA("BasePart") then
-				task.defer(scanAndBindClient)
+				task.defer(function()
+					if not bindingsLocked then
+						scanAndBindClient(false)
+					end
+				end)
 			end
 		end)
 	end
 
-	print("[iseesupes] AuraShopController ready.")
+	StudioLog.ready("AuraShopController")
 end
 
 return AuraShopController

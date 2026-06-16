@@ -14,6 +14,9 @@ local SkipStageService = Knit.CreateService({
 	Name = "SkipStageService",
 	Client = {
 		StageChanged = Knit.CreateSignal(), -- (newStage: number)
+		-- (targetPos: Vector3) fired just before a skip teleport so the client can
+		-- pre-stream the destination before the player is moved there.
+		PrepareTeleport = Knit.CreateSignal(),
 	},
 })
 
@@ -26,15 +29,18 @@ local TOUCH_DEBOUNCE = 2
 local LANDING_CLEARANCE = 3
 -- If no Spawn part is found, fall back to this Y offset above the checkpoint part.
 local FALLBACK_Y_OFFSET = 5
+-- Pause this long after asking the client to pre-stream the destination before we
+-- actually move them, giving the landing area a head start to stream in.
+local STREAM_PREP_DELAY = 0.3
 
 local DataService: any = nil
 local FunnelAnalyticsService: any = nil
 local StageCheckpointService: any = nil
 local touchTimes: { [number]: number } = {}
 
-local function notifyMaxStageReached(player: Player, newMaxStage: number)
+local function notifyMaxStageReached(player: Player, newMaxStage: number, source: string)
 	if FunnelAnalyticsService and FunnelAnalyticsService.recordStageReached then
-		FunnelAnalyticsService:recordStageReached(player, newMaxStage)
+		FunnelAnalyticsService:recordStageReached(player, newMaxStage, source)
 	end
 end
 
@@ -100,9 +106,30 @@ function SkipStageService:TeleportToStage(player: Player, stage: number): boolea
 		landingPosition = checkPart.Position + Vector3.new(0, FALLBACK_Y_OFFSET, 0)
 		warn("[SkipStageService] No Spawn part inside stage", stage, "— using checkpoint fallback")
 	end
-	hrp.CFrame = CFrame.new(landingPosition)
-	hrp.AssemblyLinearVelocity = Vector3.zero
-	hrp.AssemblyAngularVelocity = Vector3.zero
+
+	-- Pre-stream the destination on the client BEFORE moving them there, so this paid
+	-- teleport never drops the player into un-streamed space (falling / empty ocean).
+	SkipStageService.Client.PrepareTeleport:Fire(player, landingPosition)
+	if STREAM_PREP_DELAY > 0 then
+		task.wait(STREAM_PREP_DELAY)
+	end
+
+	-- Re-validate after the yield (the character may have respawned or left).
+	local char2 = player.Character
+	local hrp2 = char2 and char2:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp2 then
+		return false
+	end
+	local humanoid2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+	if humanoid2 then
+		humanoid2.PlatformStand = false
+		humanoid2.Sit = false
+		humanoid2:ChangeState(Enum.HumanoidStateType.Running)
+	end
+
+	hrp2.CFrame = CFrame.new(landingPosition)
+	hrp2.AssemblyLinearVelocity = Vector3.zero
+	hrp2.AssemblyAngularVelocity = Vector3.zero
 
 	local profile = DataService:GetProfile(player)
 	if profile then
@@ -113,7 +140,7 @@ function SkipStageService:TeleportToStage(player: Player, stage: number): boolea
 		local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
 		if stage > maxStage then
 			profile.Data.MaxStage = stage
-			notifyMaxStageReached(player, stage)
+			notifyMaxStageReached(player, stage, "skip_teleport")
 		end
 		DataService:Replicate(player)
 	end
@@ -171,7 +198,7 @@ function SkipStageService:AdvanceStageForPlayer(player: Player, stageNum: number
 	local maxStage = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
 	if stageNum > maxStage then
 		profile.Data.MaxStage = stageNum
-		notifyMaxStageReached(player, stageNum)
+		notifyMaxStageReached(player, stageNum, "stage_advance")
 	end
 	DataService:Replicate(player)
 	SkipStageService.Client.StageChanged:Fire(player, stageNum)
@@ -212,7 +239,11 @@ local function connectCheckpointTouches()
 		end
 	end
 
-	print("[SkipStageService]", gateCount, "stage gate part(s) — unlock with heat vision (F) only, not touch")
+	print(
+		"[SkipStageService]",
+		gateCount,
+		"stage gate marker(s) — melt via heat vision; StageProgress funnel also counts gate proximity (walk/fly-through)"
+	)
 end
 
 --- Print a live funnel showing how many players in this server have reached each stage.
@@ -221,7 +252,10 @@ function SkipStageService:PrintFunnel()
 	for _, player in Players:GetPlayers() do
 		local profile = DataService and DataService:GetProfile(player)
 		if profile then
-			local max = type(profile.Data.MaxStage) == "number" and profile.Data.MaxStage or 0
+			local data = profile.Data
+			local max = type(data.MaxStage) == "number" and data.MaxStage or 0
+			local visitLogged = type(data.AnalyticsMaxStageLogged) == "number" and data.AnalyticsMaxStageLogged or 0
+			max = math.max(max, visitLogged)
 			counts[max] = (counts[max] or 0) + 1
 		end
 	end

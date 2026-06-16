@@ -7,6 +7,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 -- Only register this service in Studio
@@ -71,7 +72,7 @@ function DevResetService:KnitStart()
 		end)
 	end)
 
-	print("[iseesupes] DevResetService ready. Studio chat: /devreset or /devresetdata")
+	StudioLog.ready("DevResetService", "Studio chat: /devreset or /devresetdata")
 end
 
 return DevResetService

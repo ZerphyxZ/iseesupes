@@ -12,6 +12,8 @@ local Workspace = game:GetService("Workspace")
 local RNG = Random.new()
 
 local SupermanVfxConfigs = require(ReplicatedStorage.Shared.Configs.SupermanVfxConfigs)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
+local PerfWatch = require(ReplicatedStorage.Shared.Utils.PerfWatch)
 
 type BreakTier = SupermanVfxConfigs.BreakTier
 
@@ -27,6 +29,12 @@ local SupermanGroundVfx = {}
 local activeScorches: { Part } = {}
 local lastBreakAt: { [BreakTier]: number } = {}
 local landingVfxFolder: Folder? = nil
+local lastFloorRay: {
+	character: Model,
+	result: RaycastResult?,
+	at: number,
+	hrpPos: Vector3,
+}? = nil
 
 local function debugLog(...)
 	if SupermanVfxConfigs.Debug then
@@ -76,18 +84,26 @@ local function registerScorch(part: Part)
 	trimScorchPool()
 end
 
+local function tierCooldownKey(tier: BreakTier): string
+	if tier == "LongJumpLaunchAir" then
+		return "LongJumpLaunch"
+	end
+	return tier
+end
+
 local function canSpawnTier(tier: BreakTier): boolean
 	local cooldowns = SupermanVfxConfigs.Break.Cooldowns
-	local cooldown = cooldowns[tier]
+	local key = tierCooldownKey(tier)
+	local cooldown = cooldowns[key] or cooldowns[tier]
 	if not cooldown then
 		return true
 	end
 	local now = os.clock()
-	local last = lastBreakAt[tier] or 0
+	local last = lastBreakAt[key] or 0
 	if now - last < cooldown then
 		return false
 	end
-	lastBreakAt[tier] = now
+	lastBreakAt[key] = now
 	return true
 end
 
@@ -769,6 +785,9 @@ local function spawnSurfaceBreakAt(
 	character: Model?,
 	rayResult: RaycastResult?
 ): boolean
+	if ClientPerformance.shouldReduceSupermanVfx() then
+		return false
+	end
 	if not canSpawnTier(tier) then
 		debugLog("spawn blocked cooldown tier=", tier)
 		return false
@@ -827,18 +846,42 @@ function SupermanGroundVfx.spawnSurfaceBreak(tier: BreakTier, result: RaycastRes
 end
 
 function SupermanGroundVfx.spawnSurfaceBreakForCharacter(tier: BreakTier, character: Model): boolean
-	local hrp = character:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return false
-	end
+	return PerfWatch.measure("Vfx.spawnSurfaceBreakForCharacter", function(): boolean
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp or not hrp:IsA("BasePart") then
+			return false
+		end
 
-	local result = SupermanGroundVfx.raycastFloorFromCharacter(character, hrp)
-	if result then
-		return SupermanGroundVfx.spawnSurfaceBreak(tier, result, character)
-	end
+		local reuseCfg = SupermanVfxConfigs.Break.FloorRayReuse
+		local reuseSec = if reuseCfg and type(reuseCfg.Seconds) == "number" then reuseCfg.Seconds else 0.1
+		local reuseDist = if reuseCfg and type(reuseCfg.MaxHrpMoveStuds) == "number" then reuseCfg.MaxHrpMoveStuds else 4
 
-	local floorPos, normal = SupermanGroundVfx.getFootLaunchPosition(character, hrp)
-	return spawnSurfaceBreakAt(tier, floorPos, normal, character, nil)
+		local now = os.clock()
+		local cached = lastFloorRay
+		local result: RaycastResult?
+		if cached
+			and cached.character == character
+			and now - cached.at < reuseSec
+			and (hrp.Position - cached.hrpPos).Magnitude < reuseDist
+		then
+			result = cached.result
+		else
+			result = SupermanGroundVfx.raycastFloorFromCharacter(character, hrp)
+			lastFloorRay = {
+				character = character,
+				result = result,
+				at = now,
+				hrpPos = hrp.Position,
+			}
+		end
+
+		if result then
+			return SupermanGroundVfx.spawnSurfaceBreak(tier, result, character)
+		end
+
+		local floorPos, normal = SupermanGroundVfx.getFootLaunchPosition(character, hrp)
+		return spawnSurfaceBreakAt(tier, floorPos, normal, character, nil)
+	end)
 end
 
 function SupermanGroundVfx.spawnTakeoff(hrp: BasePart)

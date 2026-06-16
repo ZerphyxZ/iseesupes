@@ -6,6 +6,9 @@ local NotificationConfigs = {}
 
 export type NotificationKind = "Success" | "Error" | "Info"
 
+--- Min seconds between flight-cooldown toasts (spamming fly while on CD).
+CooldownToastDebounceSeconds = 10
+
 local function formatSeconds(seconds: number): string
 	local sec = math.max(0, seconds)
 	if sec >= 10 then

@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
+local StudioLog = require(script.Parent.StudioLog)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -308,7 +309,7 @@ function LevelDesignTuning.printStudioGuide(player: Player)
 		return
 	end
 	guidePrintedFor[player] = true
-	print(LevelDesignConfigs.StudioGuide)
+	StudioLog.print("LevelDesign", LevelDesignConfigs.StudioGuide)
 end
 
 function LevelDesignTuning.formatActiveTuning(player: Player): string
@@ -381,6 +382,8 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 		Cooldown = readNumberForPlayer(player, ATTR.Cooldown, LEGACY.Cooldown, BaseDj.Cooldown),
 		CancelCooldownGrace = BaseDj.CancelCooldownGrace,
 		CancelMinActiveTime = BaseDj.CancelMinActiveTime,
+		TakeoffGraceSeconds = BaseDj.TakeoffGraceSeconds,
+		TakeoffGroundBoost = BaseDj.TakeoffGroundBoost,
 		MaxAbilityDuration = maxAbilityDuration,
 		Debug = BaseDj.Debug,
 		AnimFolder = BaseDj.AnimFolder,
@@ -423,6 +426,9 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 				RiseSpeed = readNumberForPlayer(player, ATTR.RiseSpeed, LEGACY.RiseSpeed, BasePh.AfterTransition.RiseSpeed),
 				ForwardSpeed = readNumberForPlayer(player, ATTR.ForwardSpeed, LEGACY.ForwardSpeed, BasePh.AfterTransition.ForwardSpeed),
 				TargetHeightAboveStart = readNumberForPlayer(player, ATTR.TargetHeight, LEGACY.TargetHeight, BasePh.AfterTransition.TargetHeightAboveStart),
+				TakeoffMinHeightAboveStart = BasePh.AfterTransition.TakeoffMinHeightAboveStart,
+				TakeoffFailsafeDuration = BasePh.AfterTransition.TakeoffFailsafeDuration,
+				TakeoffFailsafeMinHeight = BasePh.AfterTransition.TakeoffFailsafeMinHeight,
 				MaxDuration = readNumberForPlayer(player, ATTR.AfterMaxDuration, LEGACY.AfterMaxDuration, BasePh.AfterTransition.MaxDuration),
 				MinDuration = readNumberForPlayer(player, ATTR.AfterMinDuration, LEGACY.AfterMinDuration, BasePh.AfterTransition.MinDuration),
 				RequiresHold = BasePh.AfterTransition.RequiresHold,
@@ -455,6 +461,7 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 				WalkableNormalMinY = BasePh.DownSupes.WalkableNormalMinY,
 				GroundProbeDistance = BasePh.DownSupes.GroundProbeDistance,
 				GroundClearanceTolerance = BasePh.DownSupes.GroundClearanceTolerance,
+				FlightNearGroundHeight = BasePh.DownSupes.FlightNearGroundHeight,
 				AirborneProbeDistance = BasePh.DownSupes.AirborneProbeDistance,
 				ObstacleProbeDistance = BasePh.DownSupes.ObstacleProbeDistance,
 				WallProbeDistance = BasePh.DownSupes.WallProbeDistance,

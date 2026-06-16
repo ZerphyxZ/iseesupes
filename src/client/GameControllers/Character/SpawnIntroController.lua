@@ -5,6 +5,7 @@
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -238,7 +239,7 @@ function SpawnIntroController:KnitStart()
 	player:GetAttributeChangedSignal("SpawnIntroPending"):Connect(onSpawnIntroPending)
 	onSpawnIntroPending()
 
-	print("[iseesupes] SpawnIntroController ready.")
+	StudioLog.ready("SpawnIntroController")
 end
 
 return SpawnIntroController

@@ -11,6 +11,13 @@ export type TouchBinding = {
 	offer: AuraShopConfigs.AuraOffer,
 }
 
+export type CollectOptions = {
+	warnIfMissing: boolean?,
+}
+
+local missingTouchWarned: { [string]: boolean } = {}
+local missingModelWarned: { [string]: boolean } = {}
+
 local AuraShopWorld = {}
 
 function AuraShopWorld.getShowcaseFolder(): Instance?
@@ -159,9 +166,10 @@ function AuraShopWorld.resolveOfferFromTouch(touch: BasePart): (AuraShopConfigs.
 	return nil, host
 end
 
-function AuraShopWorld.collectTouchBindings(): { TouchBinding }
+function AuraShopWorld.collectTouchBindings(options: CollectOptions?): { TouchBinding }
 	local bindings: { TouchBinding } = {}
 	local seen: { [BasePart]: boolean } = {}
+	local warnIfMissing = options and options.warnIfMissing == true
 
 	local function addBinding(touch: BasePart, host: Model, offer: AuraShopConfigs.AuraOffer)
 		if seen[touch] then
@@ -180,13 +188,21 @@ function AuraShopWorld.collectTouchBindings(): { TouchBinding }
 		if model then
 			local touches = AuraShopWorld.findTouchPartsDeep(model)
 			if #touches == 0 then
-				warn("[iseesupes][AuraShop] no Decor/Touch on", model:GetFullName())
+				local key = model:GetFullName()
+				if warnIfMissing and not missingTouchWarned[key] then
+					missingTouchWarned[key] = true
+					warn("[iseesupes][AuraShop] no Decor/Touch on", model:GetFullName())
+				end
 			end
 			for _, touch in touches do
 				addBinding(touch, model, offer)
 			end
 		else
-			warn("[iseesupes][AuraShop] model not found:", offer.ModelName, offer.DisplayName)
+			local key = offer.ModelName
+			if warnIfMissing and not missingModelWarned[key] then
+				missingModelWarned[key] = true
+				warn("[iseesupes][AuraShop] model not found:", offer.ModelName, offer.DisplayName)
+			end
 		end
 	end
 

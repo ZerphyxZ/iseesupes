@@ -3,6 +3,7 @@
 local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -492,7 +493,7 @@ function SuperJumpController:KnitStart()
 		setupCharacter(player.Character)
 	end
 
-	print("[iseesupes] SuperJumpController ready.")
+	StudioLog.ready("SuperJumpController")
 end
 
 return SuperJumpController

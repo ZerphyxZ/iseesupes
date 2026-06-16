@@ -11,9 +11,11 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
 
 local CapeAnimatorController = Knit.CreateController({ Name = "CapeAnimatorController" })
 
@@ -60,6 +62,7 @@ type CharState = {
 }
 
 local states: { [Model]: CharState } = {}
+local lastCapeTickAt = 0
 
 -- ── Cape discovery ────────────────────────────────────────────────────────────
 
@@ -234,6 +237,18 @@ function CapeAnimatorController:KnitStart()
 	end
 
 	RunService.Heartbeat:Connect(function(dt: number)
+		local interval = ClientPerformance.getCapeTickInterval()
+		if interval > 0 then
+			local now = os.clock()
+			if now - lastCapeTickAt < interval then
+				return
+			end
+			lastCapeTickAt = now
+			if interval > dt then
+				dt = interval
+			end
+		end
+
 		for character, cs in states do
 			if character.Parent then
 				local ok, err = pcall(tickCharacter, character, cs, dt)
@@ -247,7 +262,7 @@ function CapeAnimatorController:KnitStart()
 		end
 	end)
 
-	print("[iseesupes] CapeAnimatorController ready.")
+	StudioLog.ready("CapeAnimatorController")
 end
 
 return CapeAnimatorController

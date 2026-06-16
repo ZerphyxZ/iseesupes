@@ -8,6 +8,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
@@ -133,7 +134,7 @@ function SpawnIntroService:KnitStart()
 
 	local cfg = getCfg()
 	if not cfg or cfg.Enabled ~= true or cfg.OnFirstJoin ~= true then
-		print("[iseesupes] SpawnIntroService ready (first-join intro disabled).")
+		StudioLog.ready("SpawnIntroService", "(first-join intro disabled)")
 		return
 	end
 
@@ -155,7 +156,7 @@ function SpawnIntroService:KnitStart()
 		end)
 	end)
 
-	print("[iseesupes] SpawnIntroService ready.")
+	StudioLog.ready("SpawnIntroService")
 end
 
 return SpawnIntroService

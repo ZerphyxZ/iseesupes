@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local AuraShopConfigs = require(ReplicatedStorage.Shared.Configs.AuraShopConfigs)
@@ -82,19 +83,19 @@ local function bindTouch(touch: BasePart, offer: AuraShopConfigs.AuraOffer)
 			-- If player already owns this aura → equip it instead of prompting purchase.
 			local profile = DataService and DataService:GetProfile(player)
 			if profile and typeof(profile.Data.OwnedAuras) == "table" and profile.Data.OwnedAuras[offer.Key] == true then
-				print("[iseesupes][AuraShop][Server] touch (owned) → equipping", offer.Key, "for", player.Name)
+				StudioLog.print("AuraShop", "[iseesupes][AuraShop][Server] touch (owned) → equipping", offer.Key, "for", player.Name)
 				AuraShopService:EquipAura(player, offer.Key)
 				return
 			end
 
 			local host = touch:FindFirstAncestorOfClass("Model")
 			local productId = AuraShopWorld.resolveProductId(host or touch, offer)
-			print("[iseesupes][AuraShop][Server] touch", offer.Key, "productId=", productId, "→", player.Name)
+			StudioLog.print("AuraShop", "[iseesupes][AuraShop][Server] touch", offer.Key, "productId=", productId, "→", player.Name)
 			AuraShopService.Client.RequestProductPrompt:Fire(player, productId, offer.DisplayName)
 		end)
 	)
 
-	print("[iseesupes][AuraShop][Server] bound", offer.DisplayName, "→", touch:GetFullName())
+	StudioLog.print("AuraShop", "[iseesupes][AuraShop][Server] bound", offer.DisplayName, "→", touch:GetFullName())
 end
 
 function AuraShopService:ScanAndBindAll(): number
@@ -111,7 +112,7 @@ function AuraShopService:ScanAndBindAll(): number
 			"[iseesupes][AuraShop][Server] no Touch parts found — add StarterCharacterAura / StarterCharacterAura2 with Decor/Touch under AvatarsShowcase (or set ProductId on Touch)"
 		)
 	else
-		print("[iseesupes][AuraShop][Server] scan complete,", #bindings, "touch binding(s)")
+		StudioLog.print("AuraShop", "[iseesupes][AuraShop][Server] scan complete,", #bindings, "touch binding(s)")
 	end
 	return #bindings
 end
@@ -188,7 +189,7 @@ function AuraShopService:GrantAura(player: Player, key: string): boolean
 		end)
 	end
 
-	print("[iseesupes][AuraShop] granted", key, "to", player.Name)
+	StudioLog.print("Gameplay", "[iseesupes][AuraShop] granted", key, "to", player.Name)
 	return true
 end
 
@@ -283,7 +284,7 @@ function AuraShopService:EquipAura(player: Player, key: string): boolean
 		end)
 	end
 
-	print("[iseesupes][AuraShop] equipped", key, "for", player.Name)
+	StudioLog.print("Gameplay", "[iseesupes][AuraShop] equipped", key, "for", player.Name)
 	return true
 end
 
@@ -353,7 +354,7 @@ function AuraShopService:KnitStart()
 		equipMutex[player] = nil
 	end)
 
-	print("[iseesupes] AuraShopService ready.")
+	StudioLog.ready("AuraShopService")
 end
 
 return AuraShopService

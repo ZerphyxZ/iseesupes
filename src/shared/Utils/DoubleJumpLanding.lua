@@ -8,7 +8,7 @@ local DoubleJumpLanding = {}
 
 local DEFAULT_WALKABLE_NORMAL_MIN_Y = 0.6
 local DEFAULT_GROUND_PROBE_DISTANCE = 8
-local DEFAULT_CLEARANCE_TOLERANCE = 1.25
+local DEFAULT_CLEARANCE_TOLERANCE = 0.35
 local DEFAULT_AIRBORNE_PROBE_DISTANCE = 64
 local DEFAULT_OBSTACLE_PROBE_DISTANCE = 4
 local DEFAULT_WALL_PROBE_DISTANCE = 5
@@ -101,6 +101,14 @@ function DoubleJumpLanding.getMaxNearGroundClearance(humanoid: Humanoid, landing
 		tolerance = DEFAULT_CLEARANCE_TOLERANCE
 	end
 	return DoubleJumpLanding.getRootHeightOffset(humanoid, landingCfg) + tolerance
+end
+
+function DoubleJumpLanding.getFlightNearGroundHeight(landingCfg: { [string]: any }): number
+	local height = landingCfg.FlightNearGroundHeight
+	if typeof(height) == "number" and height > 0 then
+		return height
+	end
+	return 1.25
 end
 
 function DoubleJumpLanding.getWalkableGroundHit(
@@ -229,13 +237,13 @@ end
 
 -- Short down-ray for glide: enough for E_LandHt without full AirborneProbeDistance every frame.
 function DoubleJumpLanding.getGlideProbeDistance(humanoid: Humanoid, landingCfg: { [string]: any }): number
-	local triggerHeight = landingCfg.TriggerHeightAboveSurface or 6
+	local flightNear = DoubleJumpLanding.getFlightNearGroundHeight(landingCfg)
 	local hip = DoubleJumpLanding.getRootHeightOffset(humanoid, landingCfg)
 	local tolerance = landingCfg.GroundClearanceTolerance
 	if typeof(tolerance) ~= "number" then
 		tolerance = DEFAULT_CLEARANCE_TOLERANCE
 	end
-	local shortProbe = triggerHeight + hip + tolerance + 6
+	local shortProbe = flightNear + hip + tolerance + 2
 
 	local airProbe = landingCfg.AirborneProbeDistance
 	if typeof(airProbe) ~= "number" or airProbe <= 0 then
@@ -296,7 +304,7 @@ local function buildLandingProbeGround(
 	end
 
 	local walkableHit = DoubleJumpLanding.getWalkableGroundHit(root, rayParams, landingCfg, distance, options)
-	local triggerHeight = landingCfg.TriggerHeightAboveSurface or 6
+	local flightNearGround = DoubleJumpLanding.getFlightNearGroundHeight(landingCfg)
 	local onWalkableGround = false
 	local isNearFloor = false
 	local effectiveHeight: number? = nil
@@ -305,7 +313,7 @@ local function buildLandingProbeGround(
 		effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(walkableHit, root, humanoid, landingCfg)
 		local clearance = root.Position.Y - walkableHit.Position.Y
 		onWalkableGround = clearance <= DoubleJumpLanding.getMaxNearGroundClearance(humanoid, landingCfg)
-		isNearFloor = onWalkableGround or effectiveHeight <= triggerHeight + 1
+		isNearFloor = onWalkableGround or (effectiveHeight :: number) <= flightNearGround
 	end
 
 	return {
@@ -410,8 +418,7 @@ function DoubleJumpLanding.isNearWalkableSurface(
 	end
 
 	local effectiveHeight = DoubleJumpLanding.getEffectiveHeightAbove(hit, root, humanoid, landingCfg)
-	local triggerHeight = landingCfg.TriggerHeightAboveSurface or 6
-	return effectiveHeight <= triggerHeight + 1
+	return effectiveHeight <= DoubleJumpLanding.getFlightNearGroundHeight(landingCfg)
 end
 
 function DoubleJumpLanding.hasObstacleContact(

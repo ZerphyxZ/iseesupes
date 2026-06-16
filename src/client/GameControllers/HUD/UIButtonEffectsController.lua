@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local HudConfigs = require(ReplicatedStorage.Shared.Configs.HudConfigs)
@@ -101,7 +102,7 @@ function UIButtonEffectsController:KnitStart()
 		tryBindButton(desc)
 	end)
 
-	print("[iseesupes] UIButtonEffectsController ready.")
+	StudioLog.ready("UIButtonEffectsController")
 end
 
 return UIButtonEffectsController

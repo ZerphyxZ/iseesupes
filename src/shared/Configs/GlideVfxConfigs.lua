@@ -108,6 +108,7 @@ local GlideVfxConfigs = {
 			Fly = CFrame.Angles(math.rad(28), math.rad(14), math.rad(-50)),
 			Land = CFrame.Angles(math.rad(32), math.rad(10), math.rad(-35)),
 		},
+		--- Expensive on mobile; ClientPerformance disables at runtime on low-end devices.
 		EnableFluidForces = true,
 
 		--- Whole-cape tilt via Motor6D (UpperTorso → Cape); visible even when bone skinning is inert.

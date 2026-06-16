@@ -10,6 +10,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local TweenService = game:GetService("TweenService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -17,6 +18,7 @@ local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
+local UpgradeWinsConfigs = require(ReplicatedStorage.Shared.Configs.UpgradeWinsConfigs)
 
 local OnboardingController = Knit.CreateController({ Name = "OnboardingController" })
 
@@ -100,10 +102,17 @@ local function showSupermanHint(gui: ScreenGui)
 	stroke.Thickness = 1.5
 	stroke.Parent = frame
 
+	-- Read the real first-suit price so the hint can't drift from the configs/map.
+	local firstSuitCost = 5
+	local suitDefaults = UpgradeWinsConfigs.getDefaults(1)
+	if suitDefaults and type(suitDefaults.WinCost) == "number" then
+		firstSuitCost = suitDefaults.WinCost
+	end
+
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.new(1, -16, 1, 0)
 	label.Position = UDim2.new(0, 8, 0, 0)
-	label.Text = "🏆 Get 3 wins, then unlock Superman at Upgrade!"
+	label.Text = "🏆 Get " .. firstSuitCost .. " wins, then unlock Superman at Upgrade!"
 	label.TextColor3 = Color3.fromRGB(255, 230, 100)
 	label.Font = Enum.Font.GothamBold
 	label.TextScaled = true
@@ -114,7 +123,7 @@ local function showSupermanHint(gui: ScreenGui)
 	-- Dismiss when player has enough wins for UpgradeWins Button1
 	local winConn: RBXScriptConnection? = nil
 	winConn = DataLib.OnChanged(function(data: any)
-		if data and type(data.Wins) == "number" and data.Wins >= 3 then
+		if data and type(data.Wins) == "number" and data.Wins >= firstSuitCost then
 			if winConn then
 				winConn:Disconnect()
 				winConn = nil
@@ -235,12 +244,12 @@ function OnboardingController:KnitStart()
 		-- Retry loop: wait up to 3s for data to replicate before giving up
 		task.spawn(function()
 			for _ = 1, 6 do
-				if isNewPlayer() and isTutorialComplete() then
+				if isNewPlayer() and not isTutorialComplete() then
 					break
 				end
 				task.wait(0.5)
 			end
-			if not isNewPlayer() or not isTutorialComplete() then return end
+			if not isNewPlayer() or isTutorialComplete() then return end
 			hintsShown = true
 
 			-- Superman unlock hint (~4s)
@@ -267,12 +276,12 @@ function OnboardingController:KnitStart()
 		if playTime < 30 and wins == 0 and level <= 1 then
 			hintsShown = false
 		end
-		if not hintsShown and isTutorialComplete() and isNewPlayer() then
+		if not hintsShown and not isTutorialComplete() and isNewPlayer() then
 			triggerHints()
 		end
 	end)
 
-	print("[iseesupes] OnboardingController ready.")
+	StudioLog.ready("OnboardingController")
 end
 
 return OnboardingController

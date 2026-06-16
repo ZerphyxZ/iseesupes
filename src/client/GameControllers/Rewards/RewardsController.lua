@@ -7,6 +7,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local RewardConfigs = require(ReplicatedStorage.Shared.Configs.RewardConfigs)
@@ -198,7 +199,7 @@ function RewardsController:KnitStart()
 	end)
 
 	refreshSlots()
-	print("[iseesupes] RewardsController ready.")
+	StudioLog.ready("RewardsController")
 end
 
 return RewardsController

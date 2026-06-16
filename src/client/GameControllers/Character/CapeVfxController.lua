@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -293,7 +294,7 @@ function CapeVfxController:KnitStart()
 		heartbeatFallback()
 	end)
 
-	print("[iseesupes] CapeVfxController ready (cape Idle/Walk/Fly/Land + GlideTrail on E-flight).")
+	StudioLog.ready("CapeVfxController", "(cape Idle/Walk/Fly/Land + GlideTrail on E-flight)")
 end
 
 return CapeVfxController

@@ -6,11 +6,13 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local LevelDesignConfigs = require(ReplicatedStorage.Shared.Configs.LevelDesignConfigs)
 local CharacterMovementSpeed = require(ReplicatedStorage.Shared.Utils.CharacterMovementSpeed)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 
 local ZONE_ATTR = LevelDesignConfigs.ZoneMarkerAttribute
 local LEGACY_ZONE_ATTR = LevelDesignConfigs.LegacyZoneMarkerAttribute
@@ -67,8 +69,8 @@ local function onZoneTouched(part: BasePart, hit: BasePart)
 	if DataService then
 		CharacterMovementSpeed.applyToPlayer(player, DataService:GetData(player))
 	end
-	if RunService:IsStudio() then
-		print("[iseesupes] Zone tuning applied:", LevelDesignTuning.formatActiveTuning(player))
+	if StudioLog.isEnabled("LevelDesign") then
+		StudioLog.print("LevelDesign", "[iseesupes] Zone tuning applied:", LevelDesignTuning.formatActiveTuning(player))
 	end
 end
 
@@ -99,7 +101,7 @@ function LevelDesignService.Client:SyncAttribute(player: Player, attributeName: 
 		if DataService then
 			CharacterMovementSpeed.applyToPlayer(player, DataService:GetData(player))
 		end
-		print("[iseesupes] Tuning synced →", attributeName, "=", value, "|", LevelDesignTuning.formatActiveTuning(player))
+		StudioLog.print("LevelDesign", "[iseesupes] Tuning synced →", attributeName, "=", value, "|", LevelDesignTuning.formatActiveTuning(player))
 	end
 end
 
@@ -148,7 +150,7 @@ function LevelDesignService:KnitStart()
 		end
 	end
 
-	print("[iseesupes] LevelDesignService ready — Studio edits sync to server automatically.")
+	StudioLog.ready("LevelDesignService", "Studio edits sync to server automatically.")
 end
 
 return LevelDesignService

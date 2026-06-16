@@ -1,15 +1,17 @@
 --!strict
 
--- Foot beam tutorial: treadmill → GiveWins → UpgradeWins → thrust shop intro → Stage 1 → fly button.
+-- Tutorial hints: fly/laser callouts, thrust shop intro (foot beam optional via TutorialConfigs.FootBeam).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local DataLib = require(ReplicatedStorage.Shared.Utils.DataLib)
 local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
+local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local TutorialWorld = require(ReplicatedStorage.Shared.Utils.TutorialWorld)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local TutorialFlyHint = require(script.Parent.Parent.Parent.Modules.TutorialFlyHint)
@@ -44,6 +46,11 @@ local attachBeamToStage1Wall: () -> ()
 
 local STAGE1_GATE_NUM = 1
 
+local function isFootBeamEnabled(): boolean
+	local footBeam = TutorialConfigs.FootBeam
+	return footBeam ~= nil and footBeam.Enabled == true
+end
+
 local function isStage1HintActive(): boolean
 	return TutorialFlyHint.isActive() or TutorialLaserHint.isActive()
 end
@@ -56,15 +63,18 @@ local function getTutorialStep(data: any): number
 end
 
 local function isTutorialFullyComplete(data: any): boolean
-	if not data or data.TutorialFlyIntroShown ~= true then
+	if not data then
 		return false
 	end
 	return getTutorialStep(data) >= TutorialConfigs.Step.Complete
 end
 
---- Wall break is possible as soon as the treadmill step is done (Level 2 → ClaimWins step).
-local function hasReachedWallBreakStep(data: any): boolean
-	return getTutorialStep(data) >= TutorialConfigs.Step.ClaimWins
+local function shouldOfferStage1FlyLesson(data: any): boolean
+	if not data or data.TutorialFlyIntroShown == true then
+		return false
+	end
+	local step = getTutorialStep(data)
+	return step >= TutorialConfigs.Step.CoreDone and step < TutorialConfigs.Step.Complete
 end
 
 local function destroyBeamVisuals()
@@ -107,13 +117,6 @@ local function getHrp(): BasePart?
 	return nil
 end
 
-local function shouldOfferStage1FlyLesson(data: any): boolean
-	if not data or data.TutorialFlyIntroShown == true then
-		return false
-	end
-	return hasReachedWallBreakStep(data)
-end
-
 local function disconnectStage1Listeners()
 	for _, conn in stage1TouchConns do
 		conn:Disconnect()
@@ -125,7 +128,20 @@ local function disconnectStage1Listeners()
 	end
 end
 
+local function shouldUseLaserWallLesson(): boolean
+	if TutorialConfigs.LaserIntro.Enabled == false then
+		return false
+	end
+	if CharacterConfigs.Features.UseHeatVision == false then
+		return false
+	end
+	return true
+end
+
 local function isStage1WallUnbroken(): boolean
+	if not shouldUseLaserWallLesson() then
+		return false
+	end
 	local nextMeltGate: number? = nil
 	pcall(function()
 		nextMeltGate = Knit.GetController("StageCheckpointController"):GetNextMeltGateStage()
@@ -133,20 +149,26 @@ local function isStage1WallUnbroken(): boolean
 	return nextMeltGate == STAGE1_GATE_NUM
 end
 
---- Foot beam should lead to the Stage 1 melt gate until the wall is broken.
-local function shouldBeamTargetStage1Wall(data: any): boolean
+--- Foot beam to Stage 1: laser wall lesson OR post-core path when laser is disabled.
+local function shouldBeamTargetStage1(data: any): boolean
 	if not data or data.TutorialFlyIntroShown == true then
 		return false
 	end
-	if not hasReachedWallBreakStep(data) then
+	if not shouldOfferStage1FlyLesson(data) then
 		return false
 	end
-	return isStage1WallUnbroken()
+	if shouldUseLaserWallLesson() then
+		return isStage1WallUnbroken()
+	end
+	return getTutorialStep(data) >= TutorialConfigs.Step.CoreDone
 end
 
 local function resolveBeamStep(data: any): number
+	if not isFootBeamEnabled() then
+		return TutorialConfigs.Step.CoreDone
+	end
 	local step = getTutorialStep(data)
-	if shouldBeamTargetStage1Wall(data) then
+	if shouldBeamTargetStage1(data) then
 		return TutorialConfigs.Step.GoStage1
 	end
 	return step
@@ -206,23 +228,16 @@ local function triggerStage1FlyLesson()
 	end
 
 	lastStage1FlyTriggerAt = now
-	local step = getTutorialStep(data)
-	if step == TutorialConfigs.Step.CoreDone then
-		pcall(function()
-			Knit.GetService("DataService"):AdvanceTutorialToGoStage1()
-		end)
-	end
-
 	stage1FlyUiShown = true
 	disconnectStage1Listeners()
 
-	-- Wall still standing: hint the laser first (beam stays on the stage wall);
-	-- the fly intro shows after CheckpointBroken fires for Stage 1.
-	if isStage1WallUnbroken() and showStage1LaserHintUntilWallBroken() then
-		return
-	end
+	task.spawn(function()
+		if isStage1WallUnbroken() and showStage1LaserHintUntilWallBroken() then
+			return
+		end
 
-	showStage1FlyIntro()
+		showStage1FlyIntro()
+	end)
 end
 
 local function isLocalPlayerTouch(hit: Instance): boolean
@@ -584,6 +599,9 @@ local function startBeamRotationLoop()
 end
 
 local function attachBeamToTarget(target: BasePart, step: number, billboardMessage: string?)
+	if not isFootBeamEnabled() then
+		return
+	end
 	destroyBeamVisuals()
 
 	local hrp = getHrp()
@@ -644,6 +662,11 @@ local function attachBeamToTarget(target: BasePart, step: number, billboardMessa
 end
 
 local function showBeamForStep(step: number)
+	if not isFootBeamEnabled() then
+		destroyBeamVisuals()
+		activeStep = step
+		return
+	end
 	if step == TutorialConfigs.Step.CoreDone or step >= TutorialConfigs.Step.Complete then
 		destroyBeamVisuals()
 		activeStep = step
@@ -702,6 +725,9 @@ local function scheduleTargetRetry(step: number)
 end
 
 attachBeamToStage1Wall = function()
+	if not isFootBeamEnabled() then
+		return
+	end
 	local target = TutorialWorld.getStage1CheckpointTarget()
 	if not target then
 		target = TutorialWorld.waitForTarget(TutorialConfigs.Step.GoStage1, 8)
@@ -751,9 +777,9 @@ local function playThrustShopIntro()
 	local shopPos = target.Position
 	tweenCameraTowardShop(shopPos, introCfg)
 
-	local beamSeconds = introCfg.BeamDurationSeconds or 10
+	local beamSeconds = introCfg.BeamDurationSeconds or 0
 	local beamMessage = introCfg.BeamBillboardMessage or "Upgrade thrust here!"
-	if getHrp() then
+	if getHrp() and beamSeconds > 0 and isFootBeamEnabled() then
 		thrustHintBeamUntil = os.clock() + beamSeconds
 		attachBeamToTarget(target, 0, beamMessage)
 		task.delay(beamSeconds, function()
@@ -767,11 +793,11 @@ local function playThrustShopIntro()
 
 	local DataServiceAdvance = Knit.GetService("DataService")
 	pcall(function()
-		DataServiceAdvance:AdvanceTutorialToGoStage1()
+		DataServiceAdvance:AdvanceTutorialCompleteFromCoreDone()
 	end)
 
 	if TutorialConfigs.Debug then
-		print("[iseesupes][Tutorial] Thrust shop intro played, GoStage1")
+		print("[iseesupes][Tutorial] Thrust shop intro played, tutorial complete")
 	end
 end
 
@@ -790,7 +816,7 @@ local function tryThrustShopIntro(data: any)
 	if not introCfg or introCfg.Enabled ~= true then
 		pcall(function()
 			local DataService = Knit.GetService("DataService")
-			DataService:AdvanceTutorialToGoStage1()
+			DataService:AdvanceTutorialCompleteFromCoreDone()
 		end)
 		return
 	end
@@ -842,7 +868,7 @@ local function tryThrustShopHint(data: any)
 		if introCfg and introCfg.PurchaseHintBeamSeconds then
 			shortBeam = introCfg.PurchaseHintBeamSeconds
 		end
-		if shortBeam and shortBeam > 0 then
+		if shortBeam and shortBeam > 0 and isFootBeamEnabled() then
 			local target = waitForThrustShopTouch(4)
 			if target and getHrp() then
 				thrustHintBeamUntil = os.clock() + shortBeam
@@ -865,25 +891,15 @@ local function tryThrustShopHint(data: any)
 		"Info"
 	)
 
-	local target = waitForThrustShopTouch(8)
-	if target and getHrp() then
-		thrustHintBeamUntil = os.clock() + 12
-		local beamMessage = "Upgrade thrust here!"
-		if introCfg and introCfg.BeamBillboardMessage then
-			beamMessage = introCfg.BeamBillboardMessage
-		end
-		attachBeamToTarget(target, 0, beamMessage)
-		task.delay(12, function()
-			thrustHintBeamUntil = 0
-			destroyBeamVisuals()
-		end)
-	end
 end
 
 --- Reminder beam when the first thrust pack is affordable. Only for players who
 --- never bought a pack (tier 0) and at most once per session — once they have
 --- upgraded, they know the shop and no more reminders show.
 local function tryThrustAffordableBeam(data: any)
+	if not isFootBeamEnabled() then
+		return
+	end
 	if os.clock() < thrustHintBeamUntil then
 		return
 	end
@@ -940,6 +956,11 @@ local function syncTutorialFromData(data: any?)
 		return
 	end
 
+	if not shouldUseLaserWallLesson() then
+		TutorialLaserHint.hide()
+		disconnectLaserHintBrokenListener()
+	end
+
 	local step = getTutorialStep(data)
 
 	if os.clock() < thrustHintBeamUntil and step >= TutorialConfigs.Step.CoreDone then
@@ -947,6 +968,7 @@ local function syncTutorialFromData(data: any?)
 	end
 
 	if isTutorialFullyComplete(data) then
+		stage1FlyUiShown = false
 		cancelRetry()
 		disconnectStage1Listeners()
 		destroyBeamVisuals()
@@ -966,33 +988,36 @@ local function syncTutorialFromData(data: any?)
 		cancelRetry()
 		activeStep = TutorialConfigs.Step.CoreDone
 		tryThrustShopIntro(data)
-		if data.TutorialThrustShopIntroShown == true and not thrustShopIntroTriggered then
+		if data.TutorialThrustShopIntroShown == true then
 			pcall(function()
-				local DataService = Knit.GetService("DataService")
-				DataService:AdvanceTutorialToGoStage1()
+				Knit.GetService("DataService"):AdvanceTutorialCompleteFromCoreDone()
 			end)
 		end
-		if shouldOfferStage1FlyLesson(data) and not stage1FlyUiShown and not isStage1HintActive() then
-			if data.TutorialThrustShopIntroShown == true then
-				showBeamForStep(TutorialConfigs.Step.GoStage1)
-				scheduleTargetRetry(TutorialConfigs.Step.GoStage1)
-			end
-			ensureStage1FlyListeners()
-		elseif not data.TutorialThrustShopIntroShown then
-			disconnectStage1Listeners()
-			destroyBeamVisuals()
-		end
+		disconnectStage1Listeners()
+		destroyBeamVisuals()
 		return
 	end
 
 	if step == TutorialConfigs.Step.GoStage1 then
+		if data.TutorialFlyIntroShown == true or not isStage1HintActive() then
+			stage1FlyUiShown = false
+		end
 		if activeStep ~= TutorialConfigs.Step.GoStage1 and not isStage1HintActive() then
 			stage1FlyUiShown = false
 		end
-		if not stage1FlyUiShown and not isStage1HintActive() then
-			showBeamForStep(step)
-			scheduleTargetRetry(step)
-			bindStage1TouchListener()
+		if not isStage1HintActive() then
+			if isFootBeamEnabled() then
+				if data.TutorialFlyIntroShown == true then
+					showBeamForStep(TutorialConfigs.Step.ClaimWins)
+					scheduleTargetRetry(TutorialConfigs.Step.ClaimWins)
+				elseif not stage1FlyUiShown then
+					showBeamForStep(step)
+					scheduleTargetRetry(step)
+					bindStage1TouchListener()
+				end
+			elseif not stage1FlyUiShown then
+				bindStage1TouchListener()
+			end
 		end
 		return
 	end
@@ -1004,9 +1029,13 @@ local function syncTutorialFromData(data: any?)
 	else
 		disconnectStage1Listeners()
 	end
-	local beamStep = resolveBeamStep(data)
-	showBeamForStep(beamStep)
-	scheduleTargetRetry(beamStep)
+	if isFootBeamEnabled() then
+		local beamStep = resolveBeamStep(data)
+		showBeamForStep(beamStep)
+		scheduleTargetRetry(beamStep)
+	else
+		destroyBeamVisuals()
+	end
 end
 
 function TutorialController:KnitStart()
@@ -1055,11 +1084,22 @@ function TutorialController:KnitStart()
 		end
 	end)
 
+	TutorialFlyHint.setOnMainDismiss(function()
+		stage1FlyUiShown = false
+		local data = DataLib.GetData()
+		if not data then
+			return
+		end
+		local optimistic = table.clone(data)
+		optimistic.TutorialFlyIntroShown = true
+		syncTutorialFromData(optimistic)
+	end)
+
 	TutorialFlyHint.ensureHidden()
 	TutorialLaserHint.ensureHidden()
 	TutorialFlyHint.startLowThrustWatcher()
 
-	print("[iseesupes] TutorialController ready.")
+	StudioLog.ready("TutorialController")
 end
 
 return TutorialController

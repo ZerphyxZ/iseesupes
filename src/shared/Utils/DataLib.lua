@@ -26,6 +26,29 @@ function DataLib.GetData(): any
 	return _lastData
 end
 
+-- True once the player's data snapshot has replicated at least once.
+function DataLib.IsLoaded(): boolean
+	return _lastData ~= nil
+end
+
+-- Calls `callback` once as soon as data is available (immediately if already loaded).
+-- Returns the underlying connection, or nil if it fired immediately.
+function DataLib.OnReady(callback: () -> ()): any
+	if _lastData ~= nil then
+		task.spawn(callback)
+		return nil
+	end
+	local conn
+	conn = _dataChangedEvent:Connect(function()
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+		callback()
+	end)
+	return conn
+end
+
 function DataLib.OnChanged(callback: Callback)
 	return _dataChangedEvent:Connect(callback)
 end

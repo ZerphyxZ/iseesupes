@@ -2,6 +2,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local Workspace = game:GetService("Workspace")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
@@ -602,7 +603,7 @@ function UpgradeWinsService:KnitStart()
 		equipMutex[player] = nil
 	end)
 
-	print("[iseesupes] UpgradeWinsService ready.")
+	StudioLog.ready("UpgradeWinsService")
 end
 
 return UpgradeWinsService

@@ -34,6 +34,7 @@ type HintLayer = {
 
 local activeLayer: HintLayer? = nil
 local lowThrustWatchConn: RBXScriptConnection? = nil
+local onMainDismiss: (() -> ())? = nil
 
 local function getFlyIntroCfg(): any
 	return TutorialConfigs.FlyIntro or {}
@@ -189,6 +190,9 @@ local function dismissActive(onComplete: (() -> ())?)
 	end
 
 	hideLayer(layer)
+	if layer.mode == "main" and onMainDismiss then
+		onMainDismiss()
+	end
 	if onComplete then
 		onComplete()
 	end
@@ -317,6 +321,10 @@ end
 
 function TutorialFlyHint.dismiss()
 	dismissActive()
+end
+
+function TutorialFlyHint.setOnMainDismiss(fn: (() -> ())?)
+	onMainDismiss = fn
 end
 
 local function isFlying(): boolean

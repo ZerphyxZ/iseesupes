@@ -213,7 +213,12 @@ function SpeedController:KnitStart()
 		if jumpCounter and jumpCounter:IsA("GuiObject") then
 			local jc = jumpCounter :: GuiObject
 			local bottom = jc.AbsolutePosition.Y + jc.AbsoluteSize.Y
-			local yScale = (bottom + gapPx - parentGui.AbsolutePosition.Y) / parentH
+			-- LevelUp is anchored at its vertical CENTRE (AnchorPoint.Y≈0.5) and is tall (~10% of
+			-- the screen), so placing that centre at the counter's bottom leaves the frame's TOP
+			-- overlapping the counter. Push down by AnchorPoint.Y * height so the frame's TOP sits
+			-- gapPx below the counter instead.
+			local anchorY = bottom + gapPx + levelUpFrame.AnchorPoint.Y * levelUpFrame.AbsoluteSize.Y
+			local yScale = (anchorY - parentGui.AbsolutePosition.Y) / parentH
 			return UDim2.new(studioLevelUpPos.X.Scale, studioLevelUpPos.X.Offset, yScale, studioLevelUpPos.Y.Offset)
 		end
 

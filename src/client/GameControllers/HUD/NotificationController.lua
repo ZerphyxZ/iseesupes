@@ -16,10 +16,15 @@ local NotificationController = Knit.CreateController({ Name = "NotificationContr
 local TOAST_LIFETIME = 2.8
 local MAX_TOASTS = 5
 local DEBOUNCE_SEC = 0.35
--- Sits below Skip Stage AND below the JumpCounter label (which uses 0.035).
+-- Fallback gap below Skip Stage (scale) — used only before the JumpCounter pill is built.
 local SKIP_GAP_SCALE = 0.072
+-- Pixel gap below the JumpCounter pill. The pill's height is in PIXELS and doesn't scale with
+-- the screen, so we anchor to its real bottom in pixels too; a scale-only gap rides up into it
+-- on short mobile screens (the overlap this fixes).
+local NOTIF_GAP_PX = 12
 
 local toastContainer: Frame? = nil
+local hudRef: Instance? = nil
 local listLayout: UIListLayout? = nil
 local activeToasts: { Frame } = {}
 
@@ -45,16 +50,38 @@ local COLORS = {
 	},
 }
 
-local function anchorBelowSkipStage(hud: Instance, notifications: Frame)
-	local skip = hud:FindFirstChild("Skipstage")
-	if skip and skip:IsA("GuiObject") then
-		local y = skip.Position.Y.Scale + skip.Size.Y.Scale + SKIP_GAP_SCALE
-		notifications.AnchorPoint = Vector2.new(0.5, 0)
-		notifications.Position = UDim2.new(0.5, 0, y, 0)
-	end
+-- Anchor the toast container just below the JumpCounter pill when it exists (top anchor, so
+-- toasts grow downward from there). Anchored to the pill's REAL rendered bottom in pixels,
+-- because the pill is pixel-sized; a scale-only gap below Skip Stage rides up into it on short
+-- mobile screens. Falls back to the skip-relative scale gap before the pill is built, so this
+-- is re-run on each toast (by then the pill exists).
+local function repositionNotifications(hud: Instance, notifications: Frame)
+	notifications.AnchorPoint = Vector2.new(0.5, 0)
 	notifications.BackgroundTransparency = 1
 	notifications.Size = UDim2.new(0.9, 0, 0, 0)
 	notifications.AutomaticSize = Enum.AutomaticSize.Y
+
+	local frames = notifications.Parent
+	local jumpCounter = if frames then frames:FindFirstChild("JumpCounter") else nil
+	if
+		frames
+		and frames:IsA("GuiObject")
+		and jumpCounter
+		and jumpCounter:IsA("GuiObject")
+		and frames.AbsoluteSize.Y > 0
+	then
+		local jc = jumpCounter :: GuiObject
+		local bottom = jc.AbsolutePosition.Y + jc.AbsoluteSize.Y
+		local y = (bottom + NOTIF_GAP_PX - (frames :: GuiObject).AbsolutePosition.Y) / (frames :: GuiObject).AbsoluteSize.Y
+		notifications.Position = UDim2.new(0.5, 0, y, 0)
+		return
+	end
+
+	local skip = hud:FindFirstChild("Skipstage")
+	if skip and skip:IsA("GuiObject") then
+		local y = skip.Position.Y.Scale + skip.Size.Y.Scale + SKIP_GAP_SCALE
+		notifications.Position = UDim2.new(0.5, 0, y, 0)
+	end
 end
 
 local function pruneToasts()
@@ -77,6 +104,11 @@ local function showToast(message: string, kind: string?)
 	local parent = toastContainer
 	if not parent then
 		return
+	end
+
+	-- Re-anchor below the JumpCounter (built after us) right before the toast appears.
+	if hudRef then
+		repositionNotifications(hudRef, parent)
 	end
 
 	local palette = COLORS[kind :: string] or COLORS.Info
@@ -178,7 +210,8 @@ function NotificationController:KnitStart()
 
 	local hud = gui:WaitForChild("HUD", 30)
 	if hud then
-		anchorBelowSkipStage(hud, notifications)
+		hudRef = hud
+		repositionNotifications(hud, notifications)
 	end
 
 	listLayout = notifications:FindFirstChild("List") :: UIListLayout?

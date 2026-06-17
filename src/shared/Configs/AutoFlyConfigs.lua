@@ -8,6 +8,18 @@ local AutoFlyConfigs = {
 	DestinationChildName = "Destination",
 	ArrivalHorizontalStuds = 14,
 	ArrivalVerticalStuds = 12,
+	--- Closest-approach landing guard. The arrival box above is a tight per-frame AND-gate
+	--- (14x12 studs) that misses off-axis / height-offset approaches, letting the player sail
+	--- PAST the Destination into a hazard. So we also land once the player has come within this
+	--- many studs of the Destination and then starts moving AWAY from it (closest point passed).
+	ArrivalNearStuds = 24,
+	--- Hard failsafe: cancel a single AutoFly flight if it runs longer than this without landing
+	--- (mis-placed Destination / badly diverged path) instead of flying off the map.
+	MaxAutoFlySeconds = 8,
+	--- On landing, pin the player to the Destination's X/Z and kill horizontal drift so flight
+	--- momentum can't coast them sideways off the pad into a hazard — they drop straight down
+	--- onto the intended spot. Set false to keep the old free-coast landing.
+	SnapToDestinationOnLanding = true,
 	AutoStartDebounceSeconds = 1.25,
 	SkipWhenTutorialFlyHintActive = true,
 	CameraOffset = Vector3.new(0, 3, 22),
@@ -22,6 +34,8 @@ local AutoFlyConfigs = {
 	CameraReleaseOffset = Vector3.new(0, 2, 12),
 	CameraReleaseLookAtYOffset = 2,
 	CameraReleaseFinishDistance = 0.4,
+	--- Player attribute set while AutoFly flight is active so tuning can be overridden.
+	AutoFlyActiveAttribute = "AutoFlyActive",
 	FrameColorOn = Color3.fromRGB(33, 84, 185),
 	FrameColorOff = Color3.fromRGB(206, 23, 6),
 	LabelTextOn = "Auto Fly ON",

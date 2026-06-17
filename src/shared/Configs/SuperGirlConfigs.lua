@@ -62,7 +62,8 @@ local SuperGirlConfigs = {
 	DeathCooldown = 1.5,
 	--- Fallback damage fraction of max health if a stage can't be resolved. Per-stage
 	--- values come from HealthRed so the economy stays single-sourced (Stage 4 = 0.14).
-	DefaultDamagePct = HealthRedConfigs.DamagePctByStage[4] or 0.14,
+	--- Tuned 2026-06-16: reduced to 0.08 (8%, more forgiving).
+	DefaultDamagePct = 0.08,
 
 	--- Reused animations by ASSET ID. These are the game's RUNTIME ids (from
 	--- ReplicatedStorage.SupesAnimations, which is what player characters use and is

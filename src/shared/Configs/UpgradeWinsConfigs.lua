@@ -57,19 +57,25 @@ local UpgradeWinsConfigs: UpgradeWinsConfig = {
 	AvatarIdAttribute = "AvatarId",
 	TouchDebounce = 1.5,
 	ButtonNamePrefix = "Button",
+	-- WinCost ladder stretched at the TOP (2026-06-16) to lengthen the cosmetic
+	-- chase after the speed/thrust/death gates were removed (every stage is now
+	-- reachable → wins flow faster → the old 60k top suit cleared in ~3-5h). Early
+	-- tiers (1-4) kept cheap so onboarding suits still unlock in minutes. StepBonus
+	-- untouched. NOTE: live values are MAP ATTRIBUTES (WinCost on each UpgradeWins
+	-- button) — these are the fallback/mirror; push the same numbers to the map.
 	DefaultButtons = {
 		[1] = { WinCost = 5, StepBonus = 1 },
 		[2] = { WinCost = 30, StepBonus = 2 },
 		[3] = { WinCost = 75, StepBonus = 5 },
 		[4] = { WinCost = 150, StepBonus = 10 },
-		[5] = { WinCost = 350, StepBonus = 25 },
-		[6] = { WinCost = 750, StepBonus = 50 },
-		[7] = { WinCost = 1500, StepBonus = 100 },
-		[8] = { WinCost = 3000, StepBonus = 250 },
-		[9] = { WinCost = 6000, StepBonus = 500 },
-		[10] = { WinCost = 12000, StepBonus = 1000 },
-		[11] = { WinCost = 25000, StepBonus = 2500 },
-		[12] = { WinCost = 60000, StepBonus = 5000 },
+		[5] = { WinCost = 400, StepBonus = 25 },
+		[6] = { WinCost = 900, StepBonus = 50 },
+		[7] = { WinCost = 2000, StepBonus = 100 },
+		[8] = { WinCost = 4500, StepBonus = 250 },
+		[9] = { WinCost = 10000, StepBonus = 500 },
+		[10] = { WinCost = 22000, StepBonus = 1000 },
+		[11] = { WinCost = 50000, StepBonus = 2500 },
+		[12] = { WinCost = 110000, StepBonus = 5000 },
 	},
 	SequentialUnlockMinIndex = 9,
 }

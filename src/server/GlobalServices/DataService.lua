@@ -1003,6 +1003,13 @@ local function finishStudioReset(player: Player, profile: any)
 
 	applyProfileMigrations(profile)
 
+	-- After reset, promote tutorial to Complete so reward auto-show gates (MinTutorialStep=6) pass.
+	-- migrateFlyTutorialStep demotes Complete→GoStage1 when TutorialThrustShopIntroShown=false,
+	-- so we set both flags here (after migrations have already run).
+	profile.Data.TutorialStep = TutorialConfigs.Step.Complete
+	profile.Data.TutorialThrustShopIntroShown = true
+	profile.Data.TutorialFlyIntroShown = true
+
 	-- ThrustPower lives on the Player and survives profile wipe; stale values override profile max.
 	player:SetAttribute(ThrustConfigs.PowerAttribute, profile.Data.ThrustMax)
 
@@ -1027,6 +1034,10 @@ local function finishStudioReset(player: Player, profile: any)
 	lastLeaderboardScores[player] = snapshotLeaderboardScores(profile.Data)
 	replicateData(player, profile)
 	syncLeaderboards(player)
+	-- Push fresh login-reward state so the client popup retries after the reset.
+	pcall(function()
+		Knit.GetService("LoginRewardService"):PushStateServer(player)
+	end)
 	StudioLog.print("ProfileJoin", "[iseesupes] Studio profile reset for", player.Name, "→", ProfileTemplate.describeStats(profile.Data))
 end
 

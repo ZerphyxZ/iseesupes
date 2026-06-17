@@ -503,6 +503,29 @@ function LevelDesignTuning.getDoubleJump(player: Player): DoubleJumpTuning
 			tuning = SpeedConfigs.applyCustomSpeedRatioToDoubleJump(tuning, ratio) :: DoubleJumpTuning
 		end
 	end
+
+	-- AutoFly bypasses the manual flight speed cap (110 studs/s): guided flight steers to a
+	-- fixed destination so overshooting isn't a problem. Speed is walk-proportional using
+	-- the same ratio as the pre-cap flight curve (flight[L1]/walk[L1] = 50/20 = 2.5×),
+	-- restoring the "synced with speed" feel that existed before the cap was added.
+	local AutoFlyConfigs = require(ReplicatedStorage.Shared.Configs.AutoFlyConfigs)
+	local autoFlyAttr = AutoFlyConfigs.AutoFlyActiveAttribute or "AutoFlyActive"
+	if player:GetAttribute(autoFlyAttr) == true then
+		local walkSpeed = SpeedConfigs.GetSpeedFromLevel(level)
+		local walkAnchor = SpeedConfigs.WalkSpeedCurve[1]
+		local flightAnchor = SpeedConfigs.FlightSpeedCurve[1]
+		local ratio = if walkAnchor and flightAnchor and walkAnchor.value > 0
+			then flightAnchor.value / walkAnchor.value
+			else 2.5
+		local autoSpeed = math.max(walkSpeed * ratio, SpeedConfigs.GetFlightForwardSpeed(level))
+		if tuning.Phases and tuning.Phases.AfterTransition then
+			tuning.Phases.AfterTransition.ForwardSpeed = autoSpeed
+		end
+		if tuning.Phases and tuning.Phases.LeanUp then
+			tuning.Phases.LeanUp.ForwardSpeed = autoSpeed
+		end
+	end
+
 	return tuning
 end
 

@@ -1,14 +1,16 @@
 --!strict
 
--- AutoFly pad highlight.
+-- AutoFly pad highlight — TWO-STEP arm->launch mechanic.
 --
--- When AutoFly is ON and the local player stands on a ToggleFly pad, glow the tagged pad
--- part (color from its `Color` attribute) and play a one-shot arcade chime, so the player
--- knows stepping there auto-flies them. The pad parts are invisible, so the Highlight traces
--- the pad's footprint; it breathes for an arcade feel and clears the moment the player leaves
--- the pad or flies off. Entirely local — the Highlight and Sound are created on this client,
--- so no other player sees them. Detection reuses ToggleFlyZone.getActiveZoneRoot, the SAME
--- check AutoFly uses to trigger, so the glow appears exactly where stepping launches you.
+-- A ToggleFly pad is two adjacent invisible parts: the `Toggle` child (the ARMING pad) and the
+-- tagged PARENT (the LAUNCH pad, ahead of the Toggle). When AutoFly is ON and the player steps
+-- on the Toggle, this controller glows the PARENT (color from the parent's `Color` attribute)
+-- and plays a one-shot chime — telling the player "walk forward onto that glowing pad to fly."
+-- AutoFly itself (ToggleFlyZone.getActiveZoneRoot, used by AutoFlyController) only launches once
+-- the player is actually ON the glowing parent, NOT on the Toggle. The glow stays armed while the
+-- player is on the Toggle OR the parent, so it's lit the whole way from arming to lift-off, then
+-- clears on leave/fly. Entirely local — the Highlight + Sound are created on this client only.
+-- DO NOT collapse this to glow+launch on a single part: the arm pad and launch pad are distinct.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -63,21 +65,9 @@ local function unindexTagged(tagged: Instance)
 	end
 end
 
--- Distance from a world point to the NEAREST point of a part (not its center) — so a long
--- runway pad still counts as "near" when you're beside its edge.
-local function distToPart(pos: Vector3, part: BasePart): number
-	local lp = part.CFrame:PointToObjectSpace(pos)
-	local h = part.Size * 0.5
-	local closest = part.CFrame:PointToWorldSpace(
-		Vector3.new(math.clamp(lp.X, -h.X, h.X), math.clamp(lp.Y, -h.Y, h.Y), math.clamp(lp.Z, -h.Z, h.Z))
-	)
-	return (closest - pos).Magnitude
-end
-
--- The trigger (Toggle/step part) to glow: ONLY when the player is standing ON the STEP PART's
--- tight box, using the same tight footprint check as AutoFly launch. We glow the TAGGED PARENT
--- (the part with the Color attribute), but the trigger fires only when on the Toggle.
-local function activeStepPart(root: BasePart): BasePart?
+-- Tight footprint box test: is the player standing within `part`'s X/Z footprint (plus a small
+-- horizontal pad) and inside the pad's vertical band? Same box shape AutoFly uses to launch.
+local function isRootOnBox(root: BasePart, part: BasePart): boolean
 	local launchPad = ToggleFlyConfigs.LaunchHorizontalPadding
 	if typeof(launchPad) ~= "number" then
 		launchPad = 3
@@ -85,22 +75,31 @@ local function activeStepPart(root: BasePart): BasePart?
 	local zone = ToggleFlyConfigs.Zone
 	local maxAbove = if typeof(zone) == "table" and typeof(zone.maxHeightAbove) == "number" then zone.maxHeightAbove else 18
 	local minBelow = if typeof(zone) == "table" and typeof(zone.minHeightBelow) == "number" then zone.minHeightBelow else -8
+	local localPos = part.CFrame:PointToObjectSpace(root.Position)
+	local half = part.Size * 0.5
+	if math.abs(localPos.X) > half.X + launchPad or math.abs(localPos.Z) > half.Z + launchPad then
+		return false
+	end
+	return localPos.Y <= half.Y + maxAbove and localPos.Y >= -half.Y + minBelow
+end
 
+-- Which pad to glow, by the TWO-STEP mechanic the player expects:
+--   1. Step on the TOGGLE child (the arming pad)  ->  light up its tagged PARENT.
+--   2. Walk FORWARD onto that glowing PARENT       ->  AutoFly launches (getActiveZoneRoot).
+-- The glow stays armed while the player is on the Toggle OR already on the tagged parent, so the
+-- highlight stays lit the whole way from arming to lift-off (the two parts sit adjacent/overlap).
+-- Returns the TOGGLE key so glowOn can look up + render the glow on its tagged parent.
+local function activeStepPart(root: BasePart): BasePart?
 	for trigger, tagged in triggerToTagged do
 		if not trigger.Parent or not tagged then
 			continue
 		end
-		-- Check if player is on the STEP PART (Toggle) tight footprint.
-		local localPos = trigger.CFrame:PointToObjectSpace(root.Position)
-		local half = trigger.Size * 0.5
-		if math.abs(localPos.X) > half.X + launchPad or math.abs(localPos.Z) > half.Z + launchPad then
-			continue
+		if isRootOnBox(root, trigger) then
+			return trigger
 		end
-		if localPos.Y > half.Y + maxAbove or localPos.Y < -half.Y + minBelow then
-			continue
+		if tagged:IsA("BasePart") and isRootOnBox(root, tagged :: BasePart) then
+			return trigger
 		end
-		-- Player is on the step part — return trigger so we glow its tagged parent.
-		return trigger
 	end
 	return nil
 end
@@ -204,12 +203,17 @@ local function glowOn(trigger: BasePart)
 	end
 	local p = ensureGlowPart()
 
-	-- Glow renders on the TAGGED PARENT (the visible glowing pad where the player flies from).
+	-- Glow renders ON THE TAGGED PARENT — the launch pad the player flies from. Standing on the
+	-- Toggle child ARMS this glow; the player then walks FORWARD onto this glowing parent and
+	-- AutoFly fires (getActiveZoneRoot also keys off the tagged parent, so glow + launch match).
+	-- TWO-STEP MECHANIC: Toggle = arm the highlight, Parent = the highlight you step onto to fly.
+	-- DO NOT move this to the Toggle/step part — that collapses the arm->launch mechanic the
+	-- player wants (glow must be on the Parent ahead, not on the Toggle they're standing on).
 	local cf: CFrame, size: Vector3
 	if tagged:IsA("BasePart") then
-		cf, size = tagged.CFrame, tagged.Size
+		cf, size = (tagged :: BasePart).CFrame, (tagged :: BasePart).Size
 	elseif tagged:IsA("Model") then
-		cf, size = tagged:GetBoundingBox()
+		cf, size = (tagged :: Model):GetBoundingBox()
 	else
 		return
 	end
@@ -217,7 +221,7 @@ local function glowOn(trigger: BasePart)
 	p.Size = size + Vector3.new(pad2, pad2, pad2)
 	p.CFrame = cf
 
-	-- Colour from the TAGGED PART's attribute.
+	-- Colour from the TAGGED PARENT's attribute (the Toggle/step part has no Color of its own).
 	local attrName = ToggleFlyConfigs.HighlightColorAttribute
 	if typeof(attrName) ~= "string" or attrName == "" then
 		attrName = "Color"

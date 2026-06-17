@@ -8,6 +8,7 @@ local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local GiveDoubleWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveDoubleWinsConfigs)
 local ProductConfigs = require(ReplicatedStorage.Shared.Configs.ProductConfigs)
+local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 
@@ -102,6 +103,14 @@ function GiveDoubleWinsService:FulfillPurchase(player: Player): boolean
 		grant = GiveDoubleWinsConfigs.DefaultGrantWins
 	end
 	pendingPurchase[player] = nil
+
+	-- Scale by the player's rebirth Wins multiplier, exactly like the free GiveWins buttons, so the
+	-- Robux 2x stays a real multiple over the (rebirth-boosted) free amount instead of eroding (and
+	-- eventually undercutting the free button) as the player rebirths. The button's authored amount
+	-- is the base; ApplyWinsBoost is the same formula GiveWinsService uses.
+	local data = DataService and DataService:GetData(player)
+	local rebirths = (data and type(data.Rebirths) == "number") and data.Rebirths or 0
+	grant = RebirthConfigs.ApplyWinsBoost(grant, rebirths)
 
 	if not DataService or not DataService:AddWins(player, grant) then
 		warn("[iseesupes][GiveDoubleWins] FulfillPurchase AddWins failed for", player.Name)

@@ -43,6 +43,10 @@ local edited = {
 	"src/client/GameControllers/PlaytimeReward/PlaytimeRewardController.lua",
 	"src/client/GameControllers/HUD/WinCelebrationController.lua",
 	"src/client/GameControllers/Character/CharacterController.lua",
+	"src/server/GameServices/LoginRewardService.lua",
+	"src/client/GameControllers/LoginReward/LoginRewardController.lua",
+	"src/shared/Configs/LoginRewardConfigs.lua",
+	"src/shared/Utils/ToggleFlyZone.lua",
 }
 for _, path in edited do
 	compileCheck(path)
@@ -236,6 +240,9 @@ assert(SpeedConfigs.GetExperienceForLevel(50) < 100_000_000, "L50 still unreacha
 assert(RebirthConfigs.GetThrustBonus(0) == 0, "rebirth 0 should grant no thrust")
 assert(RebirthConfigs.GetThrustBonus(5) == 5 * RebirthConfigs.ThrustBonusPerRebirth, "thrust bonus math")
 assert(RebirthConfigs.GetSpeedMultiplier(2) == 2, "2 rebirths should double gain")
+-- Rebirth wins multiplier (drives the win grind now that every stage is reachable)
+assert(RebirthConfigs.GetWinsMultiplier(0) == 1, "rebirth 0 should not multiply wins")
+assert(math.abs(RebirthConfigs.GetWinsMultiplier(10) - 2) < 1e-9, "10 rebirths should ~double wins")
 
 print("")
 print("ALL BALANCE ASSERTIONS PASSED")

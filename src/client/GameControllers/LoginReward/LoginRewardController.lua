@@ -18,6 +18,7 @@ local HudAnimations = require(script.Parent.Parent.Parent.Modules.HudAnimations)
 local LoginRewardController = Knit.CreateController({ Name = "LoginRewardController" })
 
 local HIGHLIGHT_COLOR = Color3.fromRGB(255, 200, 40)
+local HUD_GIFT_ICON = "rbxassetid://80861029762439"
 
 function LoginRewardController:KnitStart()
 	local LoginRewardService = Knit.GetService("LoginRewardService")
@@ -48,6 +49,10 @@ function LoginRewardController:KnitStart()
 	local state: any = nil
 	local streakOpen = false
 	local offlineOpen = false
+	local lastCanClaim: boolean? = nil
+	local autoShownOffline = false
+	local autoShownStreakDay: number? = nil
+	local hudClaimButton: GuiObject? = nil
 
 	local function closeFrame(frame: Frame, onDone: (() -> ())?)
 		HudAnimations.closeFrameY(frame, nil, onDone)
@@ -200,23 +205,84 @@ function LoginRewardController:KnitStart()
 			:catch(function() end)
 	end)
 
-	-- ── State + auto-show ───────────────────────────────────────────
-	LoginRewardService.StateChanged:Connect(function(newState: any)
-		state = newState
-		if streakOpen then
-			renderStreak()
+	local function updateHudClaimButton()
+		if not hudClaimButton then
+			return
 		end
-	end)
+		local claimable = state ~= nil and state.canClaim == true
+		hudClaimButton.Visible = claimable
+	end
 
-	LoginRewardService:GetState()
-		:andThen(function(initial: any?)
-			if initial then
-				state = initial
+	local function resolveHudClickTarget(root: Instance): GuiButton?
+		if root:IsA("GuiButton") then
+			return root
+		end
+		local nested = root:FindFirstChild("Button", true)
+		if nested and nested:IsA("GuiButton") then
+			return nested
+		end
+		return nil
+	end
+
+	local function ensureHudClaimButton(): GuiButton?
+		local hud = gui:FindFirstChild("HUD")
+		if not hud then
+			return nil
+		end
+
+		local path = LoginRewardConfigs.UI.HudButtonPath
+		if typeof(path) ~= "table" or #path < 1 then
+			return nil
+		end
+
+		local parent: Instance = hud
+		for i = 1, #path - 1 do
+			local child = parent:FindFirstChild(path[i])
+			if not child then
+				return nil
+			end
+			parent = child
+		end
+
+		local buttonName = path[#path]
+		local existing = parent:FindFirstChild(buttonName)
+		if existing then
+			local clickTarget = resolveHudClickTarget(existing)
+			if clickTarget then
+				hudClaimButton = if existing:IsA("GuiObject") then existing else (clickTarget :: GuiObject)
+				return clickTarget
+			end
+		end
+
+		local root = Instance.new("ImageButton")
+		root.Name = buttonName
+		root.BackgroundTransparency = 1
+		root.Size = UDim2.new(0, 56, 0, 56)
+		root.Image = HUD_GIFT_ICON
+		root.ScaleType = Enum.ScaleType.Fit
+		root.Visible = false
+		root.LayoutOrder = 5
+		root.Parent = parent
+
+		local aspect = Instance.new("UIAspectRatioConstraint")
+		aspect.AspectRatio = 1
+		aspect.Parent = root
+
+		hudClaimButton = root
+		return root
+	end
+
+	local hudClickButton = ensureHudClaimButton()
+	if hudClickButton then
+		hudClickButton.MouseButton1Click:Connect(function()
+			if state and state.canClaim then
+				openStreak()
 			end
 		end)
-		:catch(function() end)
+	end
 
-	task.delay(LoginRewardConfigs.UI.AutoShowDelay, function()
+	-- ── State + auto-show ───────────────────────────────────────────
+	local function tryAutoShow()
 		local data = DataLib.GetData()
 		local step = if data and type(data.TutorialStep) == "number" then data.TutorialStep else 1
 		if step < LoginRewardConfigs.UI.MinTutorialStep then
@@ -225,12 +291,50 @@ function LoginRewardController:KnitStart()
 		if not state then
 			return
 		end
-		if state.offlineXp > 0 then
+
+		if state.offlineXp > 0 and not autoShownOffline and not offlineOpen then
+			autoShownOffline = true
 			openOffline()
-		elseif state.canClaim then
-			openStreak()
+			return
 		end
-	end)
+
+		if state.canClaim and not streakOpen then
+			local newDay = state.dayInCycle
+			local becameClaimable = lastCanClaim == false
+			if autoShownStreakDay ~= newDay or becameClaimable then
+				autoShownStreakDay = newDay
+				openStreak()
+			end
+		end
+	end
+
+	local function onStateUpdated(newState: any)
+		local prevCanClaim = if state then state.canClaim else nil
+		state = newState
+		if streakOpen then
+			renderStreak()
+		end
+		if newState and prevCanClaim == false and newState.canClaim == true then
+			autoShownStreakDay = nil
+		end
+		lastCanClaim = if newState then newState.canClaim else lastCanClaim
+		updateHudClaimButton()
+		tryAutoShow()
+	end
+
+	LoginRewardService.StateChanged:Connect(onStateUpdated)
+
+	LoginRewardService:GetState()
+		:andThen(function(initial: any?)
+			if initial then
+				onStateUpdated(initial)
+			else
+				tryAutoShow()
+			end
+		end)
+		:catch(function() end)
+
+	task.delay(LoginRewardConfigs.UI.AutoShowDelay, tryAutoShow)
 
 	StudioLog.ready("LoginRewardController")
 end

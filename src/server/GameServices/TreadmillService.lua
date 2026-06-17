@@ -711,9 +711,15 @@ function TreadmillService:RespawnFromKillPart(player: Player, hazardPart: BasePa
 	end
 
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	-- Respawn at the checkpoint of the stage the player physically died in (less punishing
-	-- than a full trek back from the lobby); fresh players / missing checkpoints → lobby.
-	local spawnCf = getStageCheckpointCFrame(player, hazardPart) or getKillSpawnCFrame()
+	-- Where to respawn after a hazard death. Default (RespawnAtLobbyOnKill=true): the lobby
+	-- SpawnLocation, so a death restarts the run (stages are easy). Flip the flag to false to
+	-- respawn at the checkpoint of the stage they died in (fresh players / missing → lobby).
+	local spawnCf: CFrame?
+	if GameplayCfg.RespawnAtLobbyOnKill then
+		spawnCf = getKillSpawnCFrame()
+	else
+		spawnCf = getStageCheckpointCFrame(player, hazardPart) or getKillSpawnCFrame()
+	end
 	if spawnCf then
 		local upright = CharacterStance.buildUprightCFrame(root, spawnCf)
 		CharacterStance.resetToStanding(character, upright)

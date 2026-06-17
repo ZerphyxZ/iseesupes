@@ -60,6 +60,10 @@ local function grantSpeedXp(player: Player, data: any, amount: number)
 	DataService:NotifyLeaderboards(player, { "Speed" })
 end
 
+function LoginRewardService:PushStateServer(player: Player)
+	pushState(player)
+end
+
 function LoginRewardService.Client:GetState(player: Player): any?
 	local data = DataService:GetData(player)
 	if not data then

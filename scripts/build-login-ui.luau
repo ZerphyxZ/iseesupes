@@ -348,3 +348,4 @@ for _, panel in { streak, offline } do
 end
 
 print("[build-login-ui] Built GUI.Frames.DailyStreak and GUI.Frames.OfflineReward")
+print("[build-login-ui] HUD gift button: LoginRewardController code-builds GUI.HUD.Left.DailyStreak if missing.")

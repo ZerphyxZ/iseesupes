@@ -35,6 +35,10 @@ export type TreadmillGameplayConfig = {
 	PointsPerTick: number,
 	--- Optional Speed XP per treadmill tick (0 = off; thrust refill is primary).
 	SpeedXpPerTick: number,
+	--- true  → a hazard/kill-part death respawns the player at the lobby SpawnLocation
+	---          (a fresh run; stages are easy enough that a full restart is fine).
+	--- false → respawn at the checkpoint of the stage they died in (older, less-punishing).
+	RespawnAtLobbyOnKill: boolean,
 }
 
 local TreadmillConfigs = {
@@ -64,6 +68,10 @@ local TreadmillConfigs = {
 		KickTeleportOffset = Vector3.new(0, 3, 0),
 		PointsPerTick = 1,
 		SpeedXpPerTick = 5,
+		--- Easy stages → send players to the lobby SpawnLocation on a hazard death so they
+		--- start a fresh run, instead of respawning mid-stage at a checkpoint. Flip to false
+		--- to restore the old checkpoint respawn.
+		RespawnAtLobbyOnKill = true,
 	} :: TreadmillGameplayConfig,
 
 	--- Studio: log when player is near treadmills but detection misses (server Output).

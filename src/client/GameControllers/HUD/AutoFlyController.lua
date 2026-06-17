@@ -23,6 +23,13 @@ type RouteState = {
 	zoneRoot: Instance,
 	destination: BasePart,
 	landing: boolean,
+	--- Closest 3D distance to the Destination seen so far this flight (for the closest-approach
+	--- landing guard — see tickAutoFly).
+	minDist: number,
+	--- HRP position last frame, to tell whether the player is now moving away from the Destination.
+	lastPos: Vector3?,
+	--- os.clock() when the flight began (for the MaxAutoFlySeconds failsafe).
+	startedAt: number,
 }
 
 local heartbeatConn: RBXScriptConnection? = nil
@@ -77,8 +84,14 @@ local function isGrounded(): boolean
 	return humanoid.FloorMaterial ~= Enum.Material.Air
 end
 
+local function setAutoFlyActive(active: boolean)
+	local attr = AutoFlyConfigs.AutoFlyActiveAttribute or "AutoFlyActive"
+	player:SetAttribute(attr, if active then true else nil)
+end
+
 local function clearRoute(releaseCam: boolean?)
 	activeRoute = nil
+	setAutoFlyActive(false)
 	AutoFlyState.clear()
 	if releaseCam ~= false then
 		AutoFlyCamera.release()
@@ -115,6 +128,19 @@ local function cancelAutoFlight()
 		end)
 	end
 	clearRoute(true)
+end
+
+--- Begin the landing/descent. Releases the flight hold AND clears the steer override so the
+--- pursuit steering stops immediately — otherwise the steer stays latched toward the Destination
+--- and keeps coasting the player past it during the round-trip before the hold actually ends.
+local function beginLanding(route: RouteState)
+	route.landing = true
+	AutoFlyState.clear()
+	if DoubleJumpService then
+		pcall(function()
+			DoubleJumpService:SetHolding(false)
+		end)
+	end
 end
 
 local function onAbilityEnded()
@@ -157,8 +183,12 @@ local function tryBeginAutoFlight(zoneRoot: Instance, destination: BasePart)
 			zoneRoot = zoneRoot,
 			destination = destination,
 			landing = false,
+			minDist = math.huge,
+			lastPos = nil,
+			startedAt = os.clock(),
 		}
 
+		setAutoFlyActive(true)
 		DoubleJumpService:SetHolding(true)
 		AutoFlyCamera.startFollow(character)
 	end):catch(function()
@@ -206,13 +236,51 @@ local function tickAutoFly(dt: number)
 			AutoFlyState.setSteerOverride(steerDir)
 			AutoFlyCamera.update(dt, root, route.destination)
 
-			if hasArrived(root, route.destination) then
-				route.landing = true
-				pcall(function()
-					DoubleJumpService:SetHolding(false)
-				end)
+			local toTarget = route.destination.Position - root.Position
+			local dist = toTarget.Magnitude
+			if dist < route.minDist then
+				route.minDist = dist
+			end
+
+			-- Closest-approach guard: once the player has come within ArrivalNearStuds of the
+			-- Destination and is now moving AWAY from it, the closest point is behind them — land
+			-- NOW. The arrival box (hasArrived) is a tight per-frame AND-gate that off-axis or
+			-- height-offset approaches slip straight through, which is what lets the player sail
+			-- past the Destination into a hazard.
+			local near = AutoFlyConfigs.ArrivalNearStuds
+			if typeof(near) ~= "number" then
+				near = 24
+			end
+			local moveDelta = if route.lastPos then root.Position - route.lastPos else Vector3.zero
+			route.lastPos = root.Position
+			local movingAway = moveDelta.Magnitude > 0.05
+				and dist > 0.05
+				and moveDelta.Unit:Dot(toTarget.Unit) < 0
+			local passedClosest = route.minDist <= near and movingAway
+
+			if hasArrived(root, route.destination) or passedClosest then
+				beginLanding(route)
+			else
+				local maxSeconds = AutoFlyConfigs.MaxAutoFlySeconds
+				if typeof(maxSeconds) ~= "number" then
+					maxSeconds = 8
+				end
+				if os.clock() - route.startedAt > maxSeconds then
+					-- Never reached the pad (mis-placed Destination / diverged path) — stop flying
+					-- rather than sail off the map.
+					cancelAutoFlight()
+				end
 			end
 		else
+			-- Landing: pin the player to the Destination's column and kill horizontal drift so
+			-- flight momentum can't coast them sideways off the pad into a hazard. With no
+			-- horizontal velocity they drop straight down onto the intended spot.
+			if AutoFlyConfigs.SnapToDestinationOnLanding ~= false then
+				local dst = route.destination.Position
+				root.CFrame = (root.CFrame - root.CFrame.Position) + Vector3.new(dst.X, root.Position.Y, dst.Z)
+				local v = root.AssemblyLinearVelocity
+				root.AssemblyLinearVelocity = Vector3.new(0, math.min(v.Y, 0), 0)
+			end
 			AutoFlyCamera.update(dt, root, route.destination, true)
 		end
 		return

@@ -25,7 +25,7 @@ local HudConfigs = {
 
 	--- Level-up toast sits below the Long Jump counter (code-built JumpCounter frame).
 	LevelUp = {
-		GapBelowJumpCounterPx = 10,
+		GapBelowJumpCounterPx = 14,
 		--- Used when JumpCounter is not present yet.
 		FallbackYOffsetScale = 0.05,
 	},

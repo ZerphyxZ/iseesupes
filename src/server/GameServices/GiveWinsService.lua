@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
+local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 
@@ -211,7 +212,11 @@ local function onWinButtonTouched(button: Model, touchPart: BasePart, hit: BaseP
 		return
 	end
 
-	local grant = winAmount
+	-- Rebirth perk: permanent Wins multiplier on stage-end claims (the core grind).
+	-- Only button claims scale with rebirths — gift wins (login/playtime/starter) don't.
+	local data = DataService:GetData(player)
+	local rebirths = (data and type(data.Rebirths) == "number") and data.Rebirths or 0
+	local grant = RebirthConfigs.ApplyWinsBoost(winAmount, rebirths)
 	if not DataService:AddWins(player, grant) then
 		rollbackClaim(player, button)
 		return

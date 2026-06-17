@@ -31,6 +31,8 @@ local ICON_GIFT = "rbxassetid://80861029762439"
 
 local LoginRewardConfigs = {
 	SecondsPerDay = 86400,
+	--- Shift streak day rollover from UTC midnight (e.g. -18000 = US Eastern midnight).
+	DayBoundaryUtcOffsetSeconds = -18000,
 
 	StreakDays = {
 		[1] = { XpPercentOfStep = 15, Wins = 0, Icon = ICON_SPEED },
@@ -64,11 +66,17 @@ local LoginRewardConfigs = {
 		MinTutorialStep = 6,
 		--- Seconds after join before auto-showing popups (spawn intro settles).
 		AutoShowDelay = 4,
+		--- HUD gift button under GUI.HUD (opens DailyStreak when claimable).
+		HudButtonPath = { "Left", "DailyStreak" },
 	},
 }
 
 function LoginRewardConfigs.GetDayNumber(unixTime: number): number
-	return math.floor(unixTime / LoginRewardConfigs.SecondsPerDay)
+	local offset = LoginRewardConfigs.DayBoundaryUtcOffsetSeconds
+	if typeof(offset) ~= "number" then
+		offset = 0
+	end
+	return math.floor((unixTime + offset) / LoginRewardConfigs.SecondsPerDay)
 end
 
 function LoginRewardConfigs.GetStreakDayReward(dayInCycle: number): StreakDayReward

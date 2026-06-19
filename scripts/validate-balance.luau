@@ -88,7 +88,7 @@ local ThrustUpgradeConfigs = loadUpg()
 
 -- 3) Simulation: per-level table
 print("")
-print("LVL | walk | flight | drain/s | tank(60)s | studs/tank | refill60 | refill w/all packs")
+print("LVL | walk | flight | drain/s | tank(base)s | studs/tank | refillBase | refill w/all packs")
 local function row(level: number)
 	local walk = SpeedConfigs.GetSpeedFromLevel(level)
 	local flight = SpeedConfigs.GetFlightForwardSpeed(level)
@@ -174,13 +174,19 @@ for level = 1, 120 do
 	prevDrain, prevFlight, prevWalk = d, f, w
 end
 
--- Anxiety invariant: base tank never covers a full stage at entry level
+-- Coverage invariant: a base tank must not trivially fly a WHOLE stage nonstop.
+-- Threshold relaxed 0.80 → 0.90 for the walk/jump + discrete-ToggleFly-hop design
+-- (flight is no longer how you cross a whole stage; the base 100 tank intentionally
+-- covers the short early stages and the ≤90-fuel worst hop — see Thrust.BaseMaxFuel).
 for _, s in stages do
 	local flight = SpeedConfigs.GetFlightForwardSpeed(s.lvl)
 	local drain = SpeedConfigs.GetFlightDrainPerSecond(s.lvl)
 	local coverage = flight * (Thrust.BaseMaxFuel / drain) / s.len
-	assert(coverage < 0.80, "S" .. s.n .. " base-tank coverage too high: " .. coverage)
+	assert(coverage < 0.90, "S" .. s.n .. " base-tank coverage too high: " .. coverage)
 end
+-- Base tank must cover the longest ToggleFly hop (~90 fuel, Stage 6 choiceRoom) so
+-- Stages 5-6 clear without thrust packs — the whole point of the 60→100 base bump.
+assert(Thrust.BaseMaxFuel >= 90, "base tank must cover the longest ToggleFly hop (~90 fuel)")
 
 -- Seconds-per-tank (base 60) must shrink with level → upgrades always wanted
 local t1 = Thrust.BaseMaxFuel / SpeedConfigs.GetFlightDrainPerSecond(1)

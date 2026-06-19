@@ -36,8 +36,10 @@ local heartbeatConn: RBXScriptConnection? = nil
 local abilityEndedConn: RBXScriptConnection? = nil
 local activeRoute: RouteState? = nil
 local startRequestPending = false
+local startRequestPendingAt = -math.huge
 local lastAutoStartAt = -math.huge
 local lastZoneRoot: Instance? = nil
+local lastGroundedAt = -math.huge
 local DoubleJumpService: any = nil
 
 local function getAttrName(): string
@@ -75,13 +77,11 @@ local function getRoot(): BasePart?
 end
 
 --- True only when the character is standing on a surface (not jumping/falling/airborne).
+--- Uses a short grace window to cover the 1–2 frame FloorMaterial flicker that happens when
+--- stepping onto an invisible (Transparency=1) pad — a brief Air reading on contact would
+--- otherwise block the trigger on exactly the frames the player first touches the pad.
 local function isGrounded(): boolean
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return false
-	end
-	return humanoid.FloorMaterial ~= Enum.Material.Air
+	return os.clock() - lastGroundedAt <= 0.1
 end
 
 local function setAutoFlyActive(active: boolean)
@@ -149,7 +149,17 @@ local function onAbilityEnded()
 end
 
 local function tryBeginAutoFlight(zoneRoot: Instance, destination: BasePart)
-	if startRequestPending or isFlying() or activeRoute then
+	if startRequestPending then
+		-- Unstick if the RequestStart network call has been hanging too long. On a bad mobile
+		-- connection the Knit RemoteFunction promise can hang without ever resolving or rejecting,
+		-- leaving startRequestPending = true until the character respawns and silently breaking
+		-- the pad for the rest of the run.
+		if os.clock() - startRequestPendingAt < 4 then
+			return
+		end
+		startRequestPending = false
+	end
+	if isFlying() or activeRoute then
 		return
 	end
 
@@ -172,6 +182,7 @@ local function tryBeginAutoFlight(zoneRoot: Instance, destination: BasePart)
 	end
 
 	startRequestPending = true
+	startRequestPendingAt = os.clock()
 	DoubleJumpService:RequestStart():andThen(function(ok: boolean)
 		startRequestPending = false
 		if not ok or not isAutoFlyEnabled() then
@@ -223,17 +234,46 @@ local function tickAutoFly(dt: number)
 		return
 	end
 
+	-- Refresh the grounded cache every frame so isGrounded()'s grace window is accurate.
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+		lastGroundedAt = os.clock()
+	end
+
 	local zoneRoot = ToggleFlyZone.getActiveZoneRoot(root)
 	if zoneRoot ~= lastZoneRoot and zoneRoot == nil then
 		lastAutoStartAt = -math.huge
 	end
 	lastZoneRoot = zoneRoot
 
+	-- Stale-route watchdog: if a route was created but flight never actually started — the server
+	-- never set DjAbilityPhase (a dropped SetHolding, a packet loss, the hold not taking) — then
+	-- activeRoute stays non-nil and silently blocks tryBeginAutoFlight on EVERY pad in EVERY stage
+	-- for the rest of the run ("it broke in the whole game"). The legit not-yet-flying window after
+	-- a start is one network round-trip; 2s is far beyond that, so clearing here only ever catches
+	-- the jammed case and lets the next step retry.
+	if activeRoute and not isFlying() then
+		if os.clock() - activeRoute.startedAt > 2 then
+			clearRoute(true)
+		end
+	end
+
 	local route = activeRoute
 	if route and isFlying() then
 		if not route.landing then
-			local steerDir = computeSteerDirection(root, route.destination)
-			AutoFlyState.setSteerOverride(steerDir)
+			local elapsed = os.clock() - route.startedAt
+			local riseSeconds = AutoFlyConfigs.AutoFlyRiseSeconds
+			if typeof(riseSeconds) ~= "number" then
+				riseSeconds = 0.5
+			end
+			if elapsed < riseSeconds then
+				-- Rise phase: clear the steer override so the server falls back to the initial
+				-- flight heading. LaunchRiseVelocity handles vertical lift; we just avoid pulling
+				-- the player horizontally toward the Destination until they've cleared the step.
+				AutoFlyState.clear()
+			else
+				AutoFlyState.setSteerOverride(computeSteerDirection(root, route.destination))
+			end
 			AutoFlyCamera.update(dt, root, route.destination)
 
 			local toTarget = route.destination.Position - root.Position
@@ -326,6 +366,7 @@ function AutoFlyController:KnitStart()
 		clearRoute(true)
 		lastZoneRoot = nil
 		startRequestPending = false
+		lastGroundedAt = -math.huge
 	end)
 
 	if heartbeatConn then

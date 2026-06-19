@@ -11,7 +11,7 @@ local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 
 export type Milestone = {
 	Minutes: number,
-	--- "Wins" | "Speed" | "Thrust" | "Boost".
+	--- "Wins" | "Speed" | "ThrustRunBonus" | "Boost".
 	Type: string,
 	--- Wins / Thrust: flat amount. Speed: uses XpPercentOfStep. Boost: uses DurationSeconds.
 	Amount: number?,
@@ -19,6 +19,8 @@ export type Milestone = {
 	DurationSeconds: number?,
 	--- Short label for the popup, e.g. "+15 Wins".
 	Label: string,
+	--- Optional toast copy; falls back to Label.
+	ToastLabel: string?,
 	Icon: string,
 }
 
@@ -43,7 +45,14 @@ local PlaytimeRewardConfigs = {
 	Milestones = {
 		[1] = { Minutes = 2, Type = "Wins", Amount = 15, Label = "+15 Wins", Icon = ICON_WINS },
 		[2] = { Minutes = 5, Type = "Speed", XpPercentOfStep = 25, Label = "Speed Boost", Icon = ICON_SPEED },
-		[3] = { Minutes = 10, Type = "Thrust", Amount = 35, Label = "+35 Thrust", Icon = ICON_SPEED },
+		[3] = {
+			Minutes = 10,
+			Type = "ThrustRunBonus",
+			Amount = 35,
+			Label = "+35 Thrust (One Run)",
+			ToastLabel = "+35 Thrust for your next flight",
+			Icon = ICON_SPEED,
+		},
 		[4] = { Minutes = 15, Type = "Wins", Amount = 50, Label = "+50 Wins", Icon = ICON_WINS },
 		[5] = { Minutes = 20, Type = "Boost", DurationSeconds = 90, Label = "90s Power Boost", Icon = ICON_GIFT },
 	} :: { [number]: Milestone },

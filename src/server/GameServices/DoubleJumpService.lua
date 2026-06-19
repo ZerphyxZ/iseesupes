@@ -889,6 +889,13 @@ function DoubleJumpService:_endAbility(player: Player)
 
 	player:SetAttribute(PHASE_ATTR, nil)
 	self.Client.AbilityEnded:Fire(player)
+
+	pcall(function()
+		local boost = Knit.GetService("BoostService")
+		if boost and boost.ClearRunThrustBonus then
+			boost:ClearRunThrustBonus(player)
+		end
+	end)
 end
 
 function DoubleJumpService:HasActiveSession(player: Player): boolean

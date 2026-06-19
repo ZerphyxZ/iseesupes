@@ -82,20 +82,21 @@ end
 
 export type CurveAnchor = { level: number, value: number }
 
---- Walk / swim speed (Humanoid.WalkSpeed). Fast early so the game feels snappy
---- (L1=16 = Roblox default, ~2x the old start), then eased back to ~33-35 by
---- L22-25 so the S8/S9 pillar-hop jumps (BasicJump range = walk × 0.815) stay
---- precise and don't overshoot the small pillar tops. Flight is separate. Rebalanced
---- 2026-06-14 to fix "feels slow" / low session time (reverses the old slow-learn curve).
+--- Walk / swim speed (Humanoid.WalkSpeed). Steep early ramp for a strong power
+--- fantasy in the first session (L1→L5 gives +20 studs/s); tapers by L16–25
+--- so the curve converges back to the existing endgame values. BasicJump horizontal
+--- speed is decoupled (CharacterConfigs.BasicJump.JumpHorizontalSpeed = 34) so walk
+--- speed no longer affects jump range — high values at L20-25 are safe. Flight is
+--- separate. Rebalanced 2026-06-19 to steepen early curve (was L1=20→L25=94).
 SpeedConfigs.WalkSpeedCurve = {
-	{ level = 1, value = 20 },
-	{ level = 3, value = 26 },
-	{ level = 5, value = 34 },
-	{ level = 8, value = 44 },
-	{ level = 12, value = 56 },
-	{ level = 16, value = 68 },
-	{ level = 20, value = 80 },
-	{ level = 25, value = 94 },
+	{ level = 1, value = 26 },
+	{ level = 3, value = 35 },
+	{ level = 5, value = 46 },
+	{ level = 8, value = 58 },
+	{ level = 12, value = 70 },
+	{ level = 16, value = 80 },
+	{ level = 20, value = 88 },
+	{ level = 25, value = 96 },
 	{ level = 32, value = 110 },
 	{ level = 40, value = 125 },
 	{ level = 50, value = 142 },
@@ -293,14 +294,20 @@ end
 -- Thrust = flight bar (SupesMobile). Refills on the ground; drains while flying.
 -- Solar energy (heat vision) lives in HeatVisionConfigs.SolarEnergy — separate profile fields.
 local Thrust = {
-	BaseMaxFuel = 60,
+	--- Base tank for a fresh player. 100 covers every ToggleFly hop in the game (the longest —
+	--- Stage 6's choiceRoom — is ~90 fuel) with a ~10-fuel margin, so Stages 5-6 clear on base
+	--- thrust without buying packs. Packs/rebirth are then a power-fantasy boost for the long
+	--- Stage 7 crossing and stockpiling, not a mid-game progression gate. (Raised 60→100
+	--- 2026-06-19: melt gates are dead → thrust is the real stage gate; falling on a dry hop
+	--- bounces players to the lobby, so a too-small base tank was the Stage 5-6 quit wall.)
+	BaseMaxFuel = 100,
 	--- Hard ceiling on PERMANENT Max Thrust (base + thrust packs + rebirth perk). The whole
 	--- game's fly demand tops out around 270 fuel (a full Stage 7 crossing); every ToggleFly
-	--- hop is ≤ 90. 400 lets all three thrust packs (+280) and ~6 rebirths land — flying
-	--- Stage 7 nonstop is the fully-upgraded reward — while killing unbounded stockpiling and
-	--- wasted wins on repeat Tier-1 buys. Temporary boosts set ThrustMax directly and
-	--- intentionally bypass this. 0 = no cap.
-	MaxFuelCap = 400,
+	--- hop is ≤ 90. 440 lets all three thrust packs (+280) and ~6 rebirths land on top of the
+	--- 100 base — flying Stage 7 nonstop is the fully-upgraded reward — while killing unbounded
+	--- stockpiling and wasted wins on repeat Tier-1 buys. Temporary boosts set ThrustMax
+	--- directly and intentionally bypass this. 0 = no cap.
+	MaxFuelCap = 440,
 	--- Drain per second at L1 flight speed. Actual drain RISES with flight speed
 	--- (see GetFlightDrainPerSecond) so faster flight burns hotter — one tank
 	--- should never comfortably cover a full stage without thrust upgrades.

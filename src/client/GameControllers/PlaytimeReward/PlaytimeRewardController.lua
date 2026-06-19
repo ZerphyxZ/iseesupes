@@ -271,7 +271,8 @@ function PlaytimeRewardController:KnitStart()
 				isClaiming = false
 				if ok then
 					local m = PlaytimeRewardConfigs.GetMilestone(index)
-					NotificationManager.show("Playtime reward: " .. (m and m.Label or "claimed") .. "!", "Success")
+					local toastLabel = if m then m.ToastLabel or m.Label else "claimed"
+					NotificationManager.show("Playtime reward: " .. toastLabel .. "!", "Success")
 					popup.Visible = false
 				end
 			end)

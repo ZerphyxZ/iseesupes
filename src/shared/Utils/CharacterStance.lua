@@ -2,6 +2,8 @@
 
 -- Resets a character to a standing, animated rig after flight, ragdoll, or prone poses.
 
+local DEFAULT_MAX_HEALTH = 100
+
 local CharacterStance = {}
 
 function CharacterStance.buildUprightCFrame(root: BasePart?, baseCf: CFrame): CFrame
@@ -55,6 +57,11 @@ function CharacterStance.applyObstacleStyleHit(
 	end
 
 	humanoid.Health = 0
+end
+
+function CharacterStance.resetHealthToFull(humanoid: Humanoid)
+	humanoid.MaxHealth = DEFAULT_MAX_HEALTH
+	humanoid.Health = DEFAULT_MAX_HEALTH
 end
 
 function CharacterStance.resetToStanding(character: Model, uprightCFrame: CFrame?)

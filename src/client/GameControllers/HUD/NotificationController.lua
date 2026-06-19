@@ -32,6 +32,35 @@ local lastMessage = ""
 local lastShownAt = -math.huge
 local lastCooldownRejectAt = -math.huge
 
+--- Messages with the same key replace the prior toast instead of stacking (avatar equip spam).
+local function getToastReplaceKey(message: string): string?
+	if string.sub(message, 1, 16) == "Equipped avatar " then
+		return "avatar_upgrade"
+	end
+	if string.sub(message, 1, 7) == "Avatar " and string.find(message, "unlocked!", 1, true) then
+		return "avatar_upgrade"
+	end
+	if message == "Not enough wins!" or message == "Unlock the previous avatar first!" then
+		return "avatar_upgrade_error"
+	end
+	if string.sub(message, 1, 14) == "Avatar model not" or message == "Upgrade button is not configured." then
+		return "avatar_upgrade_error"
+	end
+	return nil
+end
+
+local function dismissToastsWithKey(key: string)
+	for i = #activeToasts, 1, -1 do
+		local toast = activeToasts[i]
+		if toast:GetAttribute("ToastReplaceKey") == key then
+			table.remove(activeToasts, i)
+			if toast.Parent then
+				toast:Destroy()
+			end
+		end
+	end
+end
+
 local COLORS = {
 	Success = {
 		bg = Color3.fromRGB(28, 72, 48),
@@ -95,7 +124,10 @@ end
 
 local function showToast(message: string, kind: string?)
 	local now = os.clock()
-	if message == lastMessage and now - lastShownAt < DEBOUNCE_SEC then
+	local replaceKey = getToastReplaceKey(message)
+	if replaceKey then
+		dismissToastsWithKey(replaceKey)
+	elseif message == lastMessage and now - lastShownAt < DEBOUNCE_SEC then
 		return
 	end
 	lastMessage = message
@@ -152,6 +184,10 @@ local function showToast(message: string, kind: string?)
 	label.Text = message
 	label.ZIndex = 21
 	label.Parent = toast
+
+	if replaceKey then
+		toast:SetAttribute("ToastReplaceKey", replaceKey)
+	end
 
 	toast.Parent = parent
 	table.insert(activeToasts, toast)

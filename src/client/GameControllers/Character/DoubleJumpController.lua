@@ -20,6 +20,7 @@ local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
 local AutoFlyState = require(script.Parent.Parent.Parent.Modules.AutoFlyState)
+local AutoFlyConfigs = require(ReplicatedStorage.Shared.Configs.AutoFlyConfigs)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 
@@ -711,6 +712,20 @@ local function getCameraRelativeSteerInput(state: CharacterAbilityState): Vector
 	local autoDir = AutoFlyState.getSteerOverride()
 	if autoDir and autoDir.Magnitude > 0.01 then
 		return autoDir
+	end
+
+	-- Rise phase for manual fly: suppress horizontal steer for the first riseSeconds after
+	-- takeoff so LaunchRiseVelocity can clear steps/edges before the camera heading takes over.
+	-- AutoFly pads clear their own override during rise (AutoFlyController.tickAutoFly), which
+	-- falls through to here and also gets suppressed — one consistent rise window for both modes.
+	if abilityActive and abilityStartedAt then
+		local riseSeconds = AutoFlyConfigs.AutoFlyRiseSeconds
+		if typeof(riseSeconds) ~= "number" then
+			riseSeconds = 0.5
+		end
+		if riseSeconds > 0 and os.clock() - abilityStartedAt < riseSeconds then
+			return Vector3.zero
+		end
 	end
 
 	local steering = getSteeringTuning()
@@ -2032,6 +2047,23 @@ setupCharacter = function(character: Model)
 			syncPhaseFromAttribute()
 			if clientOwnsFlightPhysics() then
 				tickClientFlightPhysics(state, dt, currentPhase)
+				-- Rise phase: after tickPhase sets velocity (which always has a forward component
+				-- via velocityAlongClimbAngle), zero X/Z so the player goes straight up for
+				-- AutoFlyRiseSeconds. Without this, flightDirection's forwardSpeed pushes the player
+				-- into steps/edges on takeoff. LaunchRiseVelocity still provides the Y lift.
+				if abilityStartedAt then
+					local riseSeconds = AutoFlyConfigs.AutoFlyRiseSeconds
+					if typeof(riseSeconds) ~= "number" then
+						riseSeconds = 0.5
+					end
+					if riseSeconds > 0 and os.clock() - abilityStartedAt < riseSeconds then
+						local riseRoot = state.character:FindFirstChild("HumanoidRootPart") :: BasePart?
+						if riseRoot then
+							local v = riseRoot.AssemblyLinearVelocity
+							riseRoot.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
+						end
+					end
+				end
 			end
 			tickLandingWatchdog(state)
 		end

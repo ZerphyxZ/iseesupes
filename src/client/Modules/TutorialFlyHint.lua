@@ -99,6 +99,21 @@ local function setGuiPartVisible(guiObject: GuiObject?, visible: boolean)
 end
 
 function TutorialFlyHint.ensureHidden()
+	-- Tear down any tracked layer FIRST. ensureHidden means "no hint is showing", so only
+	-- disabling the GUI (and leaving activeLayer set) would leave isActive() permanently true.
+	-- Because AutoFly is suppressed while a fly hint is active (AutoFlyConfigs.SkipWhenTutorialFlyHintActive),
+	-- that silently DEADLOCKS AutoFly on every pad for the rest of the session — and the hint's GUI
+	-- is hidden, so nothing on screen explains why stepping on a pad does nothing. Clearing it here
+	-- keeps activeLayer in sync with what's actually visible (also stops the leaked heartbeat anim).
+	if activeLayer then
+		HudAnimations.stopHeartbeat(activeLayer.heartbeatTarget)
+		if activeLayer.arrowBobConn then
+			activeLayer.arrowBobConn:Disconnect()
+			activeLayer.arrowBobConn = nil
+		end
+		disconnectAll(activeLayer.dismissConns)
+		activeLayer = nil
+	end
 	local playerGui = player:FindFirstChild("PlayerGui") :: PlayerGui?
 	if not playerGui then
 		return
@@ -316,7 +331,11 @@ function TutorialFlyHint.showLowThrustHint(): boolean
 end
 
 function TutorialFlyHint.isActive(): boolean
-	return activeLayer ~= nil
+	-- "Active" must mean the hint is actually VISIBLE. Deriving it from GUI visibility (not just
+	-- activeLayer ~= nil) guards against any path that hides the GUI without clearing the layer —
+	-- otherwise AutoFly stays suppressed with no on-screen hint to explain it.
+	local layer = activeLayer
+	return layer ~= nil and layer.screenGui.Enabled == true
 end
 
 function TutorialFlyHint.dismiss()

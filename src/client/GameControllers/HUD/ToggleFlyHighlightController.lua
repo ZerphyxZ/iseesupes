@@ -106,6 +106,8 @@ end
 
 local glowPart: BasePart? = nil
 local glowOutline: SelectionBox? = nil
+local flyBeacon: BillboardGui? = nil
+local beaconBaseHeight = 0
 local chime: Sound? = nil
 local currentPad: BasePart? = nil
 local lastChimePad: BasePart? = nil
@@ -165,6 +167,49 @@ local function ensureGlowPart(): BasePart
 	box.Parent = p
 	glowOutline = box
 
+	-- "FLY! ▼" beacon floated over the launch runway: marks the separate "step here to fly"
+	-- strip so the two-step pad can't be misread as "standing on the arming pad does nothing".
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "FlyBeacon"
+	bb.Adornee = p
+	bb.Size = UDim2.fromOffset(230, 120)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 220
+	bb.Enabled = false
+	bb.Parent = p
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, 0, 0.58, 0)
+	title.Font = Enum.Font.GothamBlack
+	title.TextScaled = true
+	title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	title.Text = ToggleFlyConfigs.LaunchBeaconText or "FLY!"
+	title.Parent = bb
+	local titleStroke = Instance.new("UIStroke")
+	titleStroke.Thickness = 3
+	titleStroke.Color = Color3.fromRGB(0, 0, 0)
+	titleStroke.Parent = title
+
+	local sub = Instance.new("TextLabel")
+	sub.Name = "Sub"
+	sub.BackgroundTransparency = 1
+	sub.Position = UDim2.new(0, 0, 0.58, 0)
+	sub.Size = UDim2.new(1, 0, 0.42, 0)
+	sub.Font = Enum.Font.GothamBlack
+	sub.TextScaled = true
+	sub.TextColor3 = Color3.fromRGB(255, 255, 255)
+	sub.Text = ToggleFlyConfigs.LaunchBeaconSubtext or "▼ step on the glow ▼"
+	sub.Parent = bb
+	local subStroke = Instance.new("UIStroke")
+	subStroke.Thickness = 3
+	subStroke.Color = Color3.fromRGB(0, 0, 0)
+	subStroke.Parent = sub
+
+	flyBeacon = bb
+
 	return p
 end
 
@@ -192,6 +237,9 @@ local function clearGlow()
 	end
 	if glowOutline then
 		glowOutline.Visible = false
+	end
+	if flyBeacon then
+		flyBeacon.Enabled = false
 	end
 end
 
@@ -236,6 +284,19 @@ local function glowOn(trigger: BasePart)
 		glowOutline.Visible = true
 	end
 
+	-- Float the "FLY!" beacon above the runway's top surface; pulse() bobs it from this height.
+	if ToggleFlyConfigs.LaunchBeaconEnabled ~= false and flyBeacon then
+		local height = ToggleFlyConfigs.LaunchBeaconHeightStuds
+		if typeof(height) ~= "number" then
+			height = 6
+		end
+		beaconBaseHeight = (p.Size.Y * 0.5) + height
+		flyBeacon.StudsOffsetWorldSpace = Vector3.new(0, beaconBaseHeight, 0)
+		flyBeacon.Enabled = true
+	elseif flyBeacon then
+		flyBeacon.Enabled = false
+	end
+
 	-- One-shot arcade chime on entry (guarded so hovering the pad edge can't machine-gun it).
 	local now = os.clock()
 	if trigger ~= lastChimePad or now - lastChimeAt > 1 then
@@ -258,6 +319,19 @@ local function pulse()
 	local speed = ToggleFlyConfigs.HighlightPulseSpeed or 6
 	local s = 0.5 + 0.5 * math.sin(os.clock() * speed)
 	p.Transparency = minT + (maxT - minT) * s
+
+	if flyBeacon and flyBeacon.Enabled then
+		local amp = ToggleFlyConfigs.LaunchBeaconBounceStuds
+		if typeof(amp) ~= "number" then
+			amp = 1.4
+		end
+		local bspeed = ToggleFlyConfigs.LaunchBeaconBounceSpeed
+		if typeof(bspeed) ~= "number" then
+			bspeed = 5
+		end
+		local bob = amp * (0.5 + 0.5 * math.sin(os.clock() * bspeed))
+		flyBeacon.StudsOffsetWorldSpace = Vector3.new(0, beaconBaseHeight + bob, 0)
+	end
 end
 
 local function tick(dt: number)

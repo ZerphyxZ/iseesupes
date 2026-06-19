@@ -108,8 +108,10 @@ local function dispatchGrant(player: Player, data: any, index: number): string
 		DataService:Replicate(player)
 		DataService:NotifyLeaderboards(player, { "Speed" })
 		DataService:ForceSave(player)
-	elseif m.Type == "Thrust" then
-		DataService:AddFuel(player, m.Amount or 0)
+	elseif m.Type == "ThrustRunBonus" then
+		if BoostService and BoostService:GrantRunThrustBonus(player, m.Amount or 35) then
+			return m.ToastLabel or m.Label
+		end
 	elseif m.Type == "Boost" then
 		if BoostService then
 			BoostService:GrantBoost(player)

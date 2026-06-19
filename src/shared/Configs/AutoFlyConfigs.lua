@@ -21,6 +21,11 @@ local AutoFlyConfigs = {
 	--- onto the intended spot. Set false to keep the old free-coast landing.
 	SnapToDestinationOnLanding = true,
 	AutoStartDebounceSeconds = 1.25,
+	--- Seconds to steer straight UP at takeoff before curving toward Destination. Clears steps/edges
+	--- that would otherwise catch the player when the Destination is nearly horizontal at launch.
+	--- Server's DirectionLerp (≈10/s) naturally smooths the up→Destination transition. Set 0 to
+	--- disable.
+	AutoFlyRiseSeconds = 0.5,
 	SkipWhenTutorialFlyHintActive = true,
 	CameraOffset = Vector3.new(0, 3, 22),
 	CameraLookAhead = 8,

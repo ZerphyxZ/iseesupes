@@ -53,6 +53,7 @@ function LoginRewardController:KnitStart()
 	local autoShownOffline = false
 	local autoShownStreakDay: number? = nil
 	local hudClaimButton: GuiObject? = nil
+	local updateHudClaimButton: () -> ()
 
 	local function closeFrame(frame: Frame, onDone: (() -> ())?)
 		HudAnimations.closeFrameY(frame, nil, onDone)
@@ -126,6 +127,9 @@ function LoginRewardController:KnitStart()
 	end
 
 	local function openStreak()
+		if offlineOpen then
+			return
+		end
 		if streakOpen then
 			return
 		end
@@ -178,6 +182,7 @@ function LoginRewardController:KnitStart()
 		awayLabel.Text = "You were away " .. LoginRewardConfigs.FormatAway(state.awaySeconds)
 		amountLabel.Text = "+" .. NumberFormatter.Format(state.offlineXp) .. " Speed"
 		HudAnimations.openFrameY(offlineFrame)
+		updateHudClaimButton()
 	end
 
 	local function closeOfflineFrame()
@@ -185,6 +190,7 @@ function LoginRewardController:KnitStart()
 			return
 		end
 		offlineOpen = false
+		updateHudClaimButton()
 		closeFrame(offlineFrame, maybeOpenStreakNext)
 	end
 
@@ -205,13 +211,24 @@ function LoginRewardController:KnitStart()
 			:catch(function() end)
 	end)
 
-	local function updateHudClaimButton()
+	local function shouldDeferStreakForOffline(): boolean
+		if offlineOpen then
+			return true
+		end
+		if state and state.offlineXp > 0 then
+			return true
+		end
+		return false
+	end
+
+	local function updateHudClaimButtonImpl()
 		if not hudClaimButton then
 			return
 		end
 		local claimable = state ~= nil and state.canClaim == true
-		hudClaimButton.Visible = claimable
+		hudClaimButton.Visible = claimable and not shouldDeferStreakForOffline()
 	end
+	updateHudClaimButton = updateHudClaimButtonImpl
 
 	local function resolveHudClickTarget(root: Instance): GuiButton?
 		if root:IsA("GuiButton") then
@@ -298,7 +315,7 @@ function LoginRewardController:KnitStart()
 			return
 		end
 
-		if state.canClaim and not streakOpen then
+		if state.canClaim and not streakOpen and not shouldDeferStreakForOffline() then
 			local newDay = state.dayInCycle
 			local becameClaimable = lastCanClaim == false
 			if autoShownStreakDay ~= newDay or becameClaimable then

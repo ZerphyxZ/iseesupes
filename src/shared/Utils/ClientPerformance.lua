@@ -30,8 +30,13 @@ function ClientPerformance.isLowEnd(): boolean
 			return UserSettings():GetService("UserGameSettings")
 		end)
 		if ok and gameSettings then
+			-- SavedQualityLevel is an Enum.SavedQualitySetting (EnumItem), not a number: Automatic = 0
+			-- (let Roblox auto-pick — not necessarily low), QualityLevel1..3 are the lowest manual
+			-- tiers. Read .Value. (The old `typeof(quality) == "number"` guard was always false, so
+			-- this branch never fired and only mobile was ever flagged low-end.)
 			local quality = gameSettings.SavedQualityLevel
-			if typeof(quality) == "number" and quality > 0 and quality <= 3 then
+			local level = if typeof(quality) == "EnumItem" then quality.Value else quality
+			if typeof(level) == "number" and level > 0 and level <= 3 then
 				low = true
 			end
 		end

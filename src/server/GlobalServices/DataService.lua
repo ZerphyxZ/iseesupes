@@ -1003,12 +1003,11 @@ local function finishStudioReset(player: Player, profile: any)
 
 	applyProfileMigrations(profile)
 
-	-- After reset, promote tutorial to Complete so reward auto-show gates (MinTutorialStep=6) pass.
-	-- migrateFlyTutorialStep demotes Complete→GoStage1 when TutorialThrustShopIntroShown=false,
-	-- so we set both flags here (after migrations have already run).
-	profile.Data.TutorialStep = TutorialConfigs.Step.Complete
-	profile.Data.TutorialThrustShopIntroShown = true
-	profile.Data.TutorialFlyIntroShown = true
+	profile.Data.TutorialStep = TutorialConfigs.Step.GoTreadmill
+	profile.Data.TutorialThrustHintShown = false
+	profile.Data.TutorialThrustShopIntroShown = false
+	profile.Data.TutorialFlyIntroShown = false
+	profile.Data.TutorialLowThrustFlyHintShown = false
 
 	-- ThrustPower lives on the Player and survives profile wipe; stale values override profile max.
 	player:SetAttribute(ThrustConfigs.PowerAttribute, profile.Data.ThrustMax)

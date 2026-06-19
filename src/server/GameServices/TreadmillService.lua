@@ -711,6 +711,10 @@ function TreadmillService:RespawnFromKillPart(player: Player, hazardPart: BasePa
 	end
 
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		CharacterStance.resetHealthToFull(humanoid)
+	end
 	-- Where to respawn after a hazard death. Default (RespawnAtLobbyOnKill=true): the lobby
 	-- SpawnLocation, so a death restarts the run (stages are easy). Flip the flag to false to
 	-- respawn at the checkpoint of the stage they died in (fresh players / missing → lobby).

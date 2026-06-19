@@ -42,6 +42,7 @@ local stage1ProximityConn: RBXScriptConnection? = nil
 local stage1FlyUiShown = false
 local lastStage1FlyTriggerAt = -math.huge
 local laserHintBrokenConn: RBXScriptConnection? = nil
+local lastSyncedTutorialStep: number? = nil
 local attachBeamToStage1Wall: () -> ()
 
 local STAGE1_GATE_NUM = 1
@@ -951,6 +952,20 @@ local function tryThrustAffordableBeam(data: any)
 	end)
 end
 
+local function resetTutorialSessionState()
+	thrustShopIntroTriggered = false
+	thrustHintTriggered = false
+	stage1FlyUiShown = false
+	activeStep = 0
+	thrustHintBeamUntil = 0
+	table.clear(affordableThrustHintTiers)
+	cancelRetry()
+	disconnectStage1Listeners()
+	disconnectLaserHintBrokenListener()
+	TutorialLaserHint.hide()
+	destroyBeamVisuals()
+end
+
 local function syncTutorialFromData(data: any?)
 	if not data then
 		return
@@ -962,6 +977,10 @@ local function syncTutorialFromData(data: any?)
 	end
 
 	local step = getTutorialStep(data)
+	if lastSyncedTutorialStep ~= nil and step < lastSyncedTutorialStep then
+		resetTutorialSessionState()
+	end
+	lastSyncedTutorialStep = step
 
 	if os.clock() < thrustHintBeamUntil and step >= TutorialConfigs.Step.CoreDone then
 		return

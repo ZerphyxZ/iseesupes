@@ -247,6 +247,9 @@ local function onWinButtonTouched(button: Model, touchPart: BasePart, hit: BaseP
 	if BoostService and BoostService:IsBoostActive(player) then
 		BoostService:ClearBoost(player)
 	end
+	if BoostService and BoostService.ClearRunThrustBonus then
+		BoostService:ClearRunThrustBonus(player)
+	end
 
 	-- End flight on the server and signal the client.
 	-- _endAbility fires AbilityEnded to the client via remote event — we MUST

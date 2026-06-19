@@ -55,6 +55,20 @@ local ToggleFlyConfigs = {
 	--- Kid-friendly arcade chime played once when you step onto a pad. Swap to taste.
 	HighlightSoundId = "rbxassetid://4612375233",
 	HighlightSoundVolume = 0.6,
+
+	-- ── "Walk forward onto the runway" beacon ──────────────────────────────
+	-- A bouncing FLY! + down-arrow billboard floated over the LAUNCH runway (the tagged parent)
+	-- while a pad is armed. The two-step pad is easy to misread — players stop on the big arming
+	-- pad (which glows) and think it's broken, because the part that actually launches is a
+	-- separate strip ahead. This beacon marks that strip as the "step here to fly" target.
+	LaunchBeaconEnabled = true,
+	LaunchBeaconText = "FLY!",
+	LaunchBeaconSubtext = "▼ step on the glow ▼",
+	--- Studs above the runway's top surface the beacon floats.
+	LaunchBeaconHeightStuds = 6,
+	--- Vertical bob amplitude (studs) + speed (rad/sec) so it reads as "come here".
+	LaunchBeaconBounceStuds = 1.4,
+	LaunchBeaconBounceSpeed = 5,
 }
 
 return ToggleFlyConfigs

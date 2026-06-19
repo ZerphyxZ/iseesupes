@@ -47,7 +47,13 @@ local function resetPlayer(player: Player)
 	end
 
 	player:LoadCharacter()
-	print("[DevReset] Profile wiped (", player.Name, ") — TutorialStep=1 (see DataService DATA_VERSION)")
+	print(
+		"[DevReset] Profile wiped (",
+		player.Name,
+		") — tutorial reset to step",
+		1,
+		"(GoTreadmill); foot beam should guide from treadmill"
+	)
 end
 
 function DevResetService:KnitStart()

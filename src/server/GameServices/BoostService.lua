@@ -20,6 +20,71 @@ local DataService: any = nil
 local BOOST_THRUST_MULTIPLIER = 2
 local BOOST_SPEED_MULTIPLIER = 1.5
 
+function BoostService:IsRunThrustBonusActive(player: Player): boolean
+	local profile = DataService:GetProfile(player)
+	if not profile then
+		return false
+	end
+	return type(profile.Data.RunThrustBonusOriginalMax) == "number"
+end
+
+function BoostService:GrantRunThrustBonus(player: Player, amount: number): boolean
+	if not player or not player.Parent then
+		return false
+	end
+	if type(amount) ~= "number" or amount <= 0 then
+		return false
+	end
+
+	local profile = DataService:GetProfile(player)
+	if not profile then
+		return false
+	end
+
+	local data = profile.Data
+	if type(data.RunThrustBonusOriginalMax) == "number" then
+		print("[BoostService] Run thrust bonus already active for", player.Name)
+		return false
+	end
+
+	local currentMax = data.ThrustMax or ThrustConfigs.BaseMaxFuel
+	data.RunThrustBonusOriginalMax = currentMax
+	local boostedMax = currentMax + amount
+
+	player:SetAttribute("RunThrustBonusActive", true)
+	DataService:ApplyUpgradedMax(player, boostedMax)
+
+	print("[BoostService] Run thrust bonus granted for", player.Name, "thrust:", currentMax, "->", boostedMax)
+	return true
+end
+
+function BoostService:ClearRunThrustBonus(player: Player)
+	if not player then
+		return
+	end
+
+	local profile = DataService:GetProfile(player)
+	if not profile then
+		return
+	end
+
+	local data = profile.Data
+	if type(data.RunThrustBonusOriginalMax) ~= "number" then
+		return
+	end
+
+	local restoreThrust = data.RunThrustBonusOriginalMax
+	data.RunThrustBonusOriginalMax = nil
+
+	if player.Parent then
+		player:SetAttribute("RunThrustBonusActive", nil)
+		player:SetAttribute("ThrustPower", restoreThrust)
+		DataService:ApplyUpgradedMax(player, restoreThrust)
+	end
+
+	print("[BoostService] Run thrust bonus cleared for", player.Name, "thrust restored to:", restoreThrust)
+end
+
 function BoostService:IsBoostActive(player: Player): boolean
 	local profile = DataService:GetProfile(player)
 	if not profile then
@@ -108,6 +173,10 @@ end
 
 function BoostService:KnitStart()
 	DataService = Knit.GetService("DataService")
+
+	Players.PlayerRemoving:Connect(function(player: Player)
+		BoostService:ClearRunThrustBonus(player)
+	end)
 end
 
 return BoostService

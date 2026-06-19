@@ -10,6 +10,7 @@ local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfi
 local GiveWinsConfigs = require(ReplicatedStorage.Shared.Configs.GiveWinsConfigs)
 local RebirthConfigs = require(ReplicatedStorage.Shared.Configs.RebirthConfigs)
 local MapWorld = require(ReplicatedStorage.Shared.Utils.MapWorld)
+local CharacterStance = require(ReplicatedStorage.Shared.Utils.CharacterStance)
 local WinAmountParser = require(ReplicatedStorage.Shared.Utils.WinAmountParser)
 
 local GiveWinsService = Knit.CreateService({
@@ -221,6 +222,10 @@ local function onWinButtonTouched(button: Model, touchPart: BasePart, hit: BaseP
 		rollbackClaim(player, button)
 		return
 	end
+
+	pcall(function()
+		CharacterStance.resetHealthToFull(humanoid)
+	end)
 
 	pcall(function()
 		DataService:AdvanceTutorialComplete(player)

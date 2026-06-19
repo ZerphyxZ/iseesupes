@@ -318,8 +318,11 @@ local Thrust = {
 	DrainSpeedExponent = 0.6,
 	TreadmillRefillPerTick = 0,
 	--- Ground refill floor (per second). Intentionally flat across levels —
-	--- leveling speed must NOT erase thrust anxiety.
-	PassiveRefillRate = 7,
+	--- leveling speed must NOT erase thrust anxiety. Raised 7→10 (2026-06-19) so thrust
+	--- comes back a bit faster between hops for smoother early progress; a base-100 tank
+	--- now refills in ~10s (was ~14s). Floor dominates tanks ≤200; bigger upgraded tanks
+	--- stay on the proportional rate below, so the endgame is unchanged.
+	PassiveRefillRate = 10,
 	--- Bigger tanks refill proportionally (rate = max(floor, ThrustMax * this)),
 	--- so a full refill converges to ~20s regardless of upgrades.
 	PassiveRefillPercentOfMax = 0.05,

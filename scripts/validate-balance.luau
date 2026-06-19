@@ -199,8 +199,8 @@ local maxFlight = SpeedConfigs.GetFlightForwardSpeed(200)
 assert(maxFlight / 60 < SpeedConfigs.MaxCountedStudsPerFrame, "MaxCountedStudsPerFrame too low for top flight speed")
 
 -- Refill: flat at base tank, proportional for big tanks
-assert(SpeedConfigs.GetPassiveRefillRate(1, 60) == 7, "base refill should be 7/s")
-assert(SpeedConfigs.GetPassiveRefillRate(50, 60) == 7, "refill must not scale with level")
+assert(SpeedConfigs.GetPassiveRefillRate(1, 60) == 10, "base refill should be 10/s")
+assert(SpeedConfigs.GetPassiveRefillRate(50, 60) == 10, "refill must not scale with level")
 assert(SpeedConfigs.GetPassiveRefillRate(1, 400) == 20, "big tank refill should be proportional")
 
 -- 6) XP pacing with post-L25 soft cap

@@ -2094,6 +2094,13 @@ local function onDoubleJumpAction(_actionName: string, inputState: Enum.UserInpu
 			return Enum.ContextActionResult.Sink
 		end
 
+		-- When AutoFly is ON, pads handle flying — suppress manual E so players
+		-- don't accidentally burn thrust away from pads.
+		local autoFlyAttr = AutoFlyConfigs.PlayerAttribute or "AutoFlyEnabled"
+		if player:GetAttribute(autoFlyAttr) == true then
+			return Enum.ContextActionResult.Pass
+		end
+
 		holdingLocally = true
 		startRequestPending = true
 		service:RequestStart():andThen(function(ok: boolean, _reason: string?)

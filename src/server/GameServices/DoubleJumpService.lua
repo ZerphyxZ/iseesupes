@@ -12,6 +12,7 @@ local DoubleJumpFlightPhysics = require(ReplicatedStorage.Shared.Utils.DoubleJum
 local DebugLog = require(ReplicatedStorage.Shared.Utils.DebugLog)
 local LevelDesignTuning = require(ReplicatedStorage.Shared.Utils.LevelDesignTuning)
 local StageCheckpointWorld = require(ReplicatedStorage.Shared.Utils.StageCheckpointWorld)
+local ToggleFlyZone = require(ReplicatedStorage.Shared.Utils.ToggleFlyZone)
 local SpeedConfigs = require(ReplicatedStorage.Shared.Configs.SpeedConfigs)
 local ThrustConfigs = SpeedConfigs.Thrust
 local TutorialConfigs = require(ReplicatedStorage.Shared.Configs.TutorialConfigs)
@@ -1523,6 +1524,16 @@ function DoubleJumpService:_tryStart(player: Player): (boolean, string?)
 	local ok, reason = self:_canActivate(player, humanoid)
 	if not ok then
 		return false, reason or "rejected"
+	end
+
+	-- ToggleFly pad launches always start on a full tank so the sanctioned crossing can't
+	-- run dry mid-air. A player who burned thrust pressing E too early before the pad would
+	-- otherwise reach 0 partway across and fall ("lose thrust → lose motivation"). Server
+	-- independently verifies the HRP is on a tagged pad, so manual flight away from pads keeps
+	-- its normal thrust cost. Refilling BEFORE the CanStartFlight gate means the gate then
+	-- passes with a full tank (also rescues the 0→15 ground-safety-bumped case).
+	if DataService and ToggleFlyZone.getActiveZoneRoot(root) ~= nil then
+		DataService:RefillThrustToMax(player)
 	end
 
 	if not DataService or not DataService:CanStartFlight(player) then

@@ -22,6 +22,7 @@ local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfi
 local DataLib       = require(ReplicatedStorage.Shared.Utils.DataLib)
 local SupesMobileUI = require(ReplicatedStorage.Shared.Utils.SupesMobileUI)
 local NotificationManager = require(script.Parent.Parent.Parent.Modules.NotificationManager)
+local AutoFlyConfigs = require(ReplicatedStorage.Shared.Configs.AutoFlyConfigs)
 
 local ThrustMobileBarController = Knit.CreateController({ Name = "ThrustMobileBarController" })
 
@@ -223,6 +224,12 @@ local function ensureButtonClickable(baseButton: ImageButton)
 	end
 end
 
+local function applyAutoFlyButtonVisibility(refs: Refs)
+	local attr = AutoFlyConfigs.PlayerAttribute or "AutoFlyEnabled"
+	local autoFlyOn = player:GetAttribute(attr) == true
+	refs.supesFrame.Visible = not autoFlyOn
+end
+
 local function refsAreAlive(refs: Refs?): boolean
 	if not refs then
 		return false
@@ -273,6 +280,7 @@ local function bindSupesButton(refs: Refs)
 	end
 
 	ensureButtonClickable(refs.baseButton)
+	applyAutoFlyButtonVisibility(refs)
 	currentRefs = refs
 
 	buttonTapConn = refs.baseButton.MouseButton1Click:Connect(onButtonTapped)
@@ -334,6 +342,14 @@ function ThrustMobileBarController:KnitStart()
 		elseif not flightActive then
 			flightStartedAt = nil
 			holdingLocal = false
+		end
+	end)
+
+	local autoFlyAttr = AutoFlyConfigs.PlayerAttribute or "AutoFlyEnabled"
+	player:GetAttributeChangedSignal(autoFlyAttr):Connect(function()
+		local refs = currentRefs
+		if refsAreAlive(refs) then
+			applyAutoFlyButtonVisibility(refs :: Refs)
 		end
 	end)
 

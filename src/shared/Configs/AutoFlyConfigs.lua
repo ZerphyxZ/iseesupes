@@ -14,8 +14,13 @@ local AutoFlyConfigs = {
 	--- many studs of the Destination and then starts moving AWAY from it (closest point passed).
 	ArrivalNearStuds = 24,
 	--- Hard failsafe: cancel a single AutoFly flight if it runs longer than this without landing
-	--- (mis-placed Destination / badly diverged path) instead of flying off the map.
-	MaxAutoFlySeconds = 8,
+	--- (mis-placed Destination / badly diverged path) instead of flying off the map. Raised 8 → 11
+	--- to match the SERVER's actual ability budget (GetAbilityTimeCap ≈ 12s on a full 100 tank) — at
+	--- 8 the client was force-cancelling long but legitimate crossings (low-level players cross slower:
+	--- ~50 stud/s at L1 vs 110 at L16+) partway, dropping the player ("stops the flight in between").
+	--- The arrival / closest-approach guards still land normal hops far sooner; this only bounds a
+	--- genuinely unreachable destination, and the server thrust/time caps bound it regardless.
+	MaxAutoFlySeconds = 11,
 	--- On landing, pin the player to the Destination's X/Z and kill horizontal drift so flight
 	--- momentum can't coast them sideways off the pad into a hazard — they drop straight down
 	--- onto the intended spot. Set false to keep the old free-coast landing.

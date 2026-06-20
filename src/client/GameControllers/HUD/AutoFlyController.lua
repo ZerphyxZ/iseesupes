@@ -42,6 +42,18 @@ local lastZoneRoot: Instance? = nil
 local lastGroundedAt = -math.huge
 local DoubleJumpService: any = nil
 
+--- How long to wait on a hanging RequestStart before assuming the invocation was LOST (a dropped
+--- packet on a live server — Roblox RemoteFunctions YIELD FOREVER when the round-trip packet drops,
+--- they never error) and retrying. This was 4s, which turned a single dropped start into a 4-5s
+--- dead pad ("stand on the glow, wait 3-5s to fly"). 1.5s recovers fast while staying above a normal
+--- live round-trip (~0.1-0.8s) so a merely-slow start isn't retried needlessly — and a retry is safe
+--- anyway: the server rejects a duplicate start as "active", so at most one flight ever begins.
+local START_REQUEST_RETRY_AFTER = 1.5
+--- Clear a route that was created but never became airborne (server never set DjAbilityPhase — a lost
+--- SetHolding / takeoff that didn't take). DjAbilityPhase is set server-side BEFORE RequestStart even
+--- returns, so a real flight flips isFlying() within ~1 replication; this only ever catches the jam.
+local STALE_ROUTE_TIMEOUT = 1.5
+
 local function getAttrName(): string
 	local name = AutoFlyConfigs.PlayerAttribute
 	if typeof(name) == "string" and name ~= "" then
@@ -154,7 +166,7 @@ local function tryBeginAutoFlight(zoneRoot: Instance, destination: BasePart)
 		-- connection the Knit RemoteFunction promise can hang without ever resolving or rejecting,
 		-- leaving startRequestPending = true until the character respawns and silently breaking
 		-- the pad for the rest of the run.
-		if os.clock() - startRequestPendingAt < 4 then
+		if os.clock() - startRequestPendingAt < START_REQUEST_RETRY_AFTER then
 			return
 		end
 		startRequestPending = false
@@ -253,7 +265,7 @@ local function tickAutoFly(dt: number)
 	-- a start is one network round-trip; 2s is far beyond that, so clearing here only ever catches
 	-- the jammed case and lets the next step retry.
 	if activeRoute and not isFlying() then
-		if os.clock() - activeRoute.startedAt > 2 then
+		if os.clock() - activeRoute.startedAt > STALE_ROUTE_TIMEOUT then
 			clearRoute(true)
 		end
 	end

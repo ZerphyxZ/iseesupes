@@ -47,6 +47,8 @@ local edited = {
 	"src/client/GameControllers/LoginReward/LoginRewardController.lua",
 	"src/shared/Configs/LoginRewardConfigs.lua",
 	"src/shared/Utils/ToggleFlyZone.lua",
+	"src/shared/Configs/AutoFlyConfigs.lua",
+	"src/client/GameControllers/HUD/AutoFlyController.lua",
 }
 for _, path in edited do
 	compileCheck(path)

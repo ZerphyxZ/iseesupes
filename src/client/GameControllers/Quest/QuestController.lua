@@ -444,6 +444,7 @@ local function buildButton(left: Instance): GuiButton
 	if template and template:IsA("GuiObject") then
 		btn.Size = template.Size
 		btn.LayoutOrder = template.LayoutOrder
+		btn.BackgroundTransparency = template.BackgroundTransparency
 		local tmplAspect = template:FindFirstChildOfClass("UIAspectRatioConstraint")
 		if tmplAspect then
 			tmplAspect:Clone().Parent = btn
@@ -452,11 +453,23 @@ local function buildButton(left: Instance): GuiButton
 		btn.Size = UDim2.new(1, 0, 0, 86)
 	end
 
-	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(20, 12, 40)
-	stroke.Thickness = 3
-	stroke.Parent = btn
+	-- Match the OTHER HUD buttons' squareness + outline EXACTLY by cloning their UICorner and UIStroke
+	-- rather than hardcoding — the old hardcoded 12px corner read as "too rounded" next to Shop/Rebirth.
+	local tmplCorner = if template then template:FindFirstChildOfClass("UICorner") else nil
+	if tmplCorner then
+		tmplCorner:Clone().Parent = btn
+	else
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+	end
+	local tmplStroke = if template then template:FindFirstChildOfClass("UIStroke") else nil
+	if tmplStroke then
+		tmplStroke:Clone().Parent = btn
+	else
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Color3.fromRGB(20, 12, 40)
+		stroke.Thickness = 3
+		stroke.Parent = btn
+	end
 
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Icon"
@@ -503,6 +516,18 @@ local function buildButton(left: Instance): GuiButton
 		ls.Color = BLACK
 		ls.Thickness = 2
 		ls.Parent = lbl
+	end
+
+	-- Clone the Rebirth button's "!" notification badge (named "Notification", per RebirthController)
+	-- so the Quests badge is pixel-identical to the rest of the game — same red square, same "!".
+	-- Named "QuestBadge" so attachBadge adopts it directly and just toggles its visibility.
+	local rebirth = left:FindFirstChild("Rebirth")
+	local notif = if rebirth then rebirth:FindFirstChild("Notification") else nil
+	if notif and notif:IsA("GuiObject") then
+		local nb = notif:Clone()
+		nb.Name = "QuestBadge"
+		nb.Visible = false
+		nb.Parent = btn
 	end
 
 	return btn

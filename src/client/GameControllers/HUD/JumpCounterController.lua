@@ -16,10 +16,9 @@ local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfi
 
 local JumpCounterController = Knit.CreateController({ Name = "JumpCounterController" })
 
--- Mobile gets a smaller pill (touch screens are smaller); the pill sits below the
--- whole Skip Stage cluster including the +/- buttons so it never overlaps them.
+-- Mobile gets a smaller pill (touch screens are smaller). The pill now takes the Skip Stage spot at
+-- the top (the player turned Skip Stage off), so it aligns to that frame instead of sitting below it.
 local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-local GAP_PX = if IS_MOBILE then 14 else 12
 local PILL_HEIGHT = if IS_MOBILE then 26 else 34
 local TEXT_SIZE = if IS_MOBILE then 14 else 19
 local PAD_X = if IS_MOBILE then 10 else 16
@@ -146,8 +145,9 @@ function JumpCounterController:KnitStart()
 	label = lbl
 	stroke = str
 
-	-- Position just under the +/- (ChangeStage) buttons using their REAL rendered
-	-- geometry (their frame has empty space below them, so frame-bottom sits too low).
+	-- Skip Stage is hidden by design now, so the pill TAKES its spot: align the pill's top with the
+	-- Skip Stage frame's top (instead of sitting below the now-empty +/- cluster). The frame's real
+	-- geometry is still valid while Visible = false, so this lands exactly where Skip Stage was.
 	local function reposition()
 		if not skip or not skip:IsA("GuiObject") then
 			return
@@ -156,19 +156,8 @@ function JumpCounterController:KnitStart()
 		if parentH <= 0 then
 			return
 		end
-		local lowest = skip.AbsolutePosition.Y + skip.AbsoluteSize.Y
-		local cs = skip:FindFirstChild("ChangeStage")
-		if cs then
-			for _, b in cs:GetChildren() do
-				if b:IsA("GuiObject") then
-					local bb = b.AbsolutePosition.Y + b.AbsoluteSize.Y
-					if bb > lowest then
-						lowest = bb
-					end
-				end
-			end
-		end
-		frame.Position = UDim2.new(0.5, 0, (lowest + GAP_PX - parent.AbsolutePosition.Y) / parentH, 0)
+		local top = skip.AbsolutePosition.Y - parent.AbsolutePosition.Y
+		frame.Position = UDim2.new(0.5, 0, top / parentH, 0)
 	end
 	reposition()
 	task.defer(reposition)
@@ -187,7 +176,7 @@ function JumpCounterController:KnitStart()
 		end
 	end)
 
-	StudioLog.ready("JumpCounterController", "(below Skip Stage)")
+	StudioLog.ready("JumpCounterController", "(at Skip Stage spot)")
 end
 
 return JumpCounterController

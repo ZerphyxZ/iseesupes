@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StudioLog = require(ReplicatedStorage.Shared.Utils.StudioLog)
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local NotificationConfigs = require(ReplicatedStorage.Shared.Configs.NotificationConfigs)
@@ -20,8 +21,15 @@ local DEBOUNCE_SEC = 0.35
 local SKIP_GAP_SCALE = 0.072
 -- Pixel gap below the JumpCounter pill. The pill's height is in PIXELS and doesn't scale with
 -- the screen, so we anchor to its real bottom in pixels too; a scale-only gap rides up into it
--- on short mobile screens (the overlap this fixes).
-local NOTIF_GAP_PX = 12
+-- on short mobile screens (the overlap this fixes). Kept small so toasts sit close under the pill.
+local NOTIF_GAP_PX = 8
+
+-- Mobile toasts were oversized — a fixed 20px text + desktop padding dominate a small phone screen.
+-- Shrink the text and padding on touch devices so notifications stay readable but unobtrusive.
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+local TOAST_TEXT_SIZE = if IS_MOBILE then 15 else 20
+local TOAST_PAD_Y = if IS_MOBILE then 7 else 10
+local TOAST_PAD_X = if IS_MOBILE then 11 else 14
 
 local toastContainer: Frame? = nil
 local hudRef: Instance? = nil
@@ -165,10 +173,10 @@ local function showToast(message: string, kind: string?)
 	stroke.Parent = toast
 
 	local padding = Instance.new("UIPadding")
-	padding.PaddingTop = UDim.new(0, 10)
-	padding.PaddingBottom = UDim.new(0, 10)
-	padding.PaddingLeft = UDim.new(0, 14)
-	padding.PaddingRight = UDim.new(0, 14)
+	padding.PaddingTop = UDim.new(0, TOAST_PAD_Y)
+	padding.PaddingBottom = UDim.new(0, TOAST_PAD_Y)
+	padding.PaddingLeft = UDim.new(0, TOAST_PAD_X)
+	padding.PaddingRight = UDim.new(0, TOAST_PAD_X)
 	padding.Parent = toast
 
 	local label = Instance.new("TextLabel")
@@ -177,7 +185,7 @@ local function showToast(message: string, kind: string?)
 	label.Size = UDim2.new(1, 0, 0, 0)
 	label.AutomaticSize = Enum.AutomaticSize.Y
 	label.Font = Enum.Font.GothamBold
-	label.TextSize = 20
+	label.TextSize = TOAST_TEXT_SIZE
 	label.TextWrapped = true
 	label.TextColor3 = palette.text
 	label.TextStrokeTransparency = 0.6

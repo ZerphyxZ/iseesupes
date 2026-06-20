@@ -350,10 +350,31 @@ end
 
 -- ── HUD.Left button (built, or adopts a Studio-authored "Quests" button) ───────────
 
--- Red rounded-square "!" badge in the style of the other HUD buttons (Rebirth etc.). Built fresh
--- rather than cloned — cloning the native badge kept dropping the "!" (Rebirth keeps its mark as a
--- separate piece, and ZIndex inside the cloned frame was unreliable). A high ZIndex guarantees both
--- the square AND the "!" render on top of the button.
+-- Find the button's OWN native "!" badge (the red-square notification indicator). When the Quests
+-- button is a Studio COPY of the Rebirth button, this is Rebirth's exact badge instance.
+local function findOwnBadge(btn: GuiObject): (GuiObject?, TextLabel?)
+	for _, d in btn:GetDescendants() do
+		if d:IsA("TextLabel") and d.Text == "!" then
+			local p = d.Parent
+			if p and p:IsA("GuiObject") and p ~= btn then
+				return p :: GuiObject, d :: TextLabel
+			end
+			return d :: GuiObject, d :: TextLabel
+		end
+	end
+	for _, d in btn:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= btn then
+			local n = string.lower(d.Name)
+			if string.find(n, "notif") or string.find(n, "badge") or string.find(n, "alert") or string.find(n, "exclam") then
+				return d :: GuiObject, d:FindFirstChildOfClass("TextLabel") :: TextLabel?
+			end
+		end
+	end
+	return nil, nil
+end
+
+-- Use the button's real badge if it has one (a Studio copy of the Rebirth button carries Rebirth's
+-- EXACT badge — adopt it verbatim, no rebuild). Only a plain code-built button gets the drawn fallback.
 local function attachBadge(btn: GuiObject)
 	local existingBadge = btn:FindFirstChild("QuestBadge")
 	if existingBadge then
@@ -362,6 +383,16 @@ local function attachBadge(btn: GuiObject)
 		return
 	end
 
+	local ownBadge, ownMark = findOwnBadge(btn)
+	if ownBadge then
+		ownBadge.Name = "QuestBadge"
+		ownBadge.Visible = false
+		questBadge = ownBadge
+		questBadgeLabel = ownMark or (ownBadge:FindFirstChildOfClass("TextLabel") :: TextLabel?)
+		return
+	end
+
+	-- Code-built button with no native badge → draw a red-square "!" fallback.
 	local badge = Instance.new("Frame")
 	badge.Name = "QuestBadge"
 	badge.AnchorPoint = Vector2.new(1, 0)

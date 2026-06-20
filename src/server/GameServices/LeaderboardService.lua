@@ -275,10 +275,27 @@ local function ensureListLayoutSortOrder(scrollingFrame: ScrollingFrame): UIList
 		listLayout.Parent = scrollingFrame
 	end
 	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	-- Auto-expand canvas vertically so all 50 rows are reachable regardless of
-	-- how tall the map's ScrollingFrame part was originally built.
-	scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	-- We size the canvas EXPLICITLY (applyCanvasSize below) instead of relying on
+	-- AutomaticCanvasSize, which can misbehave on a SurfaceGui ScrollingFrame and was leaving the
+	-- board crammed. Manual sizing + fixed-height rows = deterministic, scrollable, readable.
+	scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
+	scrollingFrame.ScrollingEnabled = true
+	scrollingFrame.ScrollBarThickness = 14
+	scrollingFrame.ScrollBarImageTransparency = 0.2
 	return listLayout
+end
+
+--- Size the canvas to exactly fit `rowCount` fixed-height rows so the board scrolls to the rows
+--- below the fold (top rows stay readable) and reset the scroll to the top on each refresh.
+local function applyCanvasSize(scrollingFrame: ScrollingFrame, rowCount: number)
+	local entryH = LeaderboardConfigs.EntryHeightPx
+	if typeof(entryH) ~= "number" or entryH <= 0 then
+		entryH = 48
+	end
+	local listLayout = scrollingFrame:FindFirstChildOfClass("UIListLayout")
+	local pad = if listLayout then listLayout.Padding.Offset else 0
+	scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, math.max(0, rowCount) * (entryH + pad) + pad)
+	scrollingFrame.CanvasPosition = Vector2.zero
 end
 
 -- Studio layout: {Model}Leaderboard → Leaderboard → Board (Part) → SurfaceGui → ScrollingFrame.
@@ -347,12 +364,22 @@ local function renderEntry(
 	local newEntry = entryTemplate:Clone()
 	newEntry.Name = "Entry_" .. tostring(rank)
 
-	-- Force a fixed pixel height so 50 rows stay readable regardless of whether the
-	-- Studio template uses scale-Y sizing (which becomes tiny when many rows stack up).
-	local entryH = LeaderboardConfigs.EntryHeightPx
-	if typeof(entryH) == "number" and entryH > 0 and newEntry:IsA("GuiObject") then
-		local sz = newEntry.Size
-		newEntry.Size = UDim2.new(sz.X.Scale, sz.X.Offset, 0, entryH)
+	-- Force a fixed pixel height + full width so 50 rows stay readable regardless of the
+	-- Studio-authored template. A scale-Y height collapses when 50 rows stack; and a
+	-- UIAspectRatioConstraint / UISizeConstraint on the row would OVERRIDE the height we set, so
+	-- strip those first or the fixed height won't stick (this is the likely cause of the crammed
+	-- live board).
+	if newEntry:IsA("GuiObject") then
+		for _, c in newEntry:GetChildren() do
+			if c:IsA("UIAspectRatioConstraint") or c:IsA("UISizeConstraint") then
+				c:Destroy()
+			end
+		end
+		local entryH = LeaderboardConfigs.EntryHeightPx
+		if typeof(entryH) ~= "number" or entryH <= 0 then
+			entryH = 48
+		end
+		newEntry.Size = UDim2.new(1, 0, 0, entryH)
 	end
 
 	local rankLabel = newEntry:FindFirstChild("RankLabel")
@@ -549,6 +576,7 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 				config.ScoreFormatter(row.score)
 			)
 		end
+		applyCanvasSize(scrollingFrame, #fallbackRows)
 		return pageUserIds
 	end
 
@@ -571,6 +599,7 @@ function LeaderboardService:UpdateDisplay(config: LeaderboardConfigs.Leaderboard
 		)
 	end
 
+	applyCanvasSize(scrollingFrame, displayRank)
 	queueUsernameResolve(pageUserIds)
 	return pageUserIds
 end

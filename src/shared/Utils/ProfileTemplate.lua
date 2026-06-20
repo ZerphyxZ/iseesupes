@@ -50,6 +50,15 @@ export type PlayerData = {
 	OnboardingStepLogged: number,
 	--- Player setting: AutoFly on/off. Defaults ON; persists across sessions.
 	AutoFlyEnabled: boolean,
+	--- Endless rolling quests (QuestService). Per slot: { type, tier, baseline } — the active
+	--- quest's escalating tier and the counter value when it started. Empty until first populated.
+	QuestSlots: { [number]: { type: string, tier: number, baseline: number } },
+	--- Day number (LoginRewardConfigs.GetDayNumber) the daily quest counter belongs to.
+	QuestDay: number,
+	--- Quests completed today (drives the daily mega-reward); resets at the day boundary.
+	QuestDayCount: number,
+	--- True once today's daily mega-reward was granted (one per day).
+	QuestDailyClaimed: boolean,
 }
 
 -- Pure data only — passed to ProfileService (no functions, no nil values).
@@ -93,6 +102,10 @@ local Data: PlayerData = {
 	OwnedStarterPack = false,
 	OnboardingStepLogged = 0,
 	AutoFlyEnabled = true,
+	QuestSlots = {},
+	QuestDay = 0,
+	QuestDayCount = 0,
+	QuestDailyClaimed = false,
 }
 
 local ProfileTemplate = {}

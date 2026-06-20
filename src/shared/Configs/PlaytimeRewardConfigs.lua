@@ -41,20 +41,17 @@ local PlaytimeRewardConfigs = {
 		ShowCountdownPill = false,
 	},
 
-	--- Ascending by Minutes. Generous early to hook before the ~4-min average session.
+	--- Ascending by Minutes. Generous early to hook before the ~5-min average session, with the
+	--- juiciest rewards landing in the 8-12 min window (the session-time target) and the ladder
+	--- extended to 30 min so long sessions keep paying. Reshaped 2026-06-20 (was 2/5/10/15/20).
 	Milestones = {
 		[1] = { Minutes = 2, Type = "Wins", Amount = 15, Label = "+15 Wins", Icon = ICON_WINS },
 		[2] = { Minutes = 5, Type = "Speed", XpPercentOfStep = 25, Label = "Speed Boost", Icon = ICON_SPEED },
-		[3] = {
-			Minutes = 10,
-			Type = "ThrustRunBonus",
-			Amount = 35,
-			Label = "+35 Thrust (One Run)",
-			ToastLabel = "+35 Thrust for your next flight",
-			Icon = ICON_SPEED,
-		},
-		[4] = { Minutes = 15, Type = "Wins", Amount = 50, Label = "+50 Wins", Icon = ICON_WINS },
-		[5] = { Minutes = 20, Type = "Boost", DurationSeconds = 90, Label = "90s Power Boost", Icon = ICON_GIFT },
+		[3] = { Minutes = 8, Type = "Wins", Amount = 40, Label = "+40 Wins", Icon = ICON_WINS },
+		[4] = { Minutes = 12, Type = "Boost", DurationSeconds = 90, Label = "90s Power Boost", Icon = ICON_GIFT },
+		[5] = { Minutes = 16, Type = "Speed", XpPercentOfStep = 45, Label = "Big Speed Boost", Icon = ICON_SPEED },
+		[6] = { Minutes = 22, Type = "Wins", Amount = 80, Label = "+80 Wins", Icon = ICON_WINS },
+		[7] = { Minutes = 30, Type = "Boost", DurationSeconds = 120, Label = "120s Power Boost", Icon = ICON_GIFT },
 	} :: { [number]: Milestone },
 }
 

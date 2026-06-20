@@ -49,6 +49,11 @@ local edited = {
 	"src/shared/Utils/ToggleFlyZone.lua",
 	"src/shared/Configs/AutoFlyConfigs.lua",
 	"src/client/GameControllers/HUD/AutoFlyController.lua",
+	"src/shared/Configs/QuestConfigs.lua",
+	"src/server/GameServices/QuestService.lua",
+	"src/client/GameControllers/Quest/QuestController.lua",
+	"src/shared/Utils/ProfileTemplate.lua",
+	"src/client/GameControllers/Performance/LowEndWorldController.lua",
 }
 for _, path in edited do
 	compileCheck(path)

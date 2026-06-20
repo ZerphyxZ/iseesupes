@@ -34,15 +34,32 @@ local BUDGET_PER_FRAME = 250
 -- Seconds to wait for the loading screen to clear before sweeping anyway (self-heal if it lingers).
 local REVEAL_TIMEOUT = 25
 
+-- Some contexts block writing RenderFidelity from a client script ("lacking capability Plugin" —
+-- script-capability sandboxing / certain Studio Play sessions). Without a guard, every mesh that
+-- streams or clones in re-throws and spams the output. Detect the block once, then stop retrying;
+-- where the write IS allowed (e.g. the live client) it still applies normally.
+local renderFidelityBlocked = false
+
 --- Apply the low-end downgrade to one instance. Idempotent — safe to call again on the same object.
 local function downgrade(inst: Instance)
 	if inst:IsA("MeshPart") then
-		if inst.RenderFidelity ~= Enum.RenderFidelity.Performance then
-			inst.RenderFidelity = Enum.RenderFidelity.Performance
+		if not renderFidelityBlocked and inst.RenderFidelity ~= Enum.RenderFidelity.Performance then
+			local ok = pcall(function()
+				inst.RenderFidelity = Enum.RenderFidelity.Performance
+			end)
+			if not ok then
+				renderFidelityBlocked = true
+				StudioLog.print(
+					"Performance",
+					"[iseesupes] LowEndWorldController: RenderFidelity write blocked (capability) — skipping mesh LOD downgrade this session."
+				)
+			end
 		end
 	elseif inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
 		if inst.Enabled then
-			inst.Enabled = false
+			pcall(function()
+				inst.Enabled = false
+			end)
 		end
 	end
 end

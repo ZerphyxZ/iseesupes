@@ -350,43 +350,10 @@ end
 
 -- ── HUD.Left button (built, or adopts a Studio-authored "Quests" button) ───────────
 
---- Find a sibling button's native "!" badge so the Quests badge can match it. Returns BOTH the red
---- background element AND the "!" label separately — Rebirth's "!" sits as a button-sibling of the
---- red square (not inside it), so we need both to reproduce it. (Trails' "New!" won't match: text
---- is "New!", not "!".)
-local function findBadgeParts(parent: Instance?): (GuiObject?, TextLabel?)
-	if not parent then
-		return nil, nil
-	end
-	for _, sib in parent:GetChildren() do
-		if sib:IsA("GuiButton") and sib.Name ~= "Quests" then
-			local exclaim: TextLabel? = nil
-			local redBg: GuiObject? = nil
-			for _, d in sib:GetDescendants() do
-				if not exclaim and d:IsA("TextLabel") and d.Text == "!" then
-					exclaim = d :: TextLabel
-				elseif not redBg and d:IsA("GuiObject") and d ~= sib then
-					local n = string.lower(d.Name)
-					if string.find(n, "notif") or string.find(n, "badge") or string.find(n, "alert") or string.find(n, "exclam") then
-						redBg = d :: GuiObject
-					end
-				end
-			end
-			-- If the "!" sits inside its own frame (not directly on the button), that frame is the bg.
-			if exclaim and not redBg then
-				local p = exclaim.Parent
-				if p and p:IsA("GuiObject") and p ~= sib then
-					redBg = p :: GuiObject
-				end
-			end
-			if exclaim or redBg then
-				return redBg, exclaim
-			end
-		end
-	end
-	return nil, nil
-end
-
+-- Red rounded-square "!" badge in the style of the other HUD buttons (Rebirth etc.). Built fresh
+-- rather than cloned — cloning the native badge kept dropping the "!" (Rebirth keeps its mark as a
+-- separate piece, and ZIndex inside the cloned frame was unreliable). A high ZIndex guarantees both
+-- the square AND the "!" render on top of the button.
 local function attachBadge(btn: GuiObject)
 	local existingBadge = btn:FindFirstChild("QuestBadge")
 	if existingBadge then
@@ -395,58 +362,41 @@ local function attachBadge(btn: GuiObject)
 		return
 	end
 
-	local redBg, exclaim = findBadgeParts(btn.Parent)
-	local badge: GuiObject
-	if redBg then
-		-- Exact red square from the game's native badge.
-		badge = redBg:Clone()
-	else
-		-- No native bg found — build a red rounded square (matches the standard badge look).
-		local f = Instance.new("Frame")
-		f.AnchorPoint = Vector2.new(1, 0)
-		f.Position = UDim2.new(1, 4, 0, -4)
-		f.Size = UDim2.new(0, 26, 0, 26)
-		f.BackgroundColor3 = Color3.fromRGB(230, 40, 40)
-		Instance.new("UICorner", f).CornerRadius = UDim.new(0.35, 0)
-		local s = Instance.new("UIStroke")
-		s.Color = Color3.new(1, 1, 1)
-		s.Thickness = 2
-		s.Parent = f
-		badge = f
-	end
+	local badge = Instance.new("Frame")
 	badge.Name = "QuestBadge"
+	badge.AnchorPoint = Vector2.new(1, 0)
+	badge.Position = UDim2.new(1, 2, 0, -2) -- sticks just past the top-right corner, like Rebirth's
+	badge.Size = UDim2.fromScale(0.34, 0.34)
+	badge.SizeConstraint = Enum.SizeConstraint.RelativeYY -- square, sized off the button height
+	badge.BackgroundColor3 = Color3.fromRGB(235, 33, 33)
 	badge.Visible = false
-	badge.ZIndex = 8
+	badge.ZIndex = 50
 	badge.Parent = btn
+	Instance.new("UICorner", badge).CornerRadius = UDim.new(0.3, 0)
+	local bs = Instance.new("UIStroke")
+	bs.Color = Color3.new(1, 1, 1)
+	bs.Thickness = 2
+	bs.Parent = badge
 
-	-- Guarantee a "!" INSIDE the badge. If cloning the red bg already brought one, use it; otherwise
-	-- drop in the sibling's exact "!" (matched font/colour) — this is the bit that was missing.
-	local lbl = badge:FindFirstChildOfClass("TextLabel")
-	if not lbl and badge:IsA("TextLabel") then
-		lbl = badge :: TextLabel
-	end
-	if not lbl then
-		local mark: TextLabel
-		if exclaim then
-			mark = exclaim:Clone()
-		else
-			mark = Instance.new("TextLabel")
-			mark.FontFace = FREDOKA
-			mark.Text = "!"
-		end
-		mark.Name = "Mark"
-		mark.BackgroundTransparency = 1
-		mark.AnchorPoint = Vector2.new(0.5, 0.5)
-		mark.Position = UDim2.new(0.5, 0, 0.5, 0)
-		mark.Size = UDim2.new(1, 0, 1, 0)
-		mark.TextScaled = true
-		mark.TextColor3 = Color3.new(1, 1, 1)
-		mark.ZIndex = badge.ZIndex + 1
-		mark.Parent = badge
-		lbl = mark
-	end
+	local mark = Instance.new("TextLabel")
+	mark.Name = "Mark"
+	mark.BackgroundTransparency = 1
+	mark.AnchorPoint = Vector2.new(0.5, 0.5)
+	mark.Position = UDim2.new(0.5, 0, 0.5, 0)
+	mark.Size = UDim2.new(0.9, 0, 0.9, 0)
+	mark.FontFace = FREDOKA
+	mark.TextScaled = true
+	mark.TextColor3 = Color3.new(1, 1, 1)
+	mark.Text = "!"
+	mark.ZIndex = 51
+	mark.Parent = badge
+	local ms = Instance.new("UIStroke")
+	ms.Color = Color3.fromRGB(120, 0, 0)
+	ms.Thickness = 1
+	ms.Parent = mark
+
 	questBadge = badge
-	questBadgeLabel = lbl :: TextLabel?
+	questBadgeLabel = mark
 end
 
 --- Build a clean Quests button sized to match a sibling (Shop/Trails/Rebirth).

@@ -9,6 +9,10 @@ local LEGACY_AFTER_FORWARD = CharacterConfigs.DoubleJump.Phases.AfterTransition.
 
 local SpeedConfigs = {
 	StudsRequired = 8,
+	--- XP earn rate multiplier while airborne from an intentional basic jump (not long-jump,
+	--- not just falling off a ledge). e.g. 2 = earn Speed XP twice as fast during a jump arc.
+	--- Detected via Humanoid "Jumping" state in SpeedController.
+	JumpXpBoost = 2,
 	BaseXpCost = 300,
 	CostMultiplier = 1.3,
 	--- After this level, per-level XP cost grows by SoftCostMultiplier instead of
@@ -105,6 +109,19 @@ SpeedConfigs.WalkSpeedCurve = {
 	{ level = 100, value = 182 },
 } :: { CurveAnchor }
 
+--- Piecewise-linear curve: Level → studs of travel needed to earn +1 Speed point.
+--- Lower values at early levels = fast "feel powerful" hook for new players.
+--- Higher values at late levels = expected grind, in addition to the geometric XP cost curve.
+--- Tune by editing anchor rows only. Uses the same evalLevelCurve helper as other curves.
+SpeedConfigs.StudsRequiredCurve = {
+	{ level = 1,  value = 4  },
+	{ level = 3,  value = 4  },
+	{ level = 10, value = 5  },
+	{ level = 20, value = 6  },
+	{ level = 35, value = 8  },
+	{ level = 50, value = 10 },
+} :: { CurveAnchor }
+
 --- E-flight forward speed (studs/s). CAPPED at 110 (2026-06-14): high-level flight
 --- (was 450 at L100) was uncontrollable and overshot the stages, which are built for
 --- ~110. Rises 50→110 by L16, then flat. Speed fantasy now lives in walk speed + the
@@ -137,6 +154,17 @@ end
 
 function SpeedConfigs.GetSpeedFromLevel(level: number): number
 	return evalLevelCurve(SpeedConfigs.WalkSpeedCurve, level)
+end
+
+--- Studs of horizontal travel needed to earn +1 Speed point at a given player Level.
+--- Uses StudsRequiredCurve for a fast early / slow late progression feel.
+--- Falls back to StudsRequired (8) if the curve is absent (safe for tests that omit it).
+function SpeedConfigs.GetStudsRequired(level: number): number
+	local curve = SpeedConfigs.StudsRequiredCurve
+	if not curve then
+		return SpeedConfigs.StudsRequired
+	end
+	return math.max(1, math.round(evalLevelCurve(curve, level)))
 end
 
 -- Alias used by HUD swim cap

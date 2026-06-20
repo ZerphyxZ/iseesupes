@@ -21,6 +21,11 @@ LeaderboardConfigs.RestoreFromOdsOnJoin = false
 LeaderboardConfigs.RefreshInterval = 90
 LeaderboardConfigs.SaveInterval = 90
 LeaderboardConfigs.TopN = 50
+--- Fixed pixel height for each leaderboard row. Overrides whatever scale-based height
+--- the Studio template uses, so 50 stacked rows stay readable regardless of how the
+--- board Part / SurfaceGui was originally sized. Tune up/down if rows look too big or
+--- too small at the board's PixelsPerStud.
+LeaderboardConfigs.EntryHeightPx = 40
 LeaderboardConfigs.RootPath = { "Map", "Leaderboards" }
 LeaderboardConfigs.EntryTemplateName = "LeaderboardEntry"
 LeaderboardConfigs.TemplatePath = { "Templates", "LeaderboardEntry" }

@@ -275,6 +275,9 @@ local function ensureListLayoutSortOrder(scrollingFrame: ScrollingFrame): UIList
 		listLayout.Parent = scrollingFrame
 	end
 	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	-- Auto-expand canvas vertically so all 50 rows are reachable regardless of
+	-- how tall the map's ScrollingFrame part was originally built.
+	scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	return listLayout
 end
 
@@ -343,6 +346,14 @@ local function renderEntry(
 ): GuiObject?
 	local newEntry = entryTemplate:Clone()
 	newEntry.Name = "Entry_" .. tostring(rank)
+
+	-- Force a fixed pixel height so 50 rows stay readable regardless of whether the
+	-- Studio template uses scale-Y sizing (which becomes tiny when many rows stack up).
+	local entryH = LeaderboardConfigs.EntryHeightPx
+	if typeof(entryH) == "number" and entryH > 0 and newEntry:IsA("GuiObject") then
+		local sz = newEntry.Size
+		newEntry.Size = UDim2.new(sz.X.Scale, sz.X.Offset, 0, entryH)
+	end
 
 	local rankLabel = newEntry:FindFirstChild("RankLabel")
 	local nameLabel = newEntry:FindFirstChild("NameLabel")

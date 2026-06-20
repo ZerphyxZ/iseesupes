@@ -369,9 +369,12 @@ function SpeedController:KnitStart()
 
 		local currentPosition = rootPart.Position
 		local ljCfg = CharacterConfigs.LongJump
-		if ljCfg.SuppressSpeedXpDuringArc ~= false
-			and player:GetAttribute(ljCfg.ArcActiveAttribute or "LongJumpArcActive") == true
-		then
+		local ljArcAttr = ljCfg.ArcActiveAttribute or "LongJumpArcActive"
+		local inLongJumpArc = player:GetAttribute(ljArcAttr) == true
+
+		-- Legacy option: fully suppress XP during a long jump (off by default — long jumps
+		-- now earn boosted XP so they feel rewarding).
+		if ljCfg.SuppressSpeedXpDuringArc == true and inLongJumpArc then
 			lastPosition = currentPosition
 			return
 		end
@@ -387,8 +390,24 @@ function SpeedController:KnitStart()
 				accumulatedDistance += distance
 			end
 
-			while accumulatedDistance >= SpeedConfigs.StudsRequired do
-				accumulatedDistance -= SpeedConfigs.StudsRequired
+			local studsNeeded = SpeedConfigs.GetStudsRequired(SpeedConfigs.GetPlayerLevel(player))
+
+			-- Boost Speed XP while airborne from a basic jump OR a long jump so jumping feels
+			-- rewarding. Skipped while E-flying (DjAbilityPhase set) — flight XP stays as-is.
+			local basicArcAttr = (CharacterConfigs.BasicJump and CharacterConfigs.BasicJump.ArcActiveAttribute)
+				or "BasicJumpArcActive"
+			local inBasicJumpArc = player:GetAttribute(basicArcAttr) == true
+			local flyingPhase = player:GetAttribute("DjAbilityPhase")
+			local isFlying = flyingPhase ~= nil and flyingPhase ~= ""
+			if (inBasicJumpArc or inLongJumpArc) and not isFlying then
+				local boost = SpeedConfigs.JumpXpBoost or 1
+				if boost > 1 then
+					studsNeeded = math.max(1, math.floor(studsNeeded / boost))
+				end
+			end
+
+			while accumulatedDistance >= studsNeeded do
+				accumulatedDistance -= studsNeeded
 				SpeedService:RequestAddSpeed():catch(function() end)
 			end
 		end

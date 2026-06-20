@@ -203,6 +203,15 @@ assert(SpeedConfigs.GetPassiveRefillRate(1, 60) == 10, "base refill should be 10
 assert(SpeedConfigs.GetPassiveRefillRate(50, 60) == 10, "refill must not scale with level")
 assert(SpeedConfigs.GetPassiveRefillRate(1, 400) == 20, "big tank refill should be proportional")
 
+-- StudsRequired curve: early earns faster (smaller threshold), late earns slower (larger threshold)
+assert(SpeedConfigs.GetStudsRequired(1) < SpeedConfigs.GetStudsRequired(50),
+	"early stud threshold must be lower than late (fast early / slow late)")
+assert(SpeedConfigs.GetStudsRequired(1) >= 1, "stud threshold must be at least 1")
+
+-- Jump XP boost: must be a multiplier ≥ 1 (1 = no boost, 2 = double while airborne from jump)
+local jumpBoost = SpeedConfigs.JumpXpBoost or 1
+assert(type(jumpBoost) == "number" and jumpBoost >= 1, "JumpXpBoost must be a number >= 1")
+
 -- 6) XP pacing with post-L25 soft cap
 local loadRebirth = luau.load(fs.readFile("src/shared/Configs/RebirthConfigs.lua"), {
 	debugName = "RebirthConfigs",

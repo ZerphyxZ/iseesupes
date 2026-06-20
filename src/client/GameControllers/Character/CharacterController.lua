@@ -260,6 +260,15 @@ local enterLocomotion: (state: CharacterState) -> ()
 local enterFall: (state: CharacterState) -> ()
 local enterLanding: (state: CharacterState) -> ()
 
+-- Player attribute that flags "airborne from an intentional basic jump" so SpeedController can
+-- award boosted Speed XP during the arc. Set in enterJump; cleared the moment we land / return
+-- to locomotion / an ability (flight) takes over. A ledge walk-off never enters enterJump, so it
+-- never flips true and earns no bonus.
+local function setBasicJumpArcActive(active: boolean)
+	local attr = JumpCfg.ArcActiveAttribute or "BasicJumpArcActive"
+	player:SetAttribute(attr, if active then true else nil)
+end
+
 enterLocomotion = function(state: CharacterState)
 	if state.mode == "locomotion" then
 		return
@@ -267,6 +276,7 @@ enterLocomotion = function(state: CharacterState)
 
 	disconnectJumpLandingConns(state)
 	stopAirAnims(state)
+	setBasicJumpArcActive(false)
 	state.mode = "locomotion"
 	state.landingPlayed = false
 	state.airTime = 0
@@ -317,6 +327,7 @@ enterLanding = function(state: CharacterState)
 
 	state.landingPlayed = true
 	state.mode = "landing"
+	setBasicJumpArcActive(false)
 
 	stopLocomotion(state)
 	if state.fallTrack then
@@ -354,6 +365,7 @@ local function enterJump(state: CharacterState)
 	state.landingPlayed = false
 	state.airTime = os.clock()
 	state.hasLeftGround = false
+	setBasicJumpArcActive(true)
 
 	state.jumpTrack:Play(Loc.FadeTime)
 
@@ -369,6 +381,7 @@ end
 local function resetAirAndLocomotionState(state: CharacterState, playLocomotionAnims: boolean)
 	disconnectJumpLandingConns(state)
 	stopAirAnims(state)
+	setBasicJumpArcActive(false)
 	state.mode = "locomotion"
 	state.landingPlayed = false
 	state.hasLeftGround = false

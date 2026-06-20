@@ -47,6 +47,11 @@ local CharacterConfigs = {
 		LeaveGroundVelocity = 8,
 		ApexVelocityThreshold = 5,
 		JumpActionName = "SupesJump",
+		--- Player attribute set true while airborne from an INTENTIONAL basic jump (set in
+		--- CharacterController.enterJump, cleared on land / locomotion / ability takeover).
+		--- Read by SpeedController to award boosted Speed XP during the arc so jumping feels
+		--- rewarding. A plain ledge walk-off never enters enterJump, so it earns no bonus.
+		ArcActiveAttribute = "BasicJumpArcActive",
 	},
 
 	DoubleJump = {
@@ -283,9 +288,13 @@ local CharacterConfigs = {
 		--- After both jumps in a cycle are spent, this many seconds must pass before they refill, AND the
 		--- player must be back on the ground. Drives the "Recharging Xs" HUD countdown.
 		ExhaustCooldown = 1.0,
-		--- Player attribute while airborne from a long jump (suppresses speed XP during arc).
+		--- Player attribute set true while airborne from a long jump. Read by SpeedController.
 		ArcActiveAttribute = "LongJumpArcActive",
-		SuppressSpeedXpDuringArc = true,
+		--- false = long jumps EARN (boosted) Speed XP during the arc so they feel rewarding.
+		--- true = legacy behaviour: no XP at all during the arc. Long jump travels fast (110
+		--- studs/s), so even un-boosted it earns well; the server's AddSpeedMinInterval throttle
+		--- caps total earn at ~20 Speed/s, so this can't be exploited into runaway leveling.
+		SuppressSpeedXpDuringArc = false,
 		--- Raycast ground check (fixes high-speed FloorMaterial flicker at ~245 walk).
 		UseRaycastGroundCheck = true,
 		GroundProbeDistance = 6,

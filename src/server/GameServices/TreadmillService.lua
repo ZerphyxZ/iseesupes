@@ -905,7 +905,20 @@ function TreadmillService:KnitStart()
 	indexStudioTreadmills()
 	initKillParts()
 
-	RunService.Heartbeat:Connect(checkTreadmills)
+	-- Throttle treadmill DETECTION to ~8 Hz. It was running per-frame (up to ~5 downward raycasts ×
+	-- every player × 60 fps) — the biggest sustained server physics cost. checkTreadmills accumulates
+	-- the dt we pass it, so XP-award timing (GameplayCfg.TickRate) is unchanged; only the per-frame
+	-- raycasting is cut. A player stepping on/off a treadmill is still detected within ~0.12s.
+	local treadmillDetectAccum = 0
+	local TREADMILL_DETECT_INTERVAL = 0.12
+	RunService.Heartbeat:Connect(function(dt: number)
+		treadmillDetectAccum += dt
+		if treadmillDetectAccum < TREADMILL_DETECT_INTERVAL then
+			return
+		end
+		checkTreadmills(treadmillDetectAccum)
+		treadmillDetectAccum = 0
+	end)
 
 	Players.PlayerRemoving:Connect(function(player)
 		clearPlayerTreadmill(player)

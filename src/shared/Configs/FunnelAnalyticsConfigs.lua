@@ -20,7 +20,9 @@ local FunnelAnalyticsConfigs = {
 	StageVisit = {
 		Enabled = true,
 		ProximityRadius = 40,
-		PollIntervalSeconds = 0.5,
+		--- Was 0.5 → the proximity poll is O(players × stages) and runs forever; 1.5s is plenty for
+		--- a funnel metric and cuts this standing CPU cost ~3×. (Higher = coarser stage-reach timing.)
+		PollIntervalSeconds = 1.5,
 		--- [StageFunnel] RECORD / PROXIMITY / OK / BACKFILL / WARN / ERROR.
 		DebugPrint = false,
 		--- NEAR hints, SKIP reasons, per-gate map lines (noisy during normal play).

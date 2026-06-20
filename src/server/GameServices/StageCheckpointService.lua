@@ -570,6 +570,7 @@ function StageCheckpointService:KnitStart()
 		brokenGates[uid] = nil
 		lastDamageTick[uid] = nil
 		lastInsufficientSpeedToast[uid] = nil
+		lastGateMeltBlockedToast[uid] = nil
 	end)
 
 	print("[StageCheckpointService] ready.")

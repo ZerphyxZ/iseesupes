@@ -72,6 +72,27 @@ function RebirthController:KnitStart()
 	local afterLevelLabel = afterFrame:WaitForChild("Level"):WaitForChild("Text") :: TextLabel
 	local afterSpeedLabel = afterFrame:WaitForChild("Speed"):WaitForChild("Text") :: TextLabel
 
+	-- Optional dedicated "Wins" value labels. To show the wins multiplier cleanly on its own row,
+	-- in Studio duplicate the "Speed" stat frame under Stats/Before AND Stats/After, rename the copy
+	-- to "Wins" (and set its header to "Wins"). If those exist we fill them; if not, we fall back to
+	-- appending the wins multiplier to the Speed label with TextScaled so it can never overflow.
+	local function resolveWinsLabel(statFrame: Instance): TextLabel?
+		local winsFrame = statFrame:FindFirstChild("Wins")
+		if not winsFrame then
+			return nil
+		end
+		local t = winsFrame:FindFirstChild("Text")
+		if t and t:IsA("TextLabel") then
+			return t :: TextLabel
+		end
+		if winsFrame:IsA("TextLabel") then
+			return winsFrame :: TextLabel
+		end
+		return nil
+	end
+	local beforeWinsLabel = resolveWinsLabel(beforeFrame)
+	local afterWinsLabel = resolveWinsLabel(afterFrame)
+
 	local barFrame = rebirthFrame:WaitForChild("Bar", 10)
 	if not barFrame then
 		return
@@ -98,8 +119,17 @@ function RebirthController:KnitStart()
 		local currentMult = RebirthConfigs.GetSpeedMultiplier(currentRebirths)
 		local nextMult = RebirthConfigs.GetSpeedMultiplier(currentRebirths + 1)
 
+		local currentWinsMult = RebirthConfigs.GetWinsMultiplier(currentRebirths)
+		local nextWinsMult = RebirthConfigs.GetWinsMultiplier(currentRebirths + 1)
+
 		beforeLevelLabel.Text = "Level " .. NumberFormatter.Format(reqLevel)
-		beforeSpeedLabel.Text = formatMult(currentMult)
+		if beforeWinsLabel then
+			beforeSpeedLabel.Text = formatMult(currentMult)
+			beforeWinsLabel.Text = formatMult(currentWinsMult)
+		else
+			beforeSpeedLabel.Text = formatMult(currentMult) .. " | " .. formatMult(currentWinsMult) .. " Wins"
+			beforeSpeedLabel.TextScaled = true
+		end
 
 		afterLevelLabel.Text = "Level " .. NumberFormatter.Format(nextReqLevel)
 		local afterText = formatMult(nextMult)
@@ -107,7 +137,13 @@ function RebirthController:KnitStart()
 		if typeof(thrustPerk) == "number" and thrustPerk > 0 then
 			afterText ..= " +" .. thrustPerk .. " Thrust"
 		end
-		afterSpeedLabel.Text = afterText
+		if afterWinsLabel then
+			afterSpeedLabel.Text = afterText
+			afterWinsLabel.Text = formatMult(nextWinsMult)
+		else
+			afterSpeedLabel.Text = afterText .. " | " .. formatMult(nextWinsMult) .. " Wins"
+			afterSpeedLabel.TextScaled = true
+		end
 
 		local progress = currentLevel / reqLevel
 		local displayLevel = math.min(currentLevel, reqLevel)

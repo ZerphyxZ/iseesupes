@@ -133,7 +133,19 @@ function ToggleFlyHintController:KnitStart()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
 	end
-	heartbeatConn = RunService.Heartbeat:Connect(tickHint)
+	-- Throttle the per-frame pad-zone scan (isPlayerInToggleFlyZone loops every ToggleFly pad) to
+	-- ~8 Hz — it was running every frame. The flight-phase attribute handler above still fires
+	-- tickHint instantly when you start/stop flying, so the hint hides with no perceptible lag.
+	local hintScanAccum = 0
+	local HINT_SCAN_INTERVAL = 0.12
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt: number)
+		hintScanAccum += dt
+		if hintScanAccum < HINT_SCAN_INTERVAL then
+			return
+		end
+		hintScanAccum = 0
+		tickHint()
+	end)
 
 	StudioLog.ready("ToggleFlyHintController")
 end

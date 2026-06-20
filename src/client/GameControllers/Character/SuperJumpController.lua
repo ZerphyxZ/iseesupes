@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 
 local Knit = require(ReplicatedStorage.Packages.Knit)
 local CharacterConfigs = require(ReplicatedStorage.Shared.Configs.CharacterConfigs)
+local ClientPerformance = require(ReplicatedStorage.Shared.Utils.ClientPerformance)
 
 local AnimRoot = CharacterConfigs.Animations
 local Loc = CharacterConfigs.Locomotion
@@ -30,6 +31,7 @@ local abilityActive = false
 local currentPhase: string? = nil
 local abilitySessionId = 0
 local smoothedSteerDir: Vector3? = nil
+local lastSteerSendAt = 0
 local phaseAttrConn: RBXScriptConnection? = nil
 local toolUnequipConn: RBXScriptConnection? = nil
 
@@ -180,9 +182,16 @@ local function publishSteerInput(state: CharacterSuperJumpState, dt: number)
 		smoothedSteerDir = raw
 	end
 
-	pcall(function()
-		Knit.GetService("SuperJumpService"):UpdateSteerInput(smoothedSteerDir :: Vector3)
-	end)
+	-- Throttle the steer remote to the device-appropriate rate (was firing every frame ≈ 60 Hz).
+	-- The smoothing above stays per-frame; only the network send is rate-limited — same approach
+	-- DoubleJumpController already uses (8 Hz low-end / 10 mobile / 15 desktop).
+	local now = os.clock()
+	if now - lastSteerSendAt >= 1 / ClientPerformance.getSteerSendHz() then
+		lastSteerSendAt = now
+		pcall(function()
+			Knit.GetService("SuperJumpService"):UpdateSteerInput(smoothedSteerDir :: Vector3)
+		end)
+	end
 end
 
 local function setAbilityBlocking(blocked: boolean)

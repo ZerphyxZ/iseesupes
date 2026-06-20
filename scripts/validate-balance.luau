@@ -54,6 +54,10 @@ local edited = {
 	"src/client/GameControllers/Quest/QuestController.lua",
 	"src/shared/Utils/ProfileTemplate.lua",
 	"src/client/GameControllers/Performance/LowEndWorldController.lua",
+	"src/server/GameServices/StageCheckpointService.lua",
+	"src/client/GameControllers/HUD/ThrustMobileBarController.lua",
+	"src/client/GameControllers/HUD/ToggleFlyHintController.lua",
+	"src/client/GameControllers/Character/SuperJumpController.lua",
 }
 for _, path in edited do
 	compileCheck(path)

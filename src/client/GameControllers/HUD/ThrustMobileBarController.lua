@@ -404,10 +404,9 @@ function ThrustMobileBarController:KnitStart()
 	end)
 
 	RunService.Heartbeat:Connect(function()
-		if not refsAreAlive(currentRefs) then
-			tryAttachSupesMobile(playerGui)
-		end
-
+		-- (Removed a per-frame tryAttachSupesMobile GUI scan that ran every frame whenever refs were
+		-- missing — i.e. permanently on desktop where SupesMobile doesn't exist. CharacterAdded and
+		-- the PlayerGui DescendantAdded hook already re-attach when SupesMobile appears.)
 		syncFlightActiveFromAttribute()
 		local refs = currentRefs
 		if not refsAreAlive(refs) then
